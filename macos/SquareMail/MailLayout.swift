@@ -61,6 +61,7 @@ final class MailLayout: NSView {
         filter.addSubview(searchBorder)
         searchBorder.addSubview(search)
         search.isBordered = false
+        search.focusRingType = .none
         search.drawsBackground = false
         search.font = ClassicTheme.font(12)
         search.placeholderString = "Search this folder (⌘F)"

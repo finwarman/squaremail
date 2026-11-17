@@ -9,3 +9,4 @@ swift test -c release
 test_dir="$(mktemp -d -t squaremail-test)"
 trap 'rm -rf "$test_dir"' EXIT
 ".build/Square Mail.app/Contents/MacOS/SquareMail" --data-dir "$test_dir" --self-test --snapshot "$test_dir/native.png"
+".build/Square Mail.app/Contents/MacOS/SquareMail" --data-dir "$test_dir" --check-calendar

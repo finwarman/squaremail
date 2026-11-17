@@ -67,6 +67,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             stamp(.window)
+            if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
+            if arguments.contains("--check-calendar") {
+                do { try await controller.checkCalendar(); print("Calendar navigation and release verified"); NSApp.terminate(nil) }
+                catch { fputs("CALENDAR FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-paging") {
                 do { try await controller.checkPaging(); print("Bounded paging verified"); NSApp.terminate(nil) }
                 catch { fputs("PAGING FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
@@ -83,8 +88,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                         report["layers"] = LayerReport.collect(layout)
                     }
                     try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: path, options: .atomic)
-                    report["switching"] = try await controller.measureSwitches(samples: arguments.contains("--perf-stress") ? 1000 : 200,
-                        pattern: arguments.contains("--perf-visible-only") ? .visible : .sequential)
+                    if arguments.contains("--perf-calendar") {
+                        report["calendar"] = try await controller.measureCalendar()
+                    } else {
+                        report["switching"] = try await controller.measureSwitches(samples: arguments.contains("--perf-stress") ? 1000 : 200,
+                            pattern: arguments.contains("--perf-visible-only") ? .visible : .sequential)
+                    }
                     if arguments.contains("--perf-html") || arguments.contains("--perf-html-idle") {
                         report["html_switching"] = try await controller.measureSwitches(.html, samples: 30)
                     }

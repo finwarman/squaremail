@@ -29,8 +29,13 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Latest 200 headers per selected provider folder; message bodies download on opening and remain available offline.
 - HTML sanitization, JavaScript disabled, nonpersistent WebKit storage, CSP and blocked subresources.
 - Five-second idle release of the HTML renderer after returning to text.
+- Lazy native calendar UI: month/week/day, mini calendar, source filters, sample-event search and selected-day agenda. Calendar data is local demo data only.
 
 See [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
+
+Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Calendar setup, live sync, editing and notifications are not implemented. See [calendar UI](docs/calendar.md) and [attachment plan](docs/attachments.md).
+
+![Square Mail calendar with sample events](docs/images/calendar.png)
 
 ## Limits
 

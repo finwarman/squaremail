@@ -2,6 +2,27 @@ import XCTest
 @testable import ClassicKit
 
 final class ClassicKitTests: XCTestCase {
+    func testCalendarRanges() async {
+        await MainActor.run {
+            let calendar = Calendar(identifier: .iso8601)
+            let view = ClassicCalendar()
+            view.date = calendar.date(from: DateComponents(year: 2024, month: 2, day: 15))!
+            XCTAssertEqual(view.visibleDates.count, 42)
+            XCTAssertTrue(view.visibleDates.contains { calendar.component(.month, from: $0) == 2 && calendar.component(.day, from: $0) == 29 })
+            view.period = .week
+            XCTAssertEqual(view.visibleDates.count, 7)
+            XCTAssertEqual(calendar.component(.weekday, from: view.visibleDates[0]), 2)
+            view.period = .day
+            XCTAssertEqual(view.visibleDates.count, 1)
+            XCTAssertTrue(calendar.isDate(view.visibleDates[0], inSameDayAs: view.date))
+            for index in 0..<50 {
+                view.date = calendar.date(byAdding: .day, value: index, to: view.date)!
+                view.period = ClassicCalendarPeriod.allCases[index % 3]
+            }
+            XCTAssertEqual(view.subviews.count, 42)
+        }
+    }
+
     func testSurfaceStaysBounded() async {
         await MainActor.run {
             let surface = ClassicSurface()

@@ -16,5 +16,7 @@
 | INV-MAIL-idle-html | A hidden HTML renderer is released after five idle seconds and can reopen safely. | native reader self-test |
 | INV-MAIL-row-reuse | Revisiting the same rows does not allocate more row views after warm-up. | native reader self-test and 1,000-switch heap probe |
 | INV-MAIL-header-window | Older/Newer navigation retains only the current page, at most 250 summaries. | generated 512-message native paging probe |
+| INV-CALENDAR-bounded-grid | Period/date changes reuse 42 native date targets. | ClassicKit calendar range/lifecycle test |
+| INV-CALENDAR-lazy-release | Calendar views are absent during mail startup and released on returning to Mail. | native calendar probe |
 
 The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Provider access is read-only.

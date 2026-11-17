@@ -1,6 +1,6 @@
 # Performance
 
-There is no comparative performance claim yet.
+Performance against other email clients is not qualified.
 
 The design uses AppKit table reuse, bounded pages, separate body reads, background Rust I/O, SQLite WAL and an FTS5 index. It does not instantiate WebKit during text-only startup. There are no UI transition animations.
 
@@ -75,6 +75,12 @@ A second release probe generated 100,000 short messages across ten synthetic Gma
 | Unified broad match | 68.26 ms |
 
 The synthetic corpus is smaller than a real full-body mail archive. Real provider sync, arbitrary nested folders, cold-storage search, sender-address indexing and typo tolerance remain separate qualification work. Existing FTS5 search is literal full-text/prefix search over subject, sender display name, preview and cached text. Write triggers index arrivals and body updates incrementally.
+
+## Calendar UI
+
+The local sample calendar is lazy-created. One release run measured 90 ms from opening Calendar to draw submission and 11.2 ms p95 over 30 month transitions. Process footprint was 50 MiB before opening, 70 MiB active and 61 MiB two seconds after closing. A separate external sample after reopening measured 72 MiB for the process family, with no WebKit helpers.
+
+The native probe confirms that calendar and sidebar views are released over 20 open/close cycles. Allocator and graphics caches can remain after view release. These measurements use 13 sample events, warm OS caches and no provider work; they do not qualify live sync, dense calendars or long-run memory. See [the calendar evidence](benchmarks/2026-11-17-calendar.json). Add `--calendar` to the profiling command to repeat this workload.
 
 ## Reproduce
 

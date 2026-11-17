@@ -139,7 +139,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
         guard web != nil else { return }
         idleTask = Task { [weak self] in
             do { try await Task.sleep(for: Self.htmlIdleDelay) } catch { return }
-            guard let self, self.mode == .text || self.message?.html?.isEmpty != false else { return }
+            guard let self, self.mode == .text || self.message?.html?.isEmpty != false || self.isHiddenOrHasHiddenAncestor else { return }
             self.web?.stopLoading()
             self.web?.navigationDelegate = nil
             self.web?.removeFromSuperview()
@@ -151,6 +151,8 @@ final class ReaderView: NSView, WKNavigationDelegate {
             self.htmlWaiter = nil
         }
     }
+
+    func pause() { queueHTMLRelease() }
 
     func finishHTML() async throws {
         guard mode == .html, let navigation, finished !== navigation else { return }

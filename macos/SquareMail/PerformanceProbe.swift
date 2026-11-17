@@ -3,6 +3,7 @@ import Darwin
 
 enum LaunchStage: String { case core, views, controller, window, mail }
 enum SwitchPattern { case sequential, visible }
+enum CalendarProbe { case validate, preview }
 
 enum LayerReport {
     static func collect(_ view: NSView) -> [[String: Any]] {

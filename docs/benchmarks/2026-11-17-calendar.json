@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-17",
+  "hardware": "Apple M5 Max, 64 GB",
+  "os": "macOS 26.6",
+  "architecture": "arm64 release",
+  "window": "1400 x 920 points, 2x",
+  "workload": "Local demo mail and 13 sample events; one run, 30 month transitions at 30 Hz",
+  "boundary": "CPU layout and draw submission, not display presentation",
+  "calendar": {
+    "calendar_active": {
+      "footprint_mib": 70.11042785644531,
+      "rss_mib": 115.421875
+    },
+    "first_open_ms": 90.24879161734134,
+    "mail_after_close": {
+      "footprint_mib": 61.04792785644531,
+      "rss_mib": 118.75
+    },
+    "mail_before": {
+      "footprint_mib": 50.204063415527344,
+      "rss_mib": 116.109375
+    },
+    "month_navigation_p95_ms": 11.176458327099681
+  },
+  "family_footprint_mib": 71.67292785644531,
+  "webkit_helpers": 0,
+  "limits": "Warm OS caches; other applications running; retained allocator and graphics caches; no live provider sync or long-run leak qualification"
+}

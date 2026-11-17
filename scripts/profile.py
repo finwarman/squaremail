@@ -21,6 +21,7 @@ parser.add_argument("--html-idle", action="store_true")
 parser.add_argument("--stress", action="store_true")
 parser.add_argument("--heap", action="store_true")
 parser.add_argument("--visible-only", action="store_true")
+parser.add_argument("--calendar", action="store_true")
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 results = []
@@ -55,7 +56,7 @@ for run in range(args.runs):
     app_pid = None
     with log_path.open("w") as log:
         start = time.monotonic()
-        flags = (["--perf-html"] if args.html else []) + (["--perf-html-idle"] if args.html_idle else []) + (["--perf-stress"] if args.stress else []) + (["--perf-visible-only"] if args.visible_only else [])
+        flags = (["--perf-html"] if args.html else []) + (["--perf-html-idle"] if args.html_idle else []) + (["--perf-stress"] if args.stress else []) + (["--perf-visible-only"] if args.visible_only else []) + (["--perf-calendar"] if args.calendar else [])
         process = subprocess.Popen(["/usr/bin/open", "-n", "-W", "--stdout", str(log_path), "--stderr", str(log_path),
                                     str(bundle), "--args", "--data-dir", str(args.data.resolve()),
                                     "--perf-report", str(report.resolve()), "--layer-report"] + flags, stdout=log, stderr=log)

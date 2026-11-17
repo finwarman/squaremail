@@ -1,5 +1,36 @@
 import AppKit
 
+public final class ClassicCheckbox: NSButton {
+    public init(_ title: String) {
+        super.init(frame: .zero)
+        self.title = title
+        setButtonType(.switch)
+        isBordered = false
+        focusRingType = .none
+        setAccessibilityLabel(title)
+    }
+
+    required init?(coder: NSCoder) { fatalError("Use init(title:)") }
+    public override var isFlipped: Bool { true }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        let rect = NSRect(x: 3, y: floor((bounds.height - 13) / 2), width: 13, height: 13)
+        ClassicTheme.light.setFill(); rect.fill()
+        ClassicTheme.bevel(rect, edge: .sunken)
+        if state == .on {
+            (isEnabled ? ClassicTheme.ink : ClassicTheme.shadow).setStroke()
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 6))
+            path.line(to: NSPoint(x: rect.minX + 5, y: rect.minY + 9))
+            path.line(to: NSPoint(x: rect.minX + 10, y: rect.minY + 3))
+            path.lineWidth = 2
+            path.stroke()
+        }
+        ClassicTheme.text(title, in: NSRect(x: 23, y: floor((bounds.height - 16) / 2), width: bounds.width - 25, height: 17),
+                          size: 10, color: isEnabled ? ClassicTheme.ink : ClassicTheme.shadow)
+    }
+}
+
 public final class ClassicButton: NSButton {
     public enum Style { case normal, toolbar, toggle, title, menu }
     public var onPress: (() -> Void)?
