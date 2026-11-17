@@ -1,5 +1,7 @@
 import AppKit
 
+private enum PixelFill { case outline, solid }
+
 public enum ClassicIcon {
     case mail, inbox, sent, draft, trash, folder, search, sync, star, account, html, text, attach, settings
 
@@ -13,14 +15,14 @@ public enum ClassicIcon {
             ClassicTheme.color(color).setFill()
             NSRect(x: x, y: y, width: w, height: h).fill()
         }
-        func line(_ points: [NSPoint], _ color: UInt32, fill: Bool = false) {
+        func line(_ points: [NSPoint], _ color: UInt32, fill: PixelFill = .outline) {
             let path = NSBezierPath()
             guard let first = points.first else { return }
             path.move(to: first)
             for point in points.dropFirst() { path.line(to: point) }
             ClassicTheme.color(color).setStroke()
             ClassicTheme.color(color).setFill()
-            if fill { path.close(); path.fill() } else { path.lineWidth = 1; path.stroke() }
+            if fill == .solid { path.close(); path.fill() } else { path.lineWidth = 1; path.stroke() }
         }
         switch self {
         case .mail, .inbox, .sent:
@@ -32,11 +34,11 @@ public enum ClassicIcon {
             line([.init(x: 14, y: 13), .init(x: 10, y: 9)], 0xC6AB5B)
             if self == .inbox {
                 box(5, 0, 5, 5, 0x2384B5)
-                line([.init(x: 3, y: 3), .init(x: 12, y: 3), .init(x: 7.5, y: 8)], 0x00608E, fill: true)
+                line([.init(x: 3, y: 3), .init(x: 12, y: 3), .init(x: 7.5, y: 8)], 0x00608E, fill: .solid)
                 box(6, 0, 2, 4, 0x8CE0EF)
             }
             if self == .sent {
-                line([.init(x: 8, y: 0), .init(x: 15, y: 5), .init(x: 10, y: 6), .init(x: 9, y: 11)], 0x288B43, fill: true)
+                line([.init(x: 8, y: 0), .init(x: 15, y: 5), .init(x: 10, y: 6), .init(x: 9, y: 11)], 0x288B43, fill: .solid)
             }
         case .folder, .draft:
             box(1, 4, 14, 10, 0x85650D)
@@ -46,7 +48,7 @@ public enum ClassicIcon {
             box(2, 5, 12, 1, 0xFFF0AB)
             box(3, 7, 11, 6, 0xFFD676)
             if self == .draft {
-                line([.init(x: 8, y: 13), .init(x: 11, y: 4), .init(x: 14, y: 3), .init(x: 12, y: 12)], 0x274EA1, fill: true)
+                line([.init(x: 8, y: 13), .init(x: 11, y: 4), .init(x: 14, y: 3), .init(x: 12, y: 12)], 0x274EA1, fill: .solid)
             }
         case .search:
             box(10, 10, 2, 2, 0x333333)
@@ -59,13 +61,13 @@ public enum ClassicIcon {
             box(4, 3, 4, 1, 0xFFFFFF)
         case .sync:
             line([.init(x: 3, y: 7), .init(x: 4, y: 3), .init(x: 10, y: 2), .init(x: 13, y: 5)], 0x247BB6)
-            line([.init(x: 10, y: 5), .init(x: 15, y: 6), .init(x: 14, y: 1)], 0x247BB6, fill: true)
+            line([.init(x: 10, y: 5), .init(x: 15, y: 6), .init(x: 14, y: 1)], 0x247BB6, fill: .solid)
             line([.init(x: 13, y: 9), .init(x: 12, y: 13), .init(x: 6, y: 14), .init(x: 3, y: 11)], 0x247BB6)
-            line([.init(x: 6, y: 11), .init(x: 1, y: 10), .init(x: 2, y: 15)], 0x247BB6, fill: true)
+            line([.init(x: 6, y: 11), .init(x: 1, y: 10), .init(x: 2, y: 15)], 0x247BB6, fill: .solid)
         case .star:
             line([.init(x: 8, y: 1), .init(x: 10, y: 6), .init(x: 15, y: 6), .init(x: 11, y: 10),
                   .init(x: 13, y: 15), .init(x: 8, y: 12), .init(x: 3, y: 15), .init(x: 5, y: 10),
-                  .init(x: 1, y: 6), .init(x: 6, y: 6)], 0xD4A520, fill: true)
+                  .init(x: 1, y: 6), .init(x: 6, y: 6)], 0xD4A520, fill: .solid)
             box(7, 5, 2, 5, 0xFFE98D)
         case .trash:
             box(4, 4, 9, 11, 0x777777); box(5, 5, 7, 9, 0xD7DCDD)
