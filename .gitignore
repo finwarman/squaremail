@@ -6,3 +6,4 @@ target/
 .env
 local-oauth.json
 artifacts/
+__pycache__/

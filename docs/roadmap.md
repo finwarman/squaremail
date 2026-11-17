@@ -4,6 +4,8 @@ The first milestone is a local reader with a reusable classic UI. The full email
 
 Before a private daily-driver release:
 
+- Support Google Calendar, Outlook.com/Live and Microsoft 365 calendars, plus macOS notifications. Qualify update freshness, bounded background tasks, cancellation, account isolation and long-run whole-process memory. Add these after startup/memory work and multi-inbox login qualification.
+
 - Qualify real Gmail, Google Workspace, Outlook.com and Microsoft 365 OAuth registrations, consent, refresh, revocation and offline failures.
 - Add Gmail history and Graph delta sync, pagination, throttling, retries, cancellation and folder reconciliation. Full sync must survive interrupted downloads and token expiry.
 - Prove account and folder isolation with provider HTTP contract fixtures. Cover concurrent refresh and large/malformed MIME bodies.

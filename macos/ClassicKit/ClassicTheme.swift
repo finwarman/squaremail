@@ -62,10 +62,29 @@ public enum ClassicTheme {
 }
 
 public final class ClassicPanel: NSView {
-    public var edge: ClassicTheme.Edge = .raised
-    public var fill: NSColor = ClassicTheme.face
+    public var edge: ClassicTheme.Edge = .raised { didSet { needsDisplay = true } }
+    public var fill: NSColor = ClassicTheme.face { didSet { needsDisplay = true } }
+    private let surface = ClassicSurface()
     public override var isFlipped: Bool { true }
     public override var isOpaque: Bool { true }
+    public override var wantsUpdateLayer: Bool { true }
+
+    public override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
+
+    public override func layout() {
+        super.layout()
+        needsDisplay = true
+    }
+
+    public override func updateLayer() {
+        surface.update(layer, bounds: bounds, fill: fill, edge: edge)
+    }
 
     public override func draw(_ dirtyRect: NSRect) {
         fill.setFill()

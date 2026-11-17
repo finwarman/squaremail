@@ -18,9 +18,15 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var bodyRevision = 0
     private var searchTask: Task<Void, Never>?
     private var syncing = false
+    private var readingTask: Task<Void, Never>?
+    private var rowViewsMade = 0
+    private static let rowReuseID = NSUserInterfaceItemIdentifier("mail-row")
+    private static let pageSize = 250
+    private var pageOffset = 0
     private let textButton = ClassicButton("Text only", icon: .text, style: .toggle)
     private let htmlButton = ClassicButton("HTML", icon: .html, style: .toggle)
-    private let more = ClassicButton("More…")
+    private let more = ClassicButton("Older")
+    private let newer = ClassicButton("Newer")
     private let syncButton = ClassicButton("Sync", icon: .sync, style: .toolbar)
     private let dateFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -94,8 +100,12 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         textButton.state = .on
         more.frame = NSRect(x: layout.listPane.bounds.width - 76, y: 4, width: 67, height: 22)
         more.autoresizingMask = [.minXMargin]
-        more.onPress = { [weak self] in Task { await self?.loadList(append: .append) } }
+        more.onPress = { [weak self] in Task { await self?.loadList(page: .older) } }
         layout.listPane.addSubview(more)
+        newer.frame = NSRect(x: layout.listPane.bounds.width - 148, y: 4, width: 67, height: 22)
+        newer.autoresizingMask = [.minXMargin]
+        newer.onPress = { [weak self] in Task { await self?.loadList(page: .newer) } }
+        layout.listPane.addSubview(newer)
     }
 
     private func buildTable() {
@@ -143,29 +153,35 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
     }
 
-    private enum ListMode { case replace, append }
+    private enum ListPage { case start, older, newer }
 
-    private func loadList(append: ListMode = .replace) async {
+    private func loadList(page direction: ListPage = .start) async {
         listRevision += 1
         let revision = listRevision
         let selected = current?.id
-        if append == .replace {
-            bodyRevision += 1
-            current = nil
-            layout.header.display(nil)
-            layout.reader.showNotice("Loading local messages…")
+        let offset: Int
+        switch direction {
+        case .start: offset = 0
+        case .older: offset = pageOffset + Self.pageSize
+        case .newer: offset = max(0, pageOffset - Self.pageSize)
         }
+        bodyRevision += 1
+        current = nil
+        layout.header.display(nil)
+        layout.reader.showNotice("Loading local messages…")
         let command: [String: Any] = [
             "command": "list", "account": account as Any? ?? NSNull(), "folder": folder.rawValue,
-            "query": layout.search.stringValue, "offset": append == .append ? messages.count : 0, "limit": 250
+            "query": layout.search.stringValue, "offset": offset, "limit": Self.pageSize
         ]
         do {
             let page: [Mail] = try await core.request(command, mode: mailbox)
             guard revision == listRevision else { return }
-            messages = append == .append ? messages + page : page
+            messages = page
+            pageOffset = offset
             table.reloadData()
-            more.isEnabled = page.count == 250
-            layout.listCaption.stringValue = "\(folder.title.uppercased())  ·  \(messages.count) MESSAGES"
+            more.isEnabled = page.count == Self.pageSize
+            newer.isEnabled = pageOffset > 0
+            layout.listCaption.stringValue = "\(folder.title.uppercased())  ·  \(messages.isEmpty ? "0" : "\(offset + 1)-\(offset + messages.count)") SHOWN"
             layout.statusText.stringValue = "\(messages.count) messages  ·  \(messages.filter(\.unread).count) unread  ·  \(mailbox == .demo ? "Demo data" : "Cached on this Mac")"
             if !messages.isEmpty {
                 let index = selected.flatMap { id in messages.firstIndex(where: { $0.id == id }) } ?? 0
@@ -183,7 +199,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func numberOfRows(in tableView: NSTableView) -> Int { messages.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        let view = ClassicRow()
+        let view: ClassicRow
+        if let reused = tableView.makeView(withIdentifier: Self.rowReuseID, owner: self) as? ClassicRow {
+            view = reused
+        } else {
+            view = ClassicRow()
+            view.identifier = Self.rowReuseID
+            rowViewsMade += 1
+        }
         view.backgroundColor = row % 2 == 0 ? .white : ClassicTheme.row
         return view
     }
@@ -212,22 +235,28 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         bodyRevision += 1
         let revision = bodyRevision
         let mode = mailbox
-        layout.header.display(summary)
-        current = summary
-        layout.reader.showNotice("Opening message…")
-        Task {
+        readingTask = Task {
             do {
                 var mail: Mail = try await core.request(["command": "message", "id": summary.id, "mode": "cached"], mode: mode)
                 guard revision == bodyRevision else { return }
                 if mail.text == nil {
+                    let arguments = ProcessInfo.processInfo.arguments
+                    if arguments.contains("--perf-report") || arguments.contains("--self-test") || arguments.contains("--check-paging") || arguments.contains("--metrics") {
+                        throw MailError(message: "Offline probes require a cached message body")
+                    }
+                    current = summary
+                    layout.header.display(summary)
                     layout.reader.showNotice("Downloading message body…")
                     mail = try await core.request(["command": "message", "id": summary.id, "mode": "fetch"], mode: mode, queue: .network)
                 }
                 guard revision == bodyRevision else { return }
                 current = mail
+                layout.header.display(mail)
                 layout.reader.display(mail, mode: readerMode)
             } catch {
                 guard revision == bodyRevision else { return }
+                current = summary
+                layout.header.display(summary)
                 layout.reader.showNotice("This body is not cached.\n\n\(error.localizedDescription)")
             }
         }
@@ -412,6 +441,82 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     // A native integration probe exercises the same controller and bridge as the UI.
+    func finishSelection() async {
+        await readingTask?.value
+        layout.layoutSubtreeIfNeeded()
+        layout.window?.displayIfNeeded()
+        CATransaction.flush()
+    }
+
+    func measureSwitches(_ reader: ReaderMode = .text, samples: Int = 200, pattern: SwitchPattern = .sequential) async throws -> [String: Any] {
+        guard messages.count > 1 else { throw MailError(message: "Switching requires two cached messages") }
+        setReader(reader)
+        var timings: [Double] = []
+        var bodyTimings: [Double] = []
+        var sizes: [Int] = []
+        var growth: [String: Any] = [:]
+        let checkpoints: Set<Int> = [100, 500, 1000]
+        if samples >= 1000 {
+            try await Task.sleep(for: .seconds(2))
+            growth["0"] = try MemoryProbe.snapshot()
+        }
+        for step in 0..<samples {
+            // Model 30 Hz navigation without building an artificial compositor backlog.
+            try await Task.sleep(for: .milliseconds(33))
+            let index = pattern == .visible ? 4 + step % 2 : (step + 1) % min(messages.count, 40)
+            guard messages.indices.contains(index) else { throw MailError(message: "Visible-row probe needs six cached messages") }
+            let start = ProcessInfo.processInfo.systemUptime
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            table.scrollRowToVisible(index)
+            await readingTask?.value
+            bodyTimings.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            await finishSelection()
+            if reader == .html { try await layout.reader.finishHTML(); await finishSelection() }
+            guard current?.id == messages[index].id, current?.text != nil else {
+                throw MailError(message: "Selection probe did not display the requested cached body")
+            }
+            timings.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            sizes.append(current?.text?.utf8.count ?? 0)
+            if samples >= 1000, checkpoints.contains(step + 1) {
+                try await Task.sleep(for: .seconds(2))
+                growth[String(step + 1)] = try MemoryProbe.snapshot()
+            }
+        }
+        timings.sort()
+        bodyTimings.sort()
+        return ["samples": samples, "selection_to_draw_submit_p50_ms": timings[samples / 2],
+                "selection_to_draw_submit_p95_ms": timings[Int(Double(samples) * 0.95) - 1],
+                "selection_to_body_ready_p95_ms": bodyTimings[Int(Double(samples) * 0.95) - 1],
+                "selection_to_draw_submit_max_ms": timings.last ?? 0,
+                "body_bytes_min": sizes.min() ?? 0, "body_bytes_max": sizes.max() ?? 0,
+                "memory_checkpoints": growth, "row_views_created": rowViewsMade]
+    }
+
+    func measureHTMLIdle() async throws -> [String: Any] {
+        setReader(.text)
+        try await Task.sleep(for: .seconds(6))
+        guard !layout.reader.hasHTMLRenderer else { throw MailError(message: "Idle HTML renderer was retained") }
+        return ["html_renderer_released": true]
+    }
+
+    func checkPaging() async throws {
+        guard messages.count == Self.pageSize, let first = messages.first?.id else {
+            throw MailError(message: "Paging probe requires more than 500 generated messages")
+        }
+        await loadList(page: .older)
+        guard pageOffset == Self.pageSize, messages.count == Self.pageSize, messages.first?.id != first else {
+            throw MailError(message: "Older page did not replace the header window")
+        }
+        await loadList(page: .older)
+        guard pageOffset == Self.pageSize * 2, messages.count < Self.pageSize else {
+            throw MailError(message: "Last page exceeded the header budget")
+        }
+        await loadList(page: .newer)
+        await loadList(page: .newer)
+        guard pageOffset == 0, messages.first?.id == first else { throw MailError(message: "Newer pages did not restore the inbox") }
+        await finishSelection()
+    }
+
     func measureCache() async throws -> [String: Any] {
         guard let mail = messages.first else { throw MailError(message: "No cached mail to measure") }
         var timings: [Double] = []
@@ -437,15 +542,32 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
         layout.search.stringValue = ""
         await loadList()
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+        await finishSelection()
+        guard current?.id == messages[2].id else { throw MailError(message: "A stale selection replaced the current message") }
+        _ = try await measureSwitches(samples: 40)
+        let warmRows = rowViewsMade
+        _ = try await measureSwitches(samples: 40)
+        guard rowViewsMade == warmRows else { throw MailError(message: "Row views grew while revisiting the same messages") }
         setReader(.html)
         layout.reader.display(body, mode: .html)
+        try await layout.reader.finishHTML()
         guard !HTMLPolicy.permitsLink(URL(string: "file:///etc/passwd")!),
               !HTMLPolicy.permitsLink(URL(string: "javascript:alert(1)")!),
               HTMLPolicy.contentPolicy.contains("default-src 'none'") else {
             throw MailError(message: "HTML navigation policy failed")
         }
         setReader(.text)
+        _ = try await measureHTMLIdle()
+        setReader(.html)
+        layout.reader.display(body, mode: .html)
+        try await layout.reader.finishHTML()
+        guard layout.reader.hasHTMLRenderer else { throw MailError(message: "HTML could not reopen after idle release") }
+        setReader(.text)
         return ["native_search": true, "body_roundtrip": true, "passive_html": true,
+                "latest_selection": true, "html_release_and_reopen": true,
+                "bounded_row_views": true,
                 "main_thread_io": false, "mailbox_rows": messages.count]
     }
 }

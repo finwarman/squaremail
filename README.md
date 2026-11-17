@@ -23,10 +23,12 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Import `.eml`, including MIME text/HTML alternatives and encoded headers.
 - Persistent SQLite WAL cache with FTS5 prefix search.
 - Native reusable rows with bounded pages and a draggable reading-pane divider.
+- Older/Newer paging retains at most 250 message headers.
 - Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
 - Read-only Gmail and Microsoft Graph adapters, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Latest 200 headers per selected provider folder; message bodies download on opening and remain available offline.
 - HTML sanitization, JavaScript disabled, nonpersistent WebKit storage, CSP and blocked subresources.
+- Five-second idle release of the HTML renderer after returning to text.
 
 See [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
 
@@ -50,4 +52,8 @@ Visual references: [visualbasic.world](https://visualbasic.world/), [Double Drag
 
 The native integration probe starts a temporary demo mailbox and exercises the actual AppKit controller, Rust bridge, SQLite search and body reader. It never signs in or contacts a provider. Provider live qualification remains a separate release gate.
 
+`scripts/profile.py` measures native selection through body layout and draw submission, startup, and process-family footprint. It can run a 1,000-switch stress test and include WebKit helpers. See [the performance method](docs/performance.md) before comparing numbers.
+
 Original project code is MIT licensed. The project starts private under `finwarman/squaremail`, with public release planned after the release gates are met.
+
+The original app icon uses editable geometry in `assets/icon.json`. SVG/PNG previews are in `assets/`; the app bundles `macos/Resources/AppIcon.icns`. Run `scripts/make-icon.sh` after editing the source.

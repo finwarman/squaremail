@@ -22,6 +22,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func launch() throws {
         let arguments = ProcessInfo.processInfo.arguments
+        var stages: [String: Double] = [:]
+        func stamp(_ stage: LaunchStage) {
+            stages[stage.rawValue] = (ProcessInfo.processInfo.systemUptime - launchTime) * 1000
+        }
         let directory: URL
         if let index = arguments.firstIndex(of: "--data-dir"), arguments.indices.contains(index + 1) {
             directory = URL(fileURLWithPath: arguments[index + 1])
@@ -30,6 +34,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                                                      appropriateFor: nil, create: true).appendingPathComponent("Square Mail")
         }
         let core = try MailCore(directory: directory)
+        stamp(.core)
         let size = NSSize(width: 1400, height: 920)
         let window = MailWindow(contentRect: NSRect(origin: .zero, size: size),
                                 styleMask: [.borderless, .resizable, .miniaturizable, .closable],
@@ -40,6 +45,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         window.backgroundColor = ClassicTheme.face
         window.appearance = NSAppearance(named: .aqua)
         window.hasShadow = true
+        window.animationBehavior = .none
         window.isReleasedWhenClosed = false
         window.delegate = self
         let layout = MailLayout(frame: NSRect(origin: .zero, size: size))
@@ -48,14 +54,47 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         layout.layout()
         layout.split.setPosition(300, ofDividerAt: 0)
         layout.layout()
+        stamp(.views)
         addWindowButtons(layout.titleBar, window)
         let controller = MailController(core: core, layout: layout)
+        stamp(.controller)
         self.controller = controller
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         Task {
             await controller.start()
+            stamp(.mail)
+            await controller.finishSelection()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            stamp(.window)
+            if arguments.contains("--check-paging") {
+                do { try await controller.checkPaging(); print("Bounded paging verified"); NSApp.terminate(nil) }
+                catch { fputs("PAGING FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            if let index = arguments.firstIndex(of: "--perf-report"), arguments.indices.contains(index + 1) {
+                do {
+                    await controller.finishSelection()
+                    let path = URL(fileURLWithPath: arguments[index + 1])
+                    var report: [String: Any] = ["in_process_reader_ready_ms": (ProcessInfo.processInfo.systemUptime - launchTime) * 1000,
+                                               "pid": ProcessInfo.processInfo.processIdentifier,
+                                               "startup_stages_ms": stages,
+                                               "measurement_complete": false]
+                    if arguments.contains("--layer-report") {
+                        report["layers"] = LayerReport.collect(layout)
+                    }
+                    try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: path, options: .atomic)
+                    report["switching"] = try await controller.measureSwitches(samples: arguments.contains("--perf-stress") ? 1000 : 200,
+                        pattern: arguments.contains("--perf-visible-only") ? .visible : .sequential)
+                    if arguments.contains("--perf-html") || arguments.contains("--perf-html-idle") {
+                        report["html_switching"] = try await controller.measureSwitches(.html, samples: 30)
+                    }
+                    if arguments.contains("--perf-html-idle") {
+                        report["html_idle"] = try await controller.measureHTMLIdle()
+                    }
+                    report["measurement_complete"] = true
+                    try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: path, options: .atomic)
+                } catch { fputs("PERFORMANCE FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--metrics") {
                 do {
                     let ready = (ProcessInfo.processInfo.systemUptime - launchTime) * 1000

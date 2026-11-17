@@ -325,4 +325,117 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    #[ignore = "creates generated mail for the native reader performance probe"]
+    fn seed_reader_benchmark() {
+        let path = std::env::var("SQUAREMAIL_PROFILE_DB")
+            .expect("Set SQUAREMAIL_PROFILE_DB to a disposable database");
+        let store = Store::open(&path).unwrap();
+        account(&store, "reader-profile");
+        let count = std::env::var("SQUAREMAIL_PROFILE_COUNT")
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(64);
+        for index in 0..count {
+            let mut message = mail("reader-profile");
+            let size = if index == count - 2 {
+                1024 * 1024
+            } else if index % 10 == 0 {
+                128 * 1024
+            } else {
+                8 * 1024
+            };
+            let paragraph = "Generated performance fixture. This is not real mail.\nThe reader should show this text without blocking input.\n\n";
+            let body = paragraph.repeat(size / paragraph.len());
+            message.id = format!("reader-profile:{index}");
+            message.remote_id = index.to_string();
+            message.subject = format!("Reader fixture {index}: {size} bytes");
+            message.timestamp = index;
+            message.preview = "Generated local mail for performance measurements".into();
+            message.text = Some(body.clone());
+            message.html = Some(format!(
+                "<p>Generated HTML fixture {index}</p><pre>{body}</pre>"
+            ));
+            store.save(&message, Folder::Inbox).unwrap();
+        }
+        println!("Generated {count} cached messages in {path}");
+    }
+
+    #[test]
+    #[ignore = "release-only 100,000-message multi-account search probe"]
+    fn account_search_benchmark() {
+        use std::time::Instant;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path().join("mail.sqlite").to_str().unwrap()).unwrap();
+        for index in 0..10 {
+            store
+                .save_account(&Account {
+                    id: format!("scale-{index}"),
+                    email: format!("scale-{index}@example.invalid"),
+                    provider: if index % 2 == 0 {
+                        Provider::Gmail
+                    } else {
+                        Provider::Outlook
+                    },
+                })
+                .unwrap();
+        }
+        let mut message = mail("scale-0");
+        for index in 0..100_000 {
+            message.account_id = format!("scale-{}", index % 10);
+            message.remote_id = (index / 10).to_string();
+            message.id = format!("{}:{}", message.account_id, message.remote_id);
+            message.subject = format!("Engine invoice {index:06}");
+            message.timestamp = index;
+            let folder = [Folder::Inbox, Folder::Sent, Folder::Archive][index as usize % 3];
+            store.save(&message, folder).unwrap();
+        }
+        let cases = [
+            ("account_inbox", Some("scale-0"), Folder::Inbox, "", 250),
+            ("unified_inbox", None, Folder::Inbox, "", 250),
+            (
+                "scoped_selective",
+                Some("scale-0"),
+                Folder::Sent,
+                "073000",
+                1,
+            ),
+            ("unified_selective", None, Folder::All, "073000", 1),
+            (
+                "account_common",
+                Some("scale-0"),
+                Folder::All,
+                "engine",
+                250,
+            ),
+            (
+                "folder_common",
+                Some("scale-0"),
+                Folder::Inbox,
+                "engine",
+                250,
+            ),
+            ("unified_common", None, Folder::All, "engine", 250),
+        ];
+        let mut results = serde_json::Map::new();
+        for (name, account, folder, query, expected) in cases {
+            let mut times = Vec::new();
+            for _ in 0..30 {
+                let start = Instant::now();
+                let rows = store.list(account, folder, query, 0, PAGE_LIMIT).unwrap();
+                assert_eq!(rows.len(), expected);
+                if let Some(account) = account {
+                    assert!(rows.iter().all(|m| m.account_id == account));
+                }
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(f64::total_cmp);
+            results.insert(name.into(), serde_json::json!({"p95_ms": times[28]}));
+        }
+        println!(
+            "MULTI_ACCOUNT_BENCHMARK {}",
+            serde_json::Value::Object(results)
+        );
+    }
 }

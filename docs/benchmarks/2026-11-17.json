@@ -1,0 +1,371 @@
+{
+  "date": "2026-11-17",
+  "machine": "Apple M5 Max, 64 GB, macOS 26.6",
+  "window": "1400x920 logical points at 2x",
+  "corpus": "64 generated cached messages, 8 KiB / 128 KiB / 1 MiB bodies",
+  "comparison": {
+    "baseline": [
+      {
+        "in_process_reader_ready_ms": 307.64849996194243,
+        "startup_stages_ms": {
+          "controller": 171.89716664142907,
+          "core": 142.5284582655877,
+          "mail": 259.8344166763127,
+          "views": 161.51404159609228,
+          "window": 190.22454170044512
+        },
+        "switching": {
+          "body_bytes_max": 1048544,
+          "body_bytes_min": 8176,
+          "samples": 200,
+          "selection_to_draw_submit_max_ms": 29.237416572868824,
+          "selection_to_draw_submit_p50_ms": 9.443624992854893,
+          "selection_to_draw_submit_p95_ms": 17.146791680715978
+        },
+        "launcher_observed_ready_ms": 850.141625,
+        "steady_rss_mib": 297.9375,
+        "family_footprint_mib": 159.9542694091797,
+        "webkit_helpers": 0
+      },
+      {
+        "in_process_reader_ready_ms": 220.12433339841664,
+        "startup_stages_ms": {
+          "controller": 129.83574997633696,
+          "core": 107.48791671358049,
+          "mail": 189.8052083561197,
+          "views": 120.48362498171628,
+          "window": 140.29462507460266
+        },
+        "switching": {
+          "body_bytes_max": 1048544,
+          "body_bytes_min": 8176,
+          "samples": 200,
+          "selection_to_draw_submit_max_ms": 29.797666589729488,
+          "selection_to_draw_submit_p50_ms": 17.75304169859737,
+          "selection_to_draw_submit_p95_ms": 23.686416679993272
+        },
+        "launcher_observed_ready_ms": 619.7463329999999,
+        "steady_rss_mib": 305.5625,
+        "family_footprint_mib": 161.15741729736328,
+        "webkit_helpers": 0
+      },
+      {
+        "in_process_reader_ready_ms": 227.87904168944806,
+        "startup_stages_ms": {
+          "controller": 135.50529163330793,
+          "core": 118.84679167997092,
+          "mail": 189.89008327480406,
+          "views": 128.41033330187201,
+          "window": 146.10641659237444
+        },
+        "switching": {
+          "body_bytes_max": 1048544,
+          "body_bytes_min": 8176,
+          "samples": 200,
+          "selection_to_draw_submit_max_ms": 34.67720828484744,
+          "selection_to_draw_submit_p50_ms": 18.45041662454605,
+          "selection_to_draw_submit_p95_ms": 24.2113332496956
+        },
+        "launcher_observed_ready_ms": 624.336041,
+        "steady_rss_mib": 312.453125,
+        "family_footprint_mib": 168.82929229736328,
+        "webkit_helpers": 0
+      }
+    ],
+    "optimized": [
+      {
+        "in_process_reader_ready_ms": 219.34041671920568,
+        "startup_stages_ms": {
+          "controller": 148.7611667253077,
+          "core": 125.95658341888338,
+          "mail": 187.279041740112,
+          "views": 140.1467917021364,
+          "window": 216.89229167532176
+        },
+        "switching": {
+          "body_bytes_max": 1048544,
+          "body_bytes_min": 8176,
+          "memory_checkpoints": {},
+          "row_views_created": 10,
+          "samples": 200,
+          "selection_to_body_ready_p95_ms": 11.29195827525109,
+          "selection_to_draw_submit_max_ms": 67.48920830432326,
+          "selection_to_draw_submit_p50_ms": 8.494791691191494,
+          "selection_to_draw_submit_p95_ms": 12.304458301514387
+        },
+        "launcher_observed_ready_ms": 628.2970829999999,
+        "steady_rss_mib": 163.578125,
+        "family_footprint_mib": 88.79790496826172,
+        "webkit_helpers": 0
+      },
+      {
+        "in_process_reader_ready_ms": 188.24383325409144,
+        "startup_stages_ms": {
+          "controller": 126.94162491243333,
+          "core": 104.36283331364393,
+          "mail": 157.42258331738412,
+          "views": 116.70279165264219,
+          "window": 185.8267083298415
+        },
+        "switching": {
+          "body_bytes_max": 1048544,
+          "body_bytes_min": 8176,
+          "memory_checkpoints": {},
+          "row_views_created": 10,
+          "samples": 200,
+          "selection_to_body_ready_p95_ms": 20.370041602291167,
+          "selection_to_draw_submit_max_ms": 30.419833376072347,
+          "selection_to_draw_submit_p50_ms": 14.381999964825809,
+          "selection_to_draw_submit_p95_ms": 21.18345838971436
+        },
+        "launcher_observed_ready_ms": 525.20025,
+        "steady_rss_mib": 168.703125,
+        "family_footprint_mib": 91.1573257446289,
+        "webkit_helpers": 0
+      },
+      {
+        "in_process_reader_ready_ms": 179.6319583663717,
+        "startup_stages_ms": {
+          "controller": 125.0232916790992,
+          "core": 84.56441666930914,
+          "mail": 157.85312501247972,
+          "views": 116.80437508039176,
+          "window": 178.48466674331576
+        },
+        "switching": {
+          "body_bytes_max": 1048544,
+          "body_bytes_min": 8176,
+          "memory_checkpoints": {},
+          "row_views_created": 10,
+          "samples": 200,
+          "selection_to_body_ready_p95_ms": 20.955875050276518,
+          "selection_to_draw_submit_max_ms": 29.559625079855323,
+          "selection_to_draw_submit_p50_ms": 17.193708335980773,
+          "selection_to_draw_submit_p95_ms": 21.849874989129603
+        },
+        "launcher_observed_ready_ms": 531.046333,
+        "steady_rss_mib": 169.390625,
+        "family_footprint_mib": 94.70415496826172,
+        "webkit_helpers": 0
+      }
+    ]
+  },
+  "visible_rows": [
+    {
+      "in_process_reader_ready_ms": 191.7307082330808,
+      "startup_stages_ms": {
+        "controller": 124.08979167230427,
+        "core": 104.32583326473832,
+        "mail": 162.13449998758733,
+        "views": 115.71024998556823,
+        "window": 189.4613333279267
+      },
+      "switching": {
+        "body_bytes_max": 8176,
+        "body_bytes_min": 8176,
+        "memory_checkpoints": {},
+        "row_views_created": 9,
+        "samples": 200,
+        "selection_to_body_ready_p95_ms": 15.639125020243227,
+        "selection_to_draw_submit_max_ms": 33.91733334865421,
+        "selection_to_draw_submit_p50_ms": 11.935833375900984,
+        "selection_to_draw_submit_p95_ms": 16.112958313897252
+      },
+      "launcher_observed_ready_ms": 534.3944580000001,
+      "steady_rss_mib": 123.546875,
+      "family_footprint_mib": 55.36035919189453,
+      "webkit_helpers": 0
+    },
+    {
+      "in_process_reader_ready_ms": 193.7457916792482,
+      "startup_stages_ms": {
+        "controller": 129.89900005050004,
+        "core": 110.37291667889804,
+        "mail": 162.2863750671968,
+        "views": 121.80991668719798,
+        "window": 189.5178749691695
+      },
+      "switching": {
+        "body_bytes_max": 8176,
+        "body_bytes_min": 8176,
+        "memory_checkpoints": {},
+        "row_views_created": 9,
+        "samples": 200,
+        "selection_to_body_ready_p95_ms": 15.195541665889323,
+        "selection_to_draw_submit_max_ms": 44.48095825500786,
+        "selection_to_draw_submit_p50_ms": 10.0499166874215,
+        "selection_to_draw_submit_p95_ms": 15.985875041224062
+      },
+      "launcher_observed_ready_ms": 540.3153340000007,
+      "steady_rss_mib": 120.59375,
+      "family_footprint_mib": 53.40730285644531,
+      "webkit_helpers": 0
+    },
+    {
+      "in_process_reader_ready_ms": 219.96062505058944,
+      "startup_stages_ms": {
+        "controller": 150.16170835588127,
+        "core": 125.57383335661143,
+        "mail": 185.57379161939025,
+        "views": 141.27912500407547,
+        "window": 217.45941671542823
+      },
+      "switching": {
+        "body_bytes_max": 8176,
+        "body_bytes_min": 8176,
+        "memory_checkpoints": {},
+        "row_views_created": 9,
+        "samples": 200,
+        "selection_to_body_ready_p95_ms": 10.77516668010503,
+        "selection_to_draw_submit_max_ms": 24.65120831038803,
+        "selection_to_draw_submit_p50_ms": 9.939833311364055,
+        "selection_to_draw_submit_p95_ms": 10.990333277732134
+      },
+      "launcher_observed_ready_ms": 612.3654159999994,
+      "steady_rss_mib": 109.796875,
+      "family_footprint_mib": 55.18855285644531,
+      "webkit_helpers": 0
+    }
+  ],
+  "stress": [
+    {
+      "in_process_reader_ready_ms": 335.56645829230547,
+      "startup_stages_ms": {
+        "controller": 254.1274999966845,
+        "core": 214.7440833505243,
+        "mail": 299.00229163467884,
+        "views": 236.4946249872446,
+        "window": 333.56658334378153
+      },
+      "switching": {
+        "body_bytes_max": 1048544,
+        "body_bytes_min": 8176,
+        "memory_checkpoints": {
+          "0": {
+            "footprint_mib": 45.40716552734375,
+            "rss_mib": 117.734375
+          },
+          "100": {
+            "footprint_mib": 89.89165496826172,
+            "rss_mib": 169.328125
+          },
+          "500": {
+            "footprint_mib": 110.61042785644531,
+            "rss_mib": 183.6875
+          },
+          "1000": {
+            "footprint_mib": 83.61040496826172,
+            "rss_mib": 164.875
+          }
+        },
+        "row_views_created": 10,
+        "samples": 1000,
+        "selection_to_draw_submit_max_ms": 46.03595833759755,
+        "selection_to_draw_submit_p50_ms": 14.590833336114883,
+        "selection_to_draw_submit_p95_ms": 20.443541696295142
+      },
+      "launcher_observed_ready_ms": 457.39291700000007,
+      "steady_rss_mib": 164.90625,
+      "family_footprint_mib": 83.61040496826172,
+      "webkit_helpers": 0
+    }
+  ],
+  "html": [
+    {
+      "html_switching": {
+        "body_bytes_max": 326,
+        "body_bytes_min": 66,
+        "memory_checkpoints": {},
+        "samples": 30,
+        "selection_to_draw_submit_max_ms": 64.33887500315905,
+        "selection_to_draw_submit_p50_ms": 6.744458340108395,
+        "selection_to_draw_submit_p95_ms": 12.365541653707623
+      },
+      "in_process_reader_ready_ms": 471.2711250176653,
+      "startup_stages_ms": {
+        "controller": 321.3342917151749,
+        "core": 287.29070839472115,
+        "mail": 403.02512503694743,
+        "views": 300.59341667219996,
+        "window": 468.53291674051434
+      },
+      "switching": {
+        "body_bytes_max": 326,
+        "body_bytes_min": 66,
+        "memory_checkpoints": {},
+        "samples": 200,
+        "selection_to_draw_submit_max_ms": 38.710791734047234,
+        "selection_to_draw_submit_p50_ms": 10.867874952964485,
+        "selection_to_draw_submit_p95_ms": 17.728208331391215
+      },
+      "launcher_observed_ready_ms": 603.784,
+      "steady_rss_mib": 247.765625,
+      "family_footprint_mib": 137.3626251220703,
+      "webkit_helpers": 3
+    }
+  ],
+  "html_idle": [
+    {
+      "html_idle": {
+        "html_renderer_released": true
+      },
+      "html_switching": {
+        "body_bytes_max": 326,
+        "body_bytes_min": 66,
+        "memory_checkpoints": {},
+        "row_views_created": 10,
+        "samples": 30,
+        "selection_to_body_ready_p95_ms": 14.439333230257034,
+        "selection_to_draw_submit_max_ms": 51.90091673284769,
+        "selection_to_draw_submit_p50_ms": 8.007958298549056,
+        "selection_to_draw_submit_p95_ms": 16.73974993173033
+      },
+      "in_process_reader_ready_ms": 326.5147499041632,
+      "startup_stages_ms": {
+        "controller": 243.74183325562626,
+        "core": 204.94954159948975,
+        "mail": 287.80795831698924,
+        "views": 235.0042916368693,
+        "window": 324.0474999183789
+      },
+      "switching": {
+        "body_bytes_max": 326,
+        "body_bytes_min": 66,
+        "memory_checkpoints": {},
+        "row_views_created": 10,
+        "samples": 200,
+        "selection_to_body_ready_p95_ms": 12.303541647270322,
+        "selection_to_draw_submit_max_ms": 21.993166650645435,
+        "selection_to_draw_submit_p50_ms": 9.778624982573092,
+        "selection_to_draw_submit_p95_ms": 13.136833324097097
+      },
+      "launcher_observed_ready_ms": 684.397083,
+      "steady_rss_mib": 144.9375,
+      "family_footprint_mib": 93.92386627197266,
+      "webkit_helpers": 1
+    }
+  ],
+  "multi_account_search": {
+    "account_common": {
+      "p95_ms": 21.914083
+    },
+    "account_inbox": {
+      "p95_ms": 0.38875
+    },
+    "folder_common": {
+      "p95_ms": 18.454292000000002
+    },
+    "scoped_selective": {
+      "p95_ms": 0.135292
+    },
+    "unified_common": {
+      "p95_ms": 68.2595
+    },
+    "unified_inbox": {
+      "p95_ms": 0.419042
+    },
+    "unified_selective": {
+      "p95_ms": 0.13574999999999998
+    }
+  }
+}

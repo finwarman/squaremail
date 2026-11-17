@@ -1,6 +1,11 @@
 import Foundation
 import MailBridge
 
+private struct CoreReply<Value: Decodable>: Decodable {
+    let ok: Value?
+    let error: String?
+}
+
 final class MailCore {
     private let local = DispatchQueue(label: "com.finwarman.squaremail.cache", qos: .userInitiated,
                                      autoreleaseFrequency: .workItem)
@@ -35,14 +40,13 @@ final class MailCore {
                     let response = String(decoding: data, as: UTF8.self).withCString { squaremail_call($0) }
                     guard let response else { throw MailError(message: "The mail core returned no response") }
                     defer { squaremail_free(response) }
-                    let bytes = Data(String(cString: response).utf8)
-                    let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any]
-                    if let message = object?["error"] as? String { throw MailError(message: message) }
-                    guard let value = object?["ok"] else { throw MailError(message: "The mail core response was invalid") }
-                    let encoded = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+                    let bytes = Data(bytes: response, count: strlen(response))
                     let decoder = JSONDecoder()
                     decoder.keyDecodingStrategy = .convertFromSnakeCase
-                    continuation.resume(returning: try decoder.decode(T.self, from: encoded))
+                    let reply = try decoder.decode(CoreReply<T>.self, from: bytes)
+                    if let error = reply.error { throw MailError(message: error) }
+                    guard let result = reply.ok else { throw MailError(message: "The mail core response was invalid") }
+                    continuation.resume(returning: result)
                 } catch { continuation.resume(throwing: error) }
             }
             switch queue {

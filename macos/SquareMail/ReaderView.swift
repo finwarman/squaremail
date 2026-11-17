@@ -33,6 +33,11 @@ final class ReaderView: NSView, WKNavigationDelegate {
     private var rendered = ""
     private var mode: ReaderMode = .text
     private var message: Mail?
+    private var idleTask: Task<Void, Never>?
+    private var navigation: WKNavigation?
+    private var finished: WKNavigation?
+    private var htmlWaiter: CheckedContinuation<Void, Error>?
+    private static let htmlIdleDelay: Duration = .seconds(5)
     var hasHTMLRenderer: Bool { web != nil }
 
     override init(frame: NSRect) {
@@ -46,7 +51,15 @@ final class ReaderView: NSView, WKNavigationDelegate {
         text.isEditable = false
         text.isSelectable = true
         text.isRichText = false
+        text.allowsUndo = false
+        text.isContinuousSpellCheckingEnabled = false
+        text.isGrammarCheckingEnabled = false
+        text.isAutomaticLinkDetectionEnabled = false
+        text.isAutomaticDataDetectionEnabled = false
         text.font = ClassicTheme.font(14)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 5
+        text.defaultParagraphStyle = paragraph
         text.textColor = ClassicTheme.ink
         text.backgroundColor = .white
         text.textContainerInset = NSSize(width: 30, height: 24)
@@ -74,18 +87,21 @@ final class ReaderView: NSView, WKNavigationDelegate {
         message = mail
         self.mode = mode
         if mode == .text {
+            queueHTMLRelease()
             web?.isHidden = true
             scroll.isHidden = false
             showText(mail.text ?? "This message is not cached. Sync and open it while online.")
             return
         }
         guard let html = mail.html, !html.isEmpty else {
+            queueHTMLRelease()
             web?.isHidden = true
             scroll.isHidden = false
             showText(mail.text ?? "This message has no cached HTML body.")
             return
         }
         scroll.isHidden = true
+        idleTask?.cancel()
         if let web { web.isHidden = false; load(html); return }
 
         let configuration = WKWebViewConfiguration()
@@ -115,22 +131,66 @@ final class ReaderView: NSView, WKNavigationDelegate {
         web?.isHidden = true
         scroll.isHidden = false
         showText(notice)
+        queueHTMLRelease()
+    }
+
+    private func queueHTMLRelease() {
+        idleTask?.cancel()
+        guard web != nil else { return }
+        idleTask = Task { [weak self] in
+            do { try await Task.sleep(for: Self.htmlIdleDelay) } catch { return }
+            guard let self, self.mode == .text || self.message?.html?.isEmpty != false else { return }
+            self.web?.stopLoading()
+            self.web?.navigationDelegate = nil
+            self.web?.removeFromSuperview()
+            self.web = nil
+            self.navigation = nil
+            self.finished = nil
+            self.rendered = ""
+            self.htmlWaiter?.resume(throwing: CancellationError())
+            self.htmlWaiter = nil
+        }
+    }
+
+    func finishHTML() async throws {
+        guard mode == .html, let navigation, finished !== navigation else { return }
+        try await withCheckedThrowingContinuation { htmlWaiter = $0 }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === self.navigation else { return }
+        finished = navigation
+        htmlWaiter?.resume()
+        htmlWaiter = nil
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        failHTML(navigation, error)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        failHTML(navigation, error)
+    }
+
+    private func failHTML(_ navigation: WKNavigation?, _ error: Error) {
+        guard navigation === self.navigation else { return }
+        htmlWaiter?.resume(throwing: error)
+        htmlWaiter = nil
     }
 
     private func showText(_ value: String) {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 5
-        text.textStorage?.setAttributedString(NSAttributedString(string: value, attributes: [
-            .font: ClassicTheme.font(14), .foregroundColor: ClassicTheme.ink,
-            .paragraphStyle: paragraph
-        ]))
+        text.string = value
+        text.setSelectedRange(NSRange(location: 0, length: 0))
         text.scrollToBeginningOfDocument(nil)
     }
 
     private func load(_ html: String) {
         guard rendered != html else { return }
         rendered = html
-        web?.loadHTMLString(HTMLPolicy.document(html), baseURL: nil)
+        htmlWaiter?.resume(throwing: CancellationError())
+        htmlWaiter = nil
+        finished = nil
+        navigation = web?.loadHTMLString(HTMLPolicy.document(html), baseURL: nil)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
