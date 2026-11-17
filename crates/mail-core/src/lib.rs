@@ -1,0 +1,143 @@
+mod demo;
+mod mime;
+mod model;
+mod oauth;
+mod providers;
+mod store;
+
+use model::*;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::ffi::{CStr, CString, c_char};
+use std::io::Read;
+use store::Store;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+const MAX_MAIL_BYTES: u64 = 25 * 1024 * 1024;
+
+fn dispatch(request: Request) -> Result<Value> {
+    let store = Store::open(&request.database)?;
+    match request.command {
+        Command::Accounts => Ok(serde_json::to_value(store.accounts()?)?),
+        Command::SeedDemo => {
+            demo::seed(&store)?;
+            Ok(json!({"seeded": true}))
+        }
+        Command::List {
+            account,
+            folder,
+            query,
+            offset,
+            limit,
+        } => Ok(serde_json::to_value(store.list(
+            account.as_deref(),
+            folder,
+            &query,
+            offset,
+            limit,
+        )?)?),
+        Command::Message { id, mode } => {
+            let mut message = store.message(&id)?;
+            if message.text.is_none() && matches!(mode, BodyMode::Fetch) {
+                let account = store
+                    .accounts()?
+                    .into_iter()
+                    .find(|a| a.id == message.account_id)
+                    .ok_or("Account not found")?;
+                let (text, html) = providers::body(&account, &message.remote_id)?;
+                store.save_body(&id, &text, &mime::clean_html(&html))?;
+                message = store.message(&id)?;
+            }
+            Ok(serde_json::to_value(message)?)
+        }
+        Command::Import { path } => {
+            let mut raw = Vec::new();
+            std::fs::File::open(path)?
+                .take(MAX_MAIL_BYTES + 1)
+                .read_to_end(&mut raw)?;
+            if raw.len() as u64 > MAX_MAIL_BYTES {
+                return Err("Email exceeds the 25 MiB import limit".into());
+            }
+            let account = Account {
+                id: "local".into(),
+                email: "Imported mail".into(),
+                provider: Provider::Local,
+            };
+            store.save_account(&account)?;
+            let remote = format!("{:x}", Sha256::digest(&raw));
+            let message = mime::parse(&raw, &account.id, &remote)?;
+            store.save(&message, Folder::Inbox)?;
+            Ok(serde_json::to_value(message)?)
+        }
+        Command::Connect {
+            provider,
+            client_id,
+            client_secret,
+        } => {
+            let account = oauth::connect(provider, &client_id, client_secret.as_deref())?;
+            store.save_account(&account)?;
+            Ok(serde_json::to_value(account)?)
+        }
+        Command::Sync { account, folder } => {
+            let account = store
+                .accounts()?
+                .into_iter()
+                .find(|a| a.id == account)
+                .ok_or("Account not found")?;
+            Ok(json!({"count": providers::sync(&store, &account, folder)?}))
+        }
+    }
+}
+
+/// Accepts a UTF-8 JSON request. Never lets a Rust panic unwind through Swift.
+///
+/// # Safety
+/// `request` must be null or a valid NUL-terminated C string for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn squaremail_call(request: *const c_char) -> *mut c_char {
+    let result = std::panic::catch_unwind(|| -> Result<Value> {
+        if request.is_null() {
+            return Err("Empty request".into());
+        }
+        let input = unsafe { CStr::from_ptr(request) }.to_str()?;
+        dispatch(serde_json::from_str(input)?)
+    });
+    let response = match result {
+        Ok(Ok(data)) => json!({"ok": data}),
+        Ok(Err(error)) => json!({"error": error.to_string()}),
+        Err(_) => json!({"error": "Mail core failed safely"}),
+    };
+    CString::new(response.to_string())
+        .expect("JSON has no literal NUL")
+        .into_raw()
+}
+
+/// # Safety
+/// `response` must be null or an unreleased pointer returned by `squaremail_call`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn squaremail_free(response: *mut c_char) {
+    if !response.is_null() {
+        drop(unsafe { CString::from_raw(response) });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffi_rejects_bad_requests() {
+        for raw in [
+            "{}",
+            "not json",
+            "{\"database\":\":memory:\",\"command\":\"unknown\"}",
+        ] {
+            let request = CString::new(raw).unwrap();
+            let result = unsafe { squaremail_call(request.as_ptr()) };
+            let value: Value =
+                serde_json::from_str(unsafe { CStr::from_ptr(result) }.to_str().unwrap()).unwrap();
+            assert!(value.get("error").is_some());
+            unsafe { squaremail_free(result) };
+        }
+    }
+}

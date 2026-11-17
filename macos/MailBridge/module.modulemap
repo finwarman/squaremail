@@ -1,0 +1,4 @@
+module MailBridge {
+    header "squaremail.h"
+    export *
+}

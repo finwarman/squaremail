@@ -1,0 +1,451 @@
+import AppKit
+import ClassicKit
+
+@MainActor
+final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+    private let core: MailCore
+    private let layout: MailLayout
+    private let table = NSTableView()
+    private let sidebar = Sidebar()
+    private var messages: [Mail] = []
+    private var accounts: [Account] = []
+    private var folder: Folder = .inbox
+    private var account: String?
+    private var mailbox: MailboxMode = .demo
+    private var readerMode: ReaderMode = .text
+    private var current: Mail?
+    private var listRevision = 0
+    private var bodyRevision = 0
+    private var searchTask: Task<Void, Never>?
+    private var syncing = false
+    private let textButton = ClassicButton("Text only", icon: .text, style: .toggle)
+    private let htmlButton = ClassicButton("HTML", icon: .html, style: .toggle)
+    private let more = ClassicButton("More…")
+    private let syncButton = ClassicButton("Sync", icon: .sync, style: .toolbar)
+    private let dateFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd MMM, HH:mm"
+        return formatter
+    }()
+
+    init(core: MailCore, layout: MailLayout) {
+        self.core = core
+        self.layout = layout
+        super.init()
+        buildSidebar()
+        buildToolbar()
+        buildTable()
+        buildMenus()
+        layout.search.delegate = self
+    }
+
+    func start() async {
+        do {
+            let live: [Account] = try await core.request(["command": "accounts"], mode: .live)
+            mailbox = live.isEmpty ? .demo : .live
+            if mailbox == .demo {
+                let _: EmptyReply = try await core.request(["command": "seed_demo"], mode: .demo)
+            }
+            try await loadAccounts()
+            await loadList()
+        } catch { showError(error) }
+    }
+
+    private func buildSidebar() {
+        sidebar.frame = layout.sidebar.bounds.insetBy(dx: 2, dy: 2)
+        sidebar.autoresizingMask = [.width, .height]
+        layout.sidebar.addSubview(sidebar)
+        sidebar.onFolder = { [weak self] folder in
+            guard let self else { return }
+            self.folder = folder
+            self.sidebar.select(folder)
+            self.layout.folderLabel.stringValue = folder.title
+            self.layout.titleBar.title = "Square Mail - \(folder.title)"
+            self.layout.titleBar.needsDisplay = true
+            self.layout.search.stringValue = ""
+            Task { await self.loadList() }
+        }
+        sidebar.accounts.target = self
+        sidebar.accounts.action = #selector(changeAccount)
+        sidebar.connect.onPress = { [weak self] in self?.connectAccount() }
+        sidebar.demo.onPress = { [weak self] in self?.toggleDemo() }
+    }
+
+    private func buildToolbar() {
+        let importButton = ClassicButton("Import .eml", icon: .folder, style: .toolbar)
+        let accountsButton = ClassicButton("Accounts", icon: .account, style: .toolbar)
+        let previous = ClassicButton("Previous", icon: .mail, style: .toolbar)
+        let next = ClassicButton("Next", icon: .mail, style: .toolbar)
+        importButton.onPress = { [weak self] in self?.importMail() }
+        syncButton.onPress = { [weak self] in self?.syncMail() }
+        accountsButton.onPress = { [weak self] in self?.connectAccount() }
+        previous.onPress = { [weak self] in self?.moveSelection(-1) }
+        next.onPress = { [weak self] in self?.moveSelection(1) }
+        for (index, button) in [importButton, syncButton, accountsButton, previous, next].enumerated() {
+            button.frame = NSRect(x: 6 + index * 78, y: 3, width: 76, height: 55)
+            layout.toolbar.addSubview(button)
+        }
+        textButton.frame = NSRect(x: 416, y: 17, width: 106, height: 28)
+        htmlButton.frame = NSRect(x: 527, y: 17, width: 86, height: 28)
+        textButton.onPress = { [weak self] in self?.setReader(.text) }
+        htmlButton.onPress = { [weak self] in self?.setReader(.html) }
+        layout.toolbar.addSubview(textButton)
+        layout.toolbar.addSubview(htmlButton)
+        textButton.state = .on
+        more.frame = NSRect(x: layout.listPane.bounds.width - 76, y: 4, width: 67, height: 22)
+        more.autoresizingMask = [.minXMargin]
+        more.onPress = { [weak self] in Task { await self?.loadList(append: .append) } }
+        layout.listPane.addSubview(more)
+    }
+
+    private func buildTable() {
+        let columns: [(String, String, CGFloat)] = [
+            ("status", "", 30), ("sender", "From", 195), ("subject", "Subject", 480),
+            ("date", "Received", 145), ("account", "Account", 160)
+        ]
+        for (id, title, width) in columns {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+            column.title = title
+            column.width = width
+            column.minWidth = id == "status" ? 30 : 80
+            column.headerCell = ClassicHeaderCell(textCell: title)
+            table.addTableColumn(column)
+        }
+        table.rowHeight = 28
+        table.intercellSpacing = NSSize(width: 1, height: 0)
+        table.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
+        table.gridColor = ClassicTheme.color(0xE5E3DD)
+        table.usesAlternatingRowBackgroundColors = false
+        table.backgroundColor = .white
+        table.style = .plain
+        table.selectionHighlightStyle = .regular
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.allowsMultipleSelection = false
+        table.allowsEmptySelection = true
+        table.dataSource = self
+        table.delegate = self
+        table.setAccessibilityLabel("Messages")
+        layout.listScroll.documentView = table
+    }
+
+    private func loadAccounts() async throws {
+        accounts = try await core.request(["command": "accounts"], mode: mailbox)
+        sidebar.accounts.removeAllItems()
+        sidebar.accounts.addItem(withTitle: "All accounts")
+        for value in accounts {
+            sidebar.accounts.addItem(withTitle: value.email)
+            sidebar.accounts.lastItem?.representedObject = value.id
+        }
+        if let account, let index = accounts.firstIndex(where: { $0.id == account }) {
+            sidebar.accounts.selectItem(at: index + 1)
+        } else { account = nil }
+        sidebar.demo.title = mailbox == .demo ? "My mailbox" : "Demo mailbox"
+        layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
+    }
+
+    private enum ListMode { case replace, append }
+
+    private func loadList(append: ListMode = .replace) async {
+        listRevision += 1
+        let revision = listRevision
+        let selected = current?.id
+        if append == .replace {
+            bodyRevision += 1
+            current = nil
+            layout.header.display(nil)
+            layout.reader.showNotice("Loading local messages…")
+        }
+        let command: [String: Any] = [
+            "command": "list", "account": account as Any? ?? NSNull(), "folder": folder.rawValue,
+            "query": layout.search.stringValue, "offset": append == .append ? messages.count : 0, "limit": 250
+        ]
+        do {
+            let page: [Mail] = try await core.request(command, mode: mailbox)
+            guard revision == listRevision else { return }
+            messages = append == .append ? messages + page : page
+            table.reloadData()
+            more.isEnabled = page.count == 250
+            layout.listCaption.stringValue = "\(folder.title.uppercased())  ·  \(messages.count) MESSAGES"
+            layout.statusText.stringValue = "\(messages.count) messages  ·  \(messages.filter(\.unread).count) unread  ·  \(mailbox == .demo ? "Demo data" : "Cached on this Mac")"
+            if !messages.isEmpty {
+                let index = selected.flatMap { id in messages.firstIndex(where: { $0.id == id }) } ?? 0
+                table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            } else {
+                layout.reader.showNotice(mailbox == .demo ? "No messages match this view." : "No cached messages. Connect an account, then choose Sync.")
+            }
+        } catch {
+            guard revision == listRevision else { return }
+            layout.reader.showNotice(error.localizedDescription)
+            layout.statusText.stringValue = "Could not read the local mailbox"
+        }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { messages.count }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = ClassicRow()
+        view.backgroundColor = row % 2 == 0 ? .white : ClassicTheme.row
+        return view
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard messages.indices.contains(row), let column = tableColumn else { return nil }
+        let id = column.identifier
+        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? ClassicTableCell) ?? ClassicTableCell()
+        cell.identifier = id
+        let mail = messages[row]
+        let weight: ClassicTheme.Weight = mail.unread ? .bold : .regular
+        switch id.rawValue {
+        case "status": cell.configure("", icon: mail.starred ? .star : (mail.unread ? .mail : nil))
+        case "sender": cell.configure(mail.sender.isEmpty ? mail.senderAddress : mail.sender, weight: weight)
+        case "subject": cell.configure(mail.subject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
+        case "date": cell.configure(dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval(mail.timestamp))))
+        case "account": cell.configure(accounts.first(where: { $0.id == mail.accountId })?.email ?? "")
+        default: break
+        }
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard messages.indices.contains(table.selectedRow) else { return }
+        let summary = messages[table.selectedRow]
+        bodyRevision += 1
+        let revision = bodyRevision
+        let mode = mailbox
+        layout.header.display(summary)
+        current = summary
+        layout.reader.showNotice("Opening message…")
+        Task {
+            do {
+                var mail: Mail = try await core.request(["command": "message", "id": summary.id, "mode": "cached"], mode: mode)
+                guard revision == bodyRevision else { return }
+                if mail.text == nil {
+                    layout.reader.showNotice("Downloading message body…")
+                    mail = try await core.request(["command": "message", "id": summary.id, "mode": "fetch"], mode: mode, queue: .network)
+                }
+                guard revision == bodyRevision else { return }
+                current = mail
+                layout.reader.display(mail, mode: readerMode)
+            } catch {
+                guard revision == bodyRevision else { return }
+                layout.reader.showNotice("This body is not cached.\n\n\(error.localizedDescription)")
+            }
+        }
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        searchTask?.cancel()
+        searchTask = Task {
+            do { try await Task.sleep(for: .milliseconds(140)) } catch { return }
+            await loadList()
+        }
+    }
+
+    @objc private func changeAccount() {
+        account = sidebar.accounts.selectedItem?.representedObject as? String
+        Task { await loadList() }
+    }
+
+    private func setReader(_ mode: ReaderMode) {
+        readerMode = mode
+        textButton.state = mode == .text ? .on : .off
+        htmlButton.state = mode == .html ? .on : .off
+        layout.header.mode = mode
+        layout.statusReader.stringValue = mode == .text ? "PLAIN TEXT" : "HTML · REMOTE OFF"
+        if let current { layout.reader.display(current, mode: mode) }
+    }
+
+    private func moveSelection(_ delta: Int) {
+        let index = table.selectedRow + delta
+        guard messages.indices.contains(index) else { return }
+        table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        table.scrollRowToVisible(index)
+    }
+
+    @objc private func toggleDemo() {
+        bodyRevision += 1
+        mailbox = mailbox == .demo ? .live : .demo
+        account = nil
+        Task {
+            do {
+                if mailbox == .demo { let _: EmptyReply = try await core.request(["command": "seed_demo"], mode: .demo) }
+                try await loadAccounts()
+                await loadList()
+            } catch { showError(error) }
+        }
+    }
+
+    @objc private func importMail() {
+        let panel = NSOpenPanel()
+        panel.title = "Import email"
+        panel.message = "Choose .eml files to copy into your local mailbox."
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.init(filenameExtension: "eml") ?? .data]
+        guard panel.runModal() == .OK else { return }
+        let files = panel.urls
+        Task {
+            do {
+                for file in files {
+                    let _: Mail = try await core.request(["command": "import", "path": file.path], mode: .live)
+                }
+                mailbox = .live; account = "local"; folder = .inbox
+                sidebar.select(folder)
+                layout.folderLabel.stringValue = folder.title
+                layout.search.stringValue = ""
+                try await loadAccounts()
+                await loadList()
+            } catch { showError(error) }
+        }
+    }
+
+    @objc private func syncMail() {
+        guard !syncing else { return }
+        let active = accounts.filter { $0.provider != .local && (account == nil || $0.id == account) }
+        guard !active.isEmpty else {
+            if mailbox == .demo { layout.statusText.stringValue = "Demo mailbox is local. Connect an account to sync." }
+            else { connectAccount() }
+            return
+        }
+        syncing = true
+        syncButton.isEnabled = false
+        let mode = mailbox
+        let syncFolder = folder
+        layout.statusText.stringValue = "Syncing latest headers… You can keep reading."
+        Task {
+            defer { syncing = false; syncButton.isEnabled = true }
+            do {
+                var count = 0
+                for value in active {
+                    let reply: SyncReply = try await core.request(["command": "sync", "account": value.id, "folder": syncFolder.rawValue], mode: mode, queue: .network)
+                    count += reply.count
+                }
+                await loadList()
+                layout.statusText.stringValue = "Synced \(count) headers. Bodies download when opened."
+            } catch { showError(error) }
+        }
+    }
+
+    @objc private func connectAccount() {
+        let dialog = AccountDialog()
+        guard let input = dialog.run() else { return }
+        layout.statusText.stringValue = "Waiting for browser sign-in. This attempt expires in three minutes."
+        sidebar.connect.isEnabled = false
+        Task {
+            defer { sidebar.connect.isEnabled = true }
+            do {
+                let command: [String: Any] = ["command": "connect", "provider": input.provider.rawValue,
+                    "client_id": input.clientId, "client_secret": input.clientSecret]
+                let value: Account = try await core.request(command, mode: .live, queue: .network)
+                mailbox = .live; account = value.id
+                try await loadAccounts()
+                await loadList()
+                syncMail()
+            } catch { showError(error) }
+        }
+    }
+
+    private func showError(_ error: Error) {
+        layout.statusText.stringValue = error.localizedDescription
+        let alert = NSAlert()
+        alert.messageText = "Square Mail"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
+    private func buildMenus() {
+        let main = NSMenu()
+        let app = NSMenu()
+        app.addItem(withTitle: "About Square Mail", action: #selector(showAbout), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Quit Square Mail", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        main.addItem(withTitle: "Square Mail", action: nil, keyEquivalent: "").submenu = app
+
+        let file = NSMenu(title: "File")
+        addItem(file, "Import .eml…", #selector(importMail), "o")
+        addItem(file, "Connect account…", #selector(connectAccount), ",")
+        addItem(file, "Switch demo / my mailbox", #selector(toggleDemo), "d")
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Select all", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        addItem(edit, "Search this folder", #selector(focusSearch), "f")
+        let view = NSMenu(title: "View")
+        addItem(view, "Plain text", #selector(showText), "1")
+        addItem(view, "HTML, remote content blocked", #selector(showHTML), "2")
+        let tools = NSMenu(title: "Tools")
+        addItem(tools, "Sync current folder", #selector(syncMail), "r")
+        let help = NSMenu(title: "Help")
+        addItem(help, "About this preview", #selector(showAbout), "")
+        for menu in [file, edit, view, tools, help] {
+            main.addItem(withTitle: menu.title, action: nil, keyEquivalent: "").submenu = menu
+        }
+        for item in app.items where item.action == #selector(showAbout) { item.target = self }
+        NSApp.mainMenu = main
+        var x: CGFloat = 0
+        for menu in [file, edit, view, tools, help] {
+            let button = ClassicButton(menu.title, style: .menu)
+            button.frame = NSRect(x: x, y: 0, width: 48, height: 24)
+            button.onPress = { [weak button] in
+                guard let button else { return }
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+            }
+            layout.menus.addSubview(button)
+            x += 48
+        }
+    }
+
+    private func addItem(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String) {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
+        item.target = self
+    }
+
+    @objc private func focusSearch() { layout.window?.makeFirstResponder(layout.search) }
+    @objc private func showText() { setReader(.text) }
+    @objc private func showHTML() { setReader(.html) }
+
+    @objc private func showAbout() {
+        let alert = NSAlert()
+        alert.messageText = "Square Mail 0.1"
+        alert.informativeText = "Native AppKit reader. Rust mail core.\n\nAn early, read-only client. Sync caches the latest 200 headers per selected folder. HTML blocks scripts and remote content. Attachments, sending and full-history sync are not implemented.\n\nVisual references: Visual Basic and classic Outlook. No reference-project assets are bundled."
+        alert.runModal()
+    }
+
+    // A native integration probe exercises the same controller and bridge as the UI.
+    func measureCache() async throws -> [String: Any] {
+        guard let mail = messages.first else { throw MailError(message: "No cached mail to measure") }
+        var timings: [Double] = []
+        for _ in 0..<60 {
+            let start = ProcessInfo.processInfo.systemUptime
+            let _: Mail = try await core.request(["command": "message", "id": mail.id, "mode": "cached"], mode: mailbox)
+            timings.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+        }
+        timings.sort()
+        return ["cached_body_bridge_p95_ms": timings[56], "rows": messages.count,
+                "html_renderer_created": layout.reader.hasHTMLRenderer]
+    }
+
+    func selfTest() async throws -> [String: Any] {
+        guard messages.count == 40 else { throw MailError(message: "Demo inbox did not load") }
+        let initial = messages[0]
+        let body: Mail = try await core.request(["command": "message", "id": initial.id, "mode": "cached"], mode: .demo)
+        guard body.text?.contains("quiet inbox") == true else { throw MailError(message: "Body round trip failed") }
+        layout.search.stringValue = "machine"
+        await loadList()
+        guard !messages.isEmpty, messages.allSatisfy({ $0.subject.contains("machine") }) else {
+            throw MailError(message: "Native search did not filter the mailbox")
+        }
+        layout.search.stringValue = ""
+        await loadList()
+        setReader(.html)
+        layout.reader.display(body, mode: .html)
+        guard !HTMLPolicy.permitsLink(URL(string: "file:///etc/passwd")!),
+              !HTMLPolicy.permitsLink(URL(string: "javascript:alert(1)")!),
+              HTMLPolicy.contentPolicy.contains("default-src 'none'") else {
+            throw MailError(message: "HTML navigation policy failed")
+        }
+        setReader(.text)
+        return ["native_search": true, "body_roundtrip": true, "passive_html": true,
+                "main_thread_io": false, "mailbox_rows": messages.count]
+    }
+}

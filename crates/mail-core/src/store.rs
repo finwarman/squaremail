@@ -1,0 +1,328 @@
+use crate::{Result, model::*};
+use rusqlite::{Connection, params};
+
+pub(crate) const PAGE_LIMIT: usize = 250;
+
+pub(crate) struct Store {
+    connection: Connection,
+}
+
+impl Store {
+    pub(crate) fn open(path: &str) -> Result<Self> {
+        let connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        connection.execute_batch(include_str!("schema.sql"))?;
+        Ok(Self { connection })
+    }
+
+    pub(crate) fn save_account(&self, account: &Account) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO accounts(id,email,provider) VALUES (?1,?2,?3)
+             ON CONFLICT(id) DO UPDATE SET email=excluded.email",
+            params![account.id, account.email, account.provider.as_str()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn accounts(&self) -> Result<Vec<Account>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id,email,provider FROM accounts ORDER BY provider,email")?;
+        let rows = statement.query_map([], |row| {
+            let provider: String = row.get(2)?;
+            Ok(Account {
+                id: row.get(0)?,
+                email: row.get(1)?,
+                provider: match provider.as_str() {
+                    "gmail" => Provider::Gmail,
+                    "outlook" => Provider::Outlook,
+                    _ => Provider::Local,
+                },
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub(crate) fn save(&self, message: &Message, folder: Folder) -> Result<()> {
+        let tx = self.connection.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO messages(id,account_id,remote_id,sender,sender_address,recipient,subject,
+             preview,timestamp,unread,starred,has_attachments,text,html)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+             ON CONFLICT(id) DO UPDATE SET sender=excluded.sender,sender_address=excluded.sender_address,
+             recipient=excluded.recipient,subject=excluded.subject,preview=excluded.preview,
+             timestamp=excluded.timestamp,unread=excluded.unread,starred=excluded.starred,
+             has_attachments=excluded.has_attachments,text=COALESCE(excluded.text,messages.text),
+             html=COALESCE(excluded.html,messages.html)",
+            params![message.id,message.account_id,message.remote_id,message.sender,
+                message.sender_address,message.recipient,message.subject,message.preview,
+                message.timestamp,message.unread,message.starred,message.has_attachments,
+                message.text,message.html],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO folders(message_id,folder) VALUES (?1,?2)",
+            params![message.id, folder.as_str()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn list(
+        &self,
+        account: Option<&str>,
+        folder: Folder,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        // Quotes make user input literal FTS terms. Operators and punctuation are data.
+        let terms = query
+            .split_whitespace()
+            .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let (join, search) = if terms.is_empty() {
+            ("", "")
+        } else {
+            (
+                "JOIN message_search ON message_search.rowid=m.rowid",
+                " AND message_search MATCH ?5",
+            )
+        };
+        let account_filter = if account.is_some() {
+            "m.account_id=?1"
+        } else {
+            "1"
+        };
+        let folder_filter = match folder {
+            Folder::All => "1",
+            Folder::Unread => "m.unread=1",
+            Folder::Starred => "m.starred=1",
+            _ => "EXISTS(SELECT 1 FROM folders f WHERE f.message_id=m.id AND f.folder=?2)",
+        };
+        let sql = format!(
+            "SELECT m.id,m.account_id,m.remote_id,m.sender,m.sender_address,m.recipient,
+            m.subject,m.preview,m.timestamp,m.unread,m.starred,m.has_attachments,NULL,NULL
+            FROM messages m {join} WHERE {account_filter} AND {folder_filter}
+            {search} ORDER BY m.timestamp DESC,m.id LIMIT ?3 OFFSET ?4"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        statement.raw_bind_parameter(1, account)?;
+        statement.raw_bind_parameter(2, folder.as_str())?;
+        statement.raw_bind_parameter(3, limit.min(PAGE_LIMIT) as i64)?;
+        statement.raw_bind_parameter(4, offset.min(i64::MAX as usize) as i64)?;
+        if !terms.is_empty() {
+            statement.raw_bind_parameter(5, &terms)?;
+        }
+        let rows = statement.raw_query();
+        Ok(rows
+            .mapped(Self::read_row)
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub(crate) fn message(&self, id: &str) -> Result<Message> {
+        Ok(self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,
+            subject,preview,timestamp,unread,starred,has_attachments,text,html FROM messages WHERE id=?1",
+            [id], Self::read_row)?)
+    }
+
+    pub(crate) fn save_body(&self, id: &str, text: &str, html: &str) -> Result<()> {
+        self.connection.execute(
+            "UPDATE messages SET text=?2,html=?3 WHERE id=?1",
+            params![id, text, html],
+        )?;
+        Ok(())
+    }
+
+    fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+        Ok(Message {
+            id: row.get(0)?,
+            account_id: row.get(1)?,
+            remote_id: row.get(2)?,
+            sender: row.get(3)?,
+            sender_address: row.get(4)?,
+            recipient: row.get(5)?,
+            subject: row.get(6)?,
+            preview: row.get(7)?,
+            timestamp: row.get(8)?,
+            unread: row.get(9)?,
+            starred: row.get(10)?,
+            has_attachments: row.get(11)?,
+            text: row.get(12)?,
+            html: row.get(13)?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mime;
+
+    fn mail(account: &str) -> Message {
+        mime::parse(b"From: Ada <ada@example.test>\r\nTo: fin@example.test\r\nSubject: Engine notes\r\n\r\nA searchable difference engine.", account, "same-id").unwrap()
+    }
+
+    fn account(store: &Store, id: &str) {
+        store
+            .save_account(&Account {
+                id: id.into(),
+                email: format!("{id}@example.test"),
+                provider: Provider::Local,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn account_isolation_and_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mail.sqlite");
+        {
+            let store = Store::open(path.to_str().unwrap()).unwrap();
+            for id in ["a", "b"] {
+                account(&store, id);
+                store.save(&mail(id), Folder::Inbox).unwrap();
+            }
+        }
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        let rows = store
+            .list(Some("a"), Folder::Inbox, "difference", 0, 250)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].account_id, "a");
+        assert!(rows[0].text.is_none());
+        assert!(
+            store
+                .message(&rows[0].id)
+                .unwrap()
+                .text
+                .unwrap()
+                .contains("difference")
+        );
+        assert_eq!(
+            store.list(None, Folder::Inbox, "", 0, 250).unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn header_refresh_keeps_body() {
+        let store = Store::open(":memory:").unwrap();
+        account(&store, "a");
+        let mut message = mail("a");
+        store.save(&message, Folder::Inbox).unwrap();
+        message.text = None;
+        message.html = None;
+        message.unread = false;
+        store.save(&message, Folder::Inbox).unwrap();
+        let saved = store.message(&message.id).unwrap();
+        assert!(saved.text.unwrap().contains("difference"));
+        assert!(!saved.unread);
+    }
+
+    #[test]
+    fn query_is_literal_and_pages_bound() {
+        let store = Store::open(":memory:").unwrap();
+        account(&store, "a");
+        for index in 0..300 {
+            let mut message = mail("a");
+            message.id = format!("a:{index}");
+            message.remote_id = index.to_string();
+            store.save(&message, Folder::Inbox).unwrap();
+        }
+        assert_eq!(
+            store
+                .list(None, Folder::Inbox, "", 0, usize::MAX)
+                .unwrap()
+                .len(),
+            PAGE_LIMIT
+        );
+        assert_eq!(
+            store.list(None, Folder::Inbox, "", 250, 250).unwrap().len(),
+            50
+        );
+        for query in [
+            "\" OR 1=1 --",
+            "NEAR(a b)",
+            "*",
+            "'",
+            "\"",
+            "engine OR forbidden",
+        ] {
+            assert!(
+                store
+                    .list(None, Folder::Inbox, query, 0, 250)
+                    .unwrap()
+                    .is_empty(),
+                "{query}"
+            );
+        }
+        assert_eq!(
+            store.list(None, Folder::Inbox, "eng", 0, 1).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    #[ignore = "release-only performance probe with a real 100,000-message SQLite cache"]
+    fn mailbox_benchmark() {
+        use std::time::Instant;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("benchmark.sqlite");
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        account(&store, "a");
+        let mut message = mail("a");
+        let start = Instant::now();
+        for index in 0..100_000 {
+            message.remote_id = index.to_string();
+            message.id = format!("a:{index}");
+            message.subject = format!("Engine invoice {index:06}");
+            message.timestamp = index;
+            store.save(&message, Folder::Inbox).unwrap();
+        }
+        let seed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let mut list = Vec::new();
+        let mut selective = Vec::new();
+        let mut common = Vec::new();
+        for _ in 0..30 {
+            let start = Instant::now();
+            assert_eq!(
+                store
+                    .list(Some("a"), Folder::Inbox, "", 0, 250)
+                    .unwrap()
+                    .len(),
+                250
+            );
+            list.push(start.elapsed().as_secs_f64() * 1000.0);
+            let start = Instant::now();
+            assert_eq!(
+                store
+                    .list(Some("a"), Folder::Inbox, "073000", 0, 250)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            selective.push(start.elapsed().as_secs_f64() * 1000.0);
+            let start = Instant::now();
+            assert_eq!(
+                store
+                    .list(Some("a"), Folder::Inbox, "engine", 0, 250)
+                    .unwrap()
+                    .len(),
+                250
+            );
+            common.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        for values in [&mut list, &mut selective, &mut common] {
+            values.sort_by(f64::total_cmp);
+        }
+        println!(
+            "BENCHMARK {}",
+            serde_json::json!({
+                "messages":100000,"seed_ms":seed_ms,"list_p95_ms":list[28],
+                "selective_search_p95_ms":selective[28],"common_search_p95_ms":common[28],
+                "sqlite_bytes":std::fs::metadata(path).unwrap().len()
+            })
+        );
+    }
+}

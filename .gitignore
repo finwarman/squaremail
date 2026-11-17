@@ -1,0 +1,8 @@
+.build/
+target/
+.DS_Store
+*.sqlite*
+*.eml
+.env
+local-oauth.json
+artifacts/
