@@ -20,11 +20,14 @@ struct CalendarState {
     var period: ClassicCalendarPeriod = .month
     var feeds = Set(CalendarFeed.allCases)
     var query = ""
+    var hiddenSources: Set<String> = []
 }
 
 private struct SampleEvent {
     let mark: ClassicCalendarMark
-    let feed: CalendarFeed
+    let feed: CalendarFeed?
+    let sourceKey: String
+    let sourceName: String
     let location: String
     let notes: String
 }
@@ -35,8 +38,12 @@ private enum AgendaColumn: String {
 
 final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var onDateChanged: ((Date) -> Void)?
+    var range: (Date, Date) {
+        let dates = grid.visibleDates
+        return (dates.first!, Calendar.current.date(byAdding: .day, value: 1, to: dates.last!)!)
+    }
     var state: CalendarState {
-        CalendarState(date: grid.date, period: grid.period, feeds: feeds, query: query)
+        CalendarState(date: grid.date, period: grid.period, feeds: feeds, query: query, hiddenSources: hiddenSources)
     }
     private let grid = ClassicCalendar()
     private let surface = ClassicSurface()
@@ -51,24 +58,32 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var modeButtons: [ClassicButton] = []
     private var feeds: Set<CalendarFeed>
     private var query: String
-    private let events: [SampleEvent]
+    private var events: [SampleEvent]
+    private let mode: MailboxMode
+    private var hiddenSources: Set<String>
     private var agendaItems: [SampleEvent] = []
     private let dateFormat = DateFormatter()
     private let timeFormat = DateFormatter()
     private let captionFormat = DateFormatter()
+    private let storageDayFormat = DateFormatter()
     private static let rowID = NSUserInterfaceItemIdentifier("calendar-agenda-row")
     private static let minutesInDay = 24 * 60
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { true }
     override var wantsUpdateLayer: Bool { true }
 
-    init(state: CalendarState) {
+    init(state: CalendarState, mode: MailboxMode = .demo) {
+        self.mode = mode
+        hiddenSources = state.hiddenSources
         feeds = state.feeds
         query = state.query
-        events = Self.makeEvents()
+        events = mode == .demo ? Self.makeEvents() : []
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        storageDayFormat.calendar = Calendar(identifier: .gregorian)
+        storageDayFormat.locale = Locale(identifier: "en_US_POSIX")
+        storageDayFormat.dateFormat = "yyyy-MM-dd"
         dateFormat.dateFormat = "EEEE d MMMM yyyy"
         timeFormat.dateFormat = "HH:mm"
         grid.date = state.date
@@ -133,11 +148,30 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     func setFeeds(_ feeds: Set<CalendarFeed>) { self.feeds = feeds; refresh() }
     func setQuery(_ query: String) { self.query = query; refresh() }
 
-    private func setPeriod(_ period: ClassicCalendarPeriod) { grid.period = period; refresh() }
+    func setHidden(_ sources: Set<String>) { hiddenSources = sources; refresh() }
+    func setData(sources: [CalendarSource], events: [CalendarEvent]) {
+        let byKey = Dictionary(sources.map { source in
+            let hex = UInt32(source.color.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0x2C68AD
+            return (source.key, (name: source.name, color: ClassicTheme.color(hex)))
+        }, uniquingKeysWith: { first, _ in first })
+        self.events = events.compactMap { event in
+            let key = event.sourceKey
+            guard let source = byKey[key] else { return nil }
+            let start = event.startDay.flatMap(storageDayFormat.date(from:)) ?? Date(timeIntervalSince1970: TimeInterval(event.start))
+            let end = event.endDay.flatMap(storageDayFormat.date(from:)) ?? Date(timeIntervalSince1970: TimeInterval(event.end))
+            let mark = ClassicCalendarMark(id: key + ":" + event.id, title: event.title, start: start, end: end,
+                                           color: source.color, span: event.allDay ? .allDay : .timed)
+            return SampleEvent(mark: mark, feed: nil, sourceKey: key, sourceName: source.name,
+                               location: event.location, notes: source.name + (event.location.isEmpty ? "" : " · " + event.location))
+        }
+        refresh()
+    }
+
+    private func setPeriod(_ period: ClassicCalendarPeriod) { grid.period = period; refresh(); onDateChanged?(grid.date) }
 
     private func visibleEvents() -> [SampleEvent] {
         events.filter {
-            feeds.contains($0.feed) && (query.isEmpty || ($0.mark.title + " " + $0.location + " " + $0.notes).localizedCaseInsensitiveContains(query))
+            (mode == .demo ? $0.feed.map(feeds.contains) ?? false : !hiddenSources.contains($0.sourceKey)) && (query.isEmpty || ($0.mark.title + " " + $0.location + " " + $0.notes).localizedCaseInsensitiveContains(query))
         }
     }
 
@@ -145,14 +179,14 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         grid.items = visibleEvents().map(\.mark)
         captionFormat.dateFormat = grid.period == .month ? "MMMM yyyy" : "d MMMM yyyy"
         caption.stringValue = captionFormat.string(from: grid.date)
-        dayCaption.stringValue = dateFormat.string(from: grid.date) + "  ·  SAMPLE EVENTS"
+        dayCaption.stringValue = dateFormat.string(from: grid.date) + (mode == .demo ? "  ·  SAMPLE EVENTS" : "  ·  CACHED EVENTS" + (events.count == 2000 ? " (2,000 shown)" : ""))
         for (index, button) in modeButtons.enumerated() {
             button.state = ClassicCalendarPeriod.allCases[index] == grid.period ? .on : .off
         }
         let calendar = Calendar.current
-        agendaItems = visibleEvents().filter { calendar.isDate($0.mark.start, inSameDayAs: grid.date) }.sorted { $0.mark.start < $1.mark.start }
+        agendaItems = visibleEvents().filter { $0.mark.start < calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: grid.date))! && $0.mark.end > calendar.startOfDay(for: grid.date) }.sorted { $0.mark.start < $1.mark.start }
         agenda.reloadData()
-        detail.stringValue = agendaItems.isEmpty ? "No sample events on this day." : "Select an event for details."
+        detail.stringValue = agendaItems.isEmpty ? mode == .demo ? "No sample events on this day." : "No cached events on this day. Sync while online to download this month." : "Select an event for details."
     }
 
     private func buildAgenda() {
@@ -196,7 +230,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         switch AgendaColumn(rawValue: column.identifier.rawValue) {
         case .time: cell.configure(event.mark.span == .allDay ? "All day" : timeFormat.string(from: event.mark.start) + " - " + timeFormat.string(from: event.mark.end))
         case .title: cell.configure(event.mark.title, weight: .bold)
-        case .calendar: cell.configure(event.feed.rawValue)
+        case .calendar: cell.configure(event.sourceName)
         case .location, .none: cell.configure(event.location)
         }
         return cell
@@ -250,16 +284,22 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 : calendar.date(byAdding: .minute, value: minutes, to: start)!
             let mark = ClassicCalendarMark(id: "sample-event-\(index)", title: title, start: start, end: end,
                                            color: feed.color, span: minutes == Self.minutesInDay ? .allDay : .timed)
-            return SampleEvent(mark: mark, feed: feed, location: location,
+            return SampleEvent(mark: mark, feed: feed, sourceKey: feed.rawValue, sourceName: feed.rawValue, location: location,
                                notes: "Sample event from \(feed.rawValue). Live calendar connections and editing are not enabled.")
         }
     }
 }
 
-final class CalendarSidebar: NSView {
+final class CalendarSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var onDate: ((Date) -> Void)?
     var onFeeds: ((Set<CalendarFeed>) -> Void)?
     var onMail: (() -> Void)?
+    var onHiddenSources: ((Set<String>) -> Void)?
+    private let mode: MailboxMode
+    private let sourceScroll = NSScrollView()
+    private let sourceTable = NSTableView()
+    private var sources: [(CalendarSource, String)] = []
+    private var hiddenSources: Set<String> = []
     private let mini = ClassicCalendar(density: .compact)
     private let month = NSTextField(labelWithString: "")
     private let back = ClassicButton("Back to mail", icon: .mail)
@@ -267,7 +307,9 @@ final class CalendarSidebar: NSView {
     private var checks: [NSButton] = []
     override var isFlipped: Bool { true }
 
-    init(state: CalendarState) {
+    init(state: CalendarState, mode: MailboxMode = .demo) {
+        self.mode = mode
+        hiddenSources = state.hiddenSources
         super.init(frame: .zero)
         monthFormat.dateFormat = "MMMM yyyy"
         mini.date = state.date
@@ -284,10 +326,48 @@ final class CalendarSidebar: NSView {
             addSubview(button)
             checks.append(button)
         }
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("calendar-source"))
+        column.width = 180
+        sourceTable.addTableColumn(column)
+        sourceTable.headerView = nil
+        sourceTable.rowHeight = 30
+        sourceTable.dataSource = self
+        sourceTable.delegate = self
+        sourceTable.style = .plain
+        sourceTable.setAccessibilityLabel("Calendar sources")
+        sourceScroll.documentView = sourceTable
+        sourceScroll.hasVerticalScroller = true
+        sourceScroll.autohidesScrollers = true
+        sourceScroll.isHidden = mode == .demo
+        addSubview(sourceScroll)
+        for check in checks { check.isHidden = mode == .live }
         showDate(state.date)
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(state:)") }
+
+    func showSources(_ sources: [CalendarSource], accounts: [Account], hidden: Set<String>) {
+        guard mode == .live else { return }
+        let emails = Dictionary(accounts.map { ($0.id, $0.email) }, uniquingKeysWith: { first, _ in first })
+        self.sources = sources.map { ($0, $0.name + " · " + (emails[$0.accountId] ?? "")) }
+        hiddenSources = hidden
+        sourceTable.reloadData()
+        needsDisplay = true
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { sources.count }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard sources.indices.contains(row), let id = tableColumn?.identifier else { return nil }
+        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? CalendarSourceCell) ?? CalendarSourceCell()
+        cell.identifier = id
+        let (source, name) = sources[row]
+        cell.configure(name, selected: hiddenSources.contains(source.key) ? .off : .on)
+        cell.onChange = { [weak self] value in
+            guard let self else { return }
+            if value == .on { self.hiddenSources.remove(source.key) } else { self.hiddenSources.insert(source.key) }
+            self.onHiddenSources?(self.hiddenSources)
+        }
+        return cell
+    }
 
     func showDate(_ date: Date) {
         mini.date = date
@@ -304,6 +384,7 @@ final class CalendarSidebar: NSView {
         month.frame = NSRect(x: 12, y: 44, width: bounds.width - 24, height: 22)
         mini.frame = NSRect(x: 10, y: 75, width: bounds.width - 20, height: 174)
         for (index, check) in checks.enumerated() { check.frame = NSRect(x: 12, y: 294 + index * 30, width: Int(bounds.width) - 20, height: 24) }
+        sourceScroll.frame = NSRect(x: 8, y: 294, width: bounds.width - 16, height: max(20, bounds.height - 355))
         back.frame = NSRect(x: 10, y: bounds.height - 43, width: bounds.width - 20, height: 28)
     }
 
@@ -311,11 +392,36 @@ final class CalendarSidebar: NSView {
         ClassicTheme.face.setFill(); bounds.fill()
         NSGradient(starting: ClassicTheme.navy, ending: ClassicTheme.blue)?.draw(in: NSRect(x: 3, y: 3, width: bounds.width - 6, height: 29), angle: 0)
         ClassicTheme.text("Calendars", in: NSRect(x: 13, y: 9, width: 170, height: 20), color: .white, weight: .bold)
-        ClassicTheme.text("SAMPLE CALENDARS", in: NSRect(x: 12, y: 269, width: 180, height: 17), size: 9, color: ClassicTheme.muted, weight: .bold)
-        for (index, feed) in CalendarFeed.allCases.enumerated() {
+        ClassicTheme.text(mode == .demo ? "SAMPLE CALENDARS" : "CACHED CALENDARS", in: NSRect(x: 12, y: 269, width: 180, height: 17), size: 9, color: ClassicTheme.muted, weight: .bold)
+        for (index, feed) in CalendarFeed.allCases.enumerated() where mode == .demo {
             feed.color.setFill()
             NSRect(x: bounds.width - 22, y: 301 + CGFloat(index) * 30, width: 8, height: 8).fill()
         }
-        ClassicTheme.text("Demo data · not connected", in: NSRect(x: 12, y: 401, width: 180, height: 36), size: 10, color: ClassicTheme.muted)
+        if mode == .demo {
+            ClassicTheme.text("Demo data · not connected", in: NSRect(x: 12, y: 401, width: 180, height: 36), size: 10, color: ClassicTheme.muted)
+        } else if sources.isEmpty {
+            ClassicTheme.text("No cached calendars yet.", in: NSRect(x: 12, y: 303, width: 180, height: 36), size: 10, color: ClassicTheme.muted)
+        }
     }
+}
+
+private final class CalendarSourceCell: NSView {
+    private let check = ClassicCheckbox("")
+    var onChange: ((NSControl.StateValue) -> Void)?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        addSubview(check)
+        check.target = self
+        check.action = #selector(changed)
+    }
+    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
+    func configure(_ title: String, selected: NSControl.StateValue) {
+        check.title = title
+        check.state = selected
+        check.toolTip = title
+        check.setAccessibilityLabel(title)
+        check.needsDisplay = true
+    }
+    override func layout() { super.layout(); check.frame = bounds }
+    @objc private func changed() { onChange?(check.state) }
 }

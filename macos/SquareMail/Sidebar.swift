@@ -34,10 +34,14 @@ private final class FolderButton: NSButton {
     }
 }
 
-final class Sidebar: NSView {
+final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
     let accounts = NSPopUpButton(frame: .zero, pullsDown: false)
     let connect = ClassicButton("Connect an account…", icon: .account)
     let demo = ClassicButton("Demo mailbox", icon: .mail)
+    private let remoteScroll = NSScrollView()
+    private let remoteTable = NSTableView()
+    private var remoteFolders: [(MailFolder, String)] = []
+    var onRemoteFolder: ((MailFolder) -> Void)?
     var onFolder: ((Folder) -> Void)?
     private var folders: [FolderButton] = []
     override var isFlipped: Bool { true }
@@ -57,13 +61,61 @@ final class Sidebar: NSView {
         }
         addSubview(connect)
         addSubview(demo)
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("remote-folder"))
+        column.width = 180
+        remoteTable.addTableColumn(column)
+        remoteTable.headerView = nil
+        remoteTable.rowHeight = 25
+        remoteTable.style = .plain
+        remoteTable.dataSource = self
+        remoteTable.delegate = self
+        remoteTable.setAccessibilityLabel("Account folders")
+        remoteScroll.documentView = remoteTable
+        remoteScroll.hasVerticalScroller = true
+        remoteScroll.autohidesScrollers = true
+        remoteScroll.borderType = .bezelBorder
+        remoteScroll.isHidden = true
+        addSubview(remoteScroll)
         select(.inbox)
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
     func select(_ folder: Folder) {
+        remoteTable.deselectAll(nil)
         for button in folders { button.state = button.folder == folder ? .on : .off; button.needsDisplay = true }
+    }
+
+    func showFolders(_ folders: [MailFolder]) {
+        let byID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        remoteFolders = folders.map { folder in
+            var names = [folder.name]
+            var parent = folder.parentId
+            var seen: Set<String> = [folder.id]
+            while let id = parent, let item = byID[id], seen.insert(id).inserted, names.count < 32 {
+                names.insert(item.name, at: 0)
+                parent = item.parentId
+            }
+            return (folder, names.joined(separator: " / "))
+        }.sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+        remoteScroll.isHidden = remoteFolders.isEmpty
+        remoteTable.reloadData()
+        needsDisplay = true
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { remoteFolders.count }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard remoteFolders.indices.contains(row), let id = tableColumn?.identifier else { return nil }
+        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? ClassicTableCell) ?? ClassicTableCell()
+        cell.identifier = id
+        cell.configure(remoteFolders[row].1, icon: .folder)
+        cell.toolTip = remoteFolders[row].1
+        return cell
+    }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard remoteFolders.indices.contains(remoteTable.selectedRow) else { return }
+        for button in folders { button.state = .off; button.needsDisplay = true }
+        onRemoteFolder?(remoteFolders[remoteTable.selectedRow].0)
     }
 
     override func layout() {
@@ -72,6 +124,7 @@ final class Sidebar: NSView {
         for (index, button) in folders.enumerated() {
             button.frame = NSRect(x: 5, y: 111 + CGFloat(index) * 33, width: bounds.width - 10, height: 33)
         }
+        remoteScroll.frame = NSRect(x: 8, y: 414, width: bounds.width - 16, height: max(20, bounds.height - 505))
         connect.frame = NSRect(x: 10, y: bounds.height - 78, width: bounds.width - 20, height: 28)
         demo.frame = NSRect(x: 10, y: bounds.height - 43, width: bounds.width - 20, height: 28)
     }
@@ -83,11 +136,14 @@ final class Sidebar: NSView {
         ClassicTheme.text("Folders", in: NSRect(x: 13, y: 9, width: 150, height: 20), color: .white, weight: .bold)
         ClassicTheme.text("Show mail from:", in: NSRect(x: 12, y: 43, width: 170, height: 17), size: 11, color: ClassicTheme.muted)
         ClassicTheme.text("MAILBOX", in: NSRect(x: 13, y: 97, width: 170, height: 16), size: 9, color: ClassicTheme.muted, weight: .bold)
+        if !remoteFolders.isEmpty {
+            ClassicTheme.text("ACCOUNT FOLDERS", in: NSRect(x: 12, y: 396, width: 180, height: 16), size: 9, color: ClassicTheme.muted, weight: .bold)
+        }
         ClassicTheme.shadow.setFill()
         NSRect(x: 10, y: 391, width: bounds.width - 20, height: 1).fill()
         ClassicTheme.light.setFill()
         NSRect(x: 10, y: 392, width: bounds.width - 20, height: 1).fill()
-        if bounds.height > 560 {
+        if bounds.height > 560 && remoteFolders.isEmpty {
             ClassicIcon.mail.draw(in: NSRect(x: 77, y: 423, width: 40, height: 40))
             ClassicTheme.text("Square Mail", in: NSRect(x: 10, y: 477, width: bounds.width - 20, height: 22), size: 14, weight: .bold, alignment: .center)
             ClassicTheme.text("Your mail. On your Mac.", in: NSRect(x: 10, y: 504, width: bounds.width - 20, height: 20), size: 10, color: ClassicTheme.muted, alignment: .center)

@@ -28,7 +28,8 @@ enum HTMLPolicy {
 
 final class ReaderView: NSView, WKNavigationDelegate {
     private let scroll = NSScrollView()
-    private let text = NSTextView()
+    // TextKit 1 avoids full-paragraph GPU surfaces for long plain-text messages.
+    private let text = NSTextView(usingTextLayoutManager: false)
     private var web: WKWebView?
     private var rendered = ""
     private var mode: ReaderMode = .text
@@ -37,6 +38,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
     private var navigation: WKNavigation?
     private var finished: WKNavigation?
     private var htmlWaiter: CheckedContinuation<Void, Error>?
+    private static let textLayoutThreshold = 64 * 1024
     private static let htmlIdleDelay: Duration = .seconds(5)
     var hasHTMLRenderer: Bool { web != nil }
 
@@ -181,9 +183,35 @@ final class ReaderView: NSView, WKNavigationDelegate {
     }
 
     private func showText(_ value: String) {
+        text.layoutManager?.allowsNonContiguousLayout = value.utf8.count > Self.textLayoutThreshold
         text.string = value
         text.setSelectedRange(NSRange(location: 0, length: 0))
         text.scrollToBeginningOfDocument(nil)
+    }
+
+    func verifyText(_ expected: String) throws {
+        guard text.string == expected else { throw MailError(message: "Plain text content changed during display") }
+        let selection = text.selectedRange()
+        let responder = window?.firstResponder
+        window?.makeFirstResponder(text)
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer {
+            text.setSelectedRange(selection)
+            text.scrollToBeginningOfDocument(nil)
+            if let responder { window?.makeFirstResponder(responder) }
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+        text.selectAll(nil)
+        let written = text.writeSelection(to: pasteboard, types: text.writablePasteboardTypes)
+        let copied = pasteboard.string(forType: .string)
+        guard written, copied == expected else {
+            throw MailError(message: "Native text copy failed: selection \(text.selectedRange().length), expected \(expected.utf16.count), copied \(copied?.utf16.count ?? -1), written \(written)")
+        }
+        text.scrollToEndOfDocument(nil)
+        if text.frame.height > scroll.contentSize.height + 1, scroll.contentView.bounds.origin.y <= 0 {
+            throw MailError(message: "Native text scrolling did not reach the body")
+        }
     }
 
     private func load(_ html: String) {

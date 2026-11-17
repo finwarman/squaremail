@@ -13,6 +13,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var window: NSWindow?
     private var controller: MailController?
 
+    func applicationDidBecomeActive(_ notification: Notification) { controller?.activated() }
+    func applicationWillTerminate(_ notification: Notification) { controller?.stop() }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         do { try launch() } catch {
             fputs("Square Mail: \(error.localizedDescription)\n", stderr)
@@ -34,6 +37,39 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                                                      appropriateFor: nil, create: true).appendingPathComponent("Square Mail")
         }
         let core = try MailCore(directory: directory)
+        if let index = arguments.firstIndex(of: "--import-client"), arguments.indices.contains(index + 1) {
+            Task {
+                do {
+                    let _: EmptyReply = try await core.request(["command": CoreCommand.importClient.rawValue, "path": arguments[index + 1]], mode: .live, queue: .login)
+                    print("Google desktop client saved in Keychain")
+                    NSApp.terminate(nil)
+                } catch { fputs("OAuth setup failed: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            return
+        }
+        if let index = arguments.firstIndex(of: "--configure-microsoft"), arguments.indices.contains(index + 1) {
+            Task {
+                do {
+                    let _: EmptyReply = try await core.request(["command": CoreCommand.configure.rawValue, "provider": Provider.outlook.rawValue, "client_id": arguments[index + 1]], mode: .live, queue: .login)
+                    print("Microsoft desktop client saved in Keychain")
+                    NSApp.terminate(nil)
+                } catch { fputs("OAuth setup failed: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            return
+        }
+        if arguments.contains("--check-refresh") {
+            Task {
+                do {
+                    let accounts: [Account] = try await core.request(["command": CoreCommand.accounts.rawValue], mode: .live)
+                    for account in accounts where account.connected == true {
+                        let _: EmptyReply = try await core.request(["command": CoreCommand.refreshAccount.rawValue, "account": account.id], mode: .live, queue: .login)
+                        print("Refreshed \(account.provider.rawValue) identity")
+                    }
+                    NSApp.terminate(nil)
+                } catch { fputs("Refresh check failed: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            return
+        }
         stamp(.core)
         let size = NSSize(width: 1400, height: 920)
         let window = MailWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -67,7 +103,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             stamp(.window)
+            controller.startSync()
             if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
+            if arguments.contains("--check-accounts") {
+                do { try await controller.checkAccounts(); print("Offline account switching, folders, unified search and calendar cache verified") }
+                catch { fputs("ACCOUNTS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-calendar") {
                 do { try await controller.checkCalendar(); print("Calendar navigation and release verified"); NSApp.terminate(nil) }
                 catch { fputs("CALENDAR FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
@@ -135,7 +176,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                     }
                 }
             }
-            if arguments.contains("--self-test") || arguments.contains("--quit-after-metrics") { NSApp.terminate(nil) }
+            if arguments.contains("--self-test") || arguments.contains("--check-accounts") || arguments.contains("--quit-after-metrics") { NSApp.terminate(nil) }
         }
     }
 

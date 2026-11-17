@@ -29,9 +29,54 @@ CREATE TRIGGER IF NOT EXISTS message_delete AFTER DELETE ON messages BEGIN
     INSERT INTO message_search(message_search,rowid,subject,sender,preview,text)
     VALUES('delete',old.rowid,old.subject,old.sender,old.preview,old.text);
 END;
-CREATE TRIGGER IF NOT EXISTS message_update AFTER UPDATE ON messages BEGIN
+CREATE TRIGGER IF NOT EXISTS message_update AFTER UPDATE ON messages
+WHEN old.subject IS NOT new.subject OR old.sender IS NOT new.sender OR old.preview IS NOT new.preview OR old.text IS NOT new.text BEGIN
     INSERT INTO message_search(message_search,rowid,subject,sender,preview,text)
     VALUES('delete',old.rowid,old.subject,old.sender,old.preview,old.text);
     INSERT INTO message_search(rowid,subject,sender,preview,text)
     VALUES(new.rowid,new.subject,new.sender,new.preview,new.text);
 END;
+
+CREATE TABLE IF NOT EXISTS mail_folders (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    id TEXT NOT NULL, name TEXT NOT NULL, parent_id TEXT, system TEXT,
+    PRIMARY KEY(account_id,id)
+);
+CREATE TABLE IF NOT EXISTS mail_membership (
+    account_id TEXT NOT NULL, remote_id TEXT NOT NULL, folder_id TEXT NOT NULL,
+    PRIMARY KEY(account_id,remote_id,folder_id),
+    FOREIGN KEY(account_id,remote_id) REFERENCES messages(account_id,remote_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS membership_folder ON mail_membership(account_id,folder_id,remote_id);
+CREATE TABLE IF NOT EXISTS calendar_sources (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    id TEXT NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL, is_primary INTEGER NOT NULL,
+    PRIMARY KEY(account_id,id)
+);
+CREATE TABLE IF NOT EXISTS calendar_events (
+    account_id TEXT NOT NULL, calendar_id TEXT NOT NULL, window INTEGER NOT NULL,
+    id TEXT NOT NULL, title TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
+    all_day INTEGER NOT NULL, start_day TEXT, end_day TEXT, location TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(account_id,calendar_id,window,id),
+    FOREIGN KEY(account_id,calendar_id) REFERENCES calendar_sources(account_id,id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS events_range ON calendar_events(start,end);
+CREATE TABLE IF NOT EXISTS sync_jobs (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, resource TEXT NOT NULL, window INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT '{}', next_due INTEGER NOT NULL DEFAULT 0,
+    last_success INTEGER, last_attempt INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0, error TEXT, retry_class TEXT NOT NULL DEFAULT '', viewed_at INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY(account_id,kind,resource,window)
+);
+CREATE TABLE IF NOT EXISTS sync_seen (
+    account_id TEXT NOT NULL, resource TEXT NOT NULL, window INTEGER NOT NULL,
+    remote_id TEXT NOT NULL, PRIMARY KEY(account_id,resource,window,remote_id)
+);
+CREATE TABLE IF NOT EXISTS event_stage (
+    account_id TEXT NOT NULL, calendar_id TEXT NOT NULL, window INTEGER NOT NULL,
+    id TEXT NOT NULL, data TEXT NOT NULL,
+    PRIMARY KEY(account_id,calendar_id,window,id)
+);
+CREATE TABLE IF NOT EXISTS account_paused (
+    account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
+);

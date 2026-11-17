@@ -1,6 +1,6 @@
 # Attachment plan
 
-Attachments and linked-file previews are not implemented yet. Calendar UI comes first.
+Attachments and linked-file previews are not implemented yet. Mail/account and calendar sync are wired up; live qualification remains in progress.
 
 Keep attachment metadata in SQLite: account/message/attachment IDs, filename, MIME type, size, content ID, local cache state and thumbnail path. Store file bytes and thumbnails on disk, with byte/count limits and eviction. The UI holds metadata and visible thumbnails only.
 

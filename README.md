@@ -26,20 +26,21 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Older/Newer paging retains at most 250 message headers.
 - Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
 - Read-only Gmail and Microsoft Graph adapters, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
-- Latest 200 headers per selected provider folder; message bodies download on opening and remain available offline.
+- Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
+- Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
 - HTML sanitization, JavaScript disabled, nonpersistent WebKit storage, CSP and blocked subresources.
 - Five-second idle release of the HTML renderer after returning to text.
-- Lazy native calendar UI: month/week/day, mini calendar, source filters, sample-event search and selected-day agenda. Calendar data is local demo data only.
+- Lazy native calendar UI: month/week/day, mini calendar, per-account source filters, cached-event search and selected-day agenda. Demo mode remains separate from provider data.
 
 See [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
 
-Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Calendar setup, live sync, editing and notifications are not implemented. See [calendar UI](docs/calendar.md) and [attachment plan](docs/attachments.md).
+Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Read-only calendar caches and sync are wired up. Editing and notifications are not implemented. See [calendar UI](docs/calendar.md) and [attachment plan](docs/attachments.md).
 
 ![Square Mail calendar with sample events](docs/images/calendar.png)
 
 ## Limits
 
-This is a reader prototype. Live provider sign-in is not yet qualified with real OAuth registrations. It does not send mail, edit provider state, download attachments, sync full history or reconcile remote deletions. Folder views are cached snapshots. Search covers downloaded headers, previews and text, not uncached provider bodies. HTML intentionally removes images and some formatting. There is no claim of performance parity with any other client.
+This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads were exercised; Microsoft 365 consent and broader live qualification remain pending. It does not send mail, edit provider state, browse attachments or deliver notifications. Header backfill is gradual, and provider reconciliation is still being qualified. Search covers downloaded headers, previews and text, not uncached provider bodies. Calendar views cap loaded events at 2,000, and account folder/source lists have explicit bounds. Dense-calendar pagination remains unfinished. HTML intentionally removes images and some formatting. There is no claim of performance parity with any other client.
 
 Mail is stored as plaintext in `~/Library/Application Support/Square Mail/`, with user-only filesystem permissions. Tokens are stored separately in macOS Keychain. No telemetry is configured.
 

@@ -20,15 +20,33 @@ enum Folder: String, CaseIterable {
 
 enum ReaderMode { case text, html }
 enum MailboxMode { case demo, live }
-enum WorkQueue { case local, network }
+enum WorkQueue { case local, network, sync, login }
 
 struct Account: Decodable {
     let id: String
     let email: String
     let provider: Provider
+    let connected: Bool?
 }
 
-struct Mail: Decodable {
+struct Mail: Decodable, Equatable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case accountId = "account_id"
+        case remoteId = "remote_id"
+        case sender
+        case senderAddress = "sender_address"
+        case recipient
+        case subject
+        case preview
+        case timestamp
+        case unread
+        case starred
+        case hasAttachments = "has_attachments"
+        case text
+        case html
+    }
+
     let id: String
     let accountId: String
     let remoteId: String
@@ -52,3 +70,120 @@ struct MailError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
 }
+
+struct MailFolder: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id"
+        case id
+        case name
+        case parentId = "parent_id"
+        case system
+    }
+
+    let accountId: String
+    let id: String
+    let name: String
+    let parentId: String?
+    let system: String?
+}
+struct CalendarSource: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id"
+        case id
+        case name
+        case color
+        case isPrimary = "is_primary"
+    }
+
+    let accountId: String
+    let id: String
+    let name: String
+    let color: String
+    let isPrimary: Bool
+    var key: String { accountId + ":" + id }
+}
+struct CalendarEvent: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id"
+        case calendarId = "calendar_id"
+        case id
+        case title
+        case start
+        case end
+        case allDay = "all_day"
+        case startDay = "start_day"
+        case endDay = "end_day"
+        case location
+    }
+
+    let accountId: String
+    let calendarId: String
+    let id: String
+    let title: String
+    let start: Int64
+    let end: Int64
+    let allDay: Bool
+    let startDay: String?
+    let endDay: String?
+    let location: String
+    var sourceKey: String { accountId + ":" + calendarId }
+}
+struct SyncStep: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case worked
+        case accountId = "account_id"
+        case kind
+        case error
+        case retryAfter = "retry_after"
+    }
+
+    let worked: Bool
+    let accountId: String?
+    let kind: SyncKind?
+    let error: String?
+    let retryAfter: Int?
+}
+struct ClientConfig: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case clientId = "client_id"
+        case configured
+    }
+
+    let clientId: String
+    let configured: Bool
+}
+struct SyncStatus: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id"
+        case kind
+        case resource
+        case window
+        case lastSuccess = "last_success"
+        case nextDue = "next_due"
+        case error
+    }
+
+    let accountId: String
+    let kind: SyncKind
+    let resource: String
+    let window: Int64
+    let lastSuccess: Int64?
+    let nextDue: Int64
+    let error: String?
+}
+
+enum SyncKind: String, Decodable { case catalog, mail, calendar; case recentMail = "recent_mail" }
+
+enum CoreCommand: String {
+    case accounts, calendars, configure, connect, disconnect, events, folders, list, message
+    case importMail = "import"
+    case calendarWindows = "calendar_windows"
+    case clientConfig = "client_config"
+    case importClient = "import_client"
+    case seedDemo = "seed_demo"
+    case refreshAccount = "refresh_account"
+    case syncNext = "sync_next"
+    case syncNow = "sync_now"
+}
+enum BodyFetch: String { case cached, fetch }
+enum AccountDisconnect: String { case keepCache = "keep_cache", removeCache = "remove_cache" }

@@ -1,61 +1,95 @@
+use crate::network::{self, Context};
 use crate::{Result, mime, model::*, oauth, store::Store};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use reqwest::blocking::Client;
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
+};
 use serde_json::Value;
 
 const GMAIL_ROOT: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0/me";
-const SYNC_LIMIT: usize = 200;
 
-pub(crate) fn sync(store: &Store, account: &Account, folder: Folder) -> Result<usize> {
-    if account.provider == Provider::Local {
-        return Ok(0);
-    }
-    let client = oauth::http()?;
-    let token = oauth::access_token(account)?;
-    let messages = match account.provider {
-        Provider::Gmail => gmail_headers(&client, &token, account, folder)?,
-        Provider::Outlook => outlook_headers(&client, &token, account, folder)?,
-        Provider::Local => unreachable!(),
-    };
-    for message in &messages {
-        store.save(message, folder)?;
-    }
-    Ok(messages.len())
-}
+mod sync;
+pub(crate) use sync::sync_next;
 
-pub(crate) fn body(account: &Account, remote_id: &str) -> Result<(String, String)> {
-    let client = oauth::http()?;
-    let token = oauth::access_token(account)?;
+pub(crate) fn body(
+    account: &Account,
+    remote_id: &str,
+    context: &Context<'_>,
+) -> Result<(String, String)> {
+    let client = network::client()?;
+    let token = oauth::access_token(account, context)?;
     let id: String = url::form_urlencoded::byte_serialize(remote_id.as_bytes()).collect();
     match account.provider {
         Provider::Gmail => {
-            let value = get(
-                &client,
-                &token,
-                &format!("{GMAIL_ROOT}/messages/{id}?format=raw"),
-            )?;
-            let raw = URL_SAFE_NO_PAD.decode(
-                value["raw"]
-                    .as_str()
-                    .ok_or("Provider returned no MIME body")?,
-            )?;
-            let message = mime::parse(&raw, &account.id, remote_id)?;
+            let value = context
+                .send(
+                    client
+                        .get(format!("{GMAIL_ROOT}/messages/{id}?format=full"))
+                        .bearer_auth(&token),
+                )?
+                .value;
+            let mut body = Vec::new();
+            let mut decoded_bytes = 0;
+            body.extend_from_slice(b"MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=squaremail-body\r\n\r\n");
+            for part in body_parts(&value["payload"])? {
+                let response;
+                let content = if let Some(data) = part["body"]["data"].as_str() {
+                    data
+                } else if let Some(attachment) = part["body"]["attachmentId"].as_str() {
+                    if part["body"]["size"].as_u64().unwrap_or(0) > MAX_BODY_BYTES as u64 {
+                        return Err("Message text exceeds the 4 MiB reader limit".into());
+                    }
+                    let attachment = url::form_urlencoded::byte_serialize(attachment.as_bytes())
+                        .collect::<String>();
+                    response = context
+                        .send(
+                            client
+                                .get(format!(
+                                    "{GMAIL_ROOT}/messages/{id}/attachments/{attachment}"
+                                ))
+                                .bearer_auth(&token),
+                        )?
+                        .value;
+                    response["data"]
+                        .as_str()
+                        .ok_or("Provider omitted the text body")?
+                } else {
+                    continue;
+                };
+                let bytes = URL_SAFE_NO_PAD
+                    .decode(content)
+                    .or_else(|_| URL_SAFE.decode(content))?;
+                decoded_bytes += bytes.len();
+                if decoded_bytes > MAX_BODY_BYTES {
+                    return Err("Message text exceeds the 4 MiB reader limit".into());
+                }
+                append_body(&mut body, part, &bytes);
+            }
+            body.extend_from_slice(b"--squaremail-body--\r\n");
+            let message = mime::parse(&body, &account.id, remote_id)?;
             Ok((
                 message.text.unwrap_or_default(),
                 message.html.unwrap_or_default(),
             ))
         }
+
         Provider::Outlook => {
             let url = format!("{GRAPH_ROOT}/messages/{id}?$select=body");
-            let html = get(&client, &token, &url)?;
-            let text = oauth::read_json(
-                client
-                    .get(&url)
-                    .bearer_auth(&token)
-                    .header("Prefer", "outlook.body-content-type=\"text\"")
-                    .send()?,
-            )?;
+            let html = context
+                .send(
+                    client
+                        .get(&url)
+                        .bearer_auth(&token)
+                        .header("Prefer", "IdType=\"ImmutableId\""),
+                )?
+                .value;
+            let text = context
+                .send(client.get(&url).bearer_auth(&token).header(
+                    "Prefer",
+                    "IdType=\"ImmutableId\", outlook.body-content-type=\"text\"",
+                ))?
+                .value;
             Ok((
                 string(&text["body"], "content"),
                 string(&html["body"], "content"),
@@ -65,56 +99,59 @@ pub(crate) fn body(account: &Account, remote_id: &str) -> Result<(String, String
     }
 }
 
-fn get(client: &Client, token: &str, url: &str) -> Result<Value> {
-    oauth::read_json(client.get(url).bearer_auth(token).send()?)
-}
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-fn gmail_headers(
-    client: &Client,
-    token: &str,
-    account: &Account,
-    folder: Folder,
-) -> Result<Vec<Message>> {
-    let label = match folder {
-        Folder::Sent => "SENT",
-        Folder::Drafts => "DRAFT",
-        Folder::Trash => "TRASH",
-        Folder::Starred => "STARRED",
-        Folder::Unread => "UNREAD",
-        _ => "INBOX",
-    };
-    let mut request = client
-        .get(format!("{GMAIL_ROOT}/messages"))
-        .bearer_auth(token)
-        .query(&[("maxResults", SYNC_LIMIT.to_string())]);
-    request = match folder {
-        Folder::All => request,
-        Folder::Archive => {
-            request.query(&[("q", "-in:inbox -in:sent -in:drafts -in:trash -in:spam")])
+fn body_parts(payload: &Value) -> Result<Vec<&Value>> {
+    let mut pending = vec![(payload, 0)];
+    let mut parts = Vec::new();
+    let mut seen = 0;
+    let mut plain = false;
+    let mut html = false;
+    while let Some((part, depth)) = pending.pop() {
+        seen += 1;
+        if seen > 128 || depth > 16 {
+            return Err("Message MIME structure exceeds the reader limit".into());
         }
-        _ => request.query(&[("labelIds", label)]),
-    };
-    let list = oauth::read_json(request.send()?)?;
-    let ids: Vec<_> = list["messages"]
+        if part["filename"].as_str().is_some_and(|s| !s.is_empty()) {
+            continue;
+        }
+        match part["mimeType"].as_str().unwrap_or("") {
+            "text/plain" if !plain => {
+                plain = true;
+                parts.push(part);
+            }
+            "text/html" if !html => {
+                html = true;
+                parts.push(part);
+            }
+            mime if mime.starts_with("multipart/") => {
+                let children = part["parts"].as_array();
+                if pending.len() + children.map_or(0, Vec::len) > 128 {
+                    return Err("Message MIME structure exceeds the reader limit".into());
+                }
+                for child in children.into_iter().flatten().rev() {
+                    pending.push((child, depth + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(parts)
+}
+fn append_body(body: &mut Vec<u8>, part: &Value, bytes: &[u8]) {
+    let content_type = part["headers"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|value| value["id"].as_str())
-        .collect();
-    // Bounded workers hide API latency without growing one thread per message.
-    std::thread::scope(|scope| {
-        let workers: Vec<_> = ids.chunks(25).map(|chunk| scope.spawn(move || -> Result<Vec<Message>> {
-            chunk.iter().map(|id| {
-                let value = get(client, token, &format!("{GMAIL_ROOT}/messages/{id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To"))?;
-                gmail_message(&value, account)
-            }).collect()
-        })).collect();
-        let mut messages = Vec::with_capacity(ids.len());
-        for worker in workers {
-            messages.extend(worker.join().map_err(|_| "Header worker failed")??);
-        }
-        Ok(messages)
-    })
+        .find(|h| {
+            h["name"]
+                .as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case("content-type"))
+        })
+        .and_then(|h| h["value"].as_str())
+        .filter(|s| s.len() < 1024 && !s.contains(['\r', '\n']))
+        .unwrap_or_else(|| part["mimeType"].as_str().unwrap_or("text/plain"));
+    body.extend_from_slice(format!("--squaremail-body\r\nContent-Type: {content_type}\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",STANDARD.encode(bytes)).as_bytes());
 }
 
 fn gmail_message(value: &Value, account: &Account) -> Result<Message> {
@@ -160,48 +197,6 @@ fn gmail_message(value: &Value, account: &Account) -> Result<Message> {
         text: None,
         html: None,
     })
-}
-
-fn outlook_headers(
-    client: &Client,
-    token: &str,
-    account: &Account,
-    folder: Folder,
-) -> Result<Vec<Message>> {
-    let folder_id = match folder {
-        Folder::Sent => "sentitems",
-        Folder::Drafts => "drafts",
-        Folder::Archive => "archive",
-        Folder::Trash => "deleteditems",
-        _ => "inbox",
-    };
-    let base = if matches!(folder, Folder::All | Folder::Starred | Folder::Unread) {
-        format!("{GRAPH_ROOT}/messages")
-    } else {
-        format!("{GRAPH_ROOT}/mailFolders/{folder_id}/messages")
-    };
-    let mut request = client.get(base).bearer_auth(token).header("Prefer", "IdType=\"ImmutableId\"")
-        .query(&[("$top", SYNC_LIMIT.to_string()), ("$orderby", "receivedDateTime desc".into()),
-            ("$select", "id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview".into())]);
-    if folder == Folder::Unread {
-        request = request.query(&[(
-            "$filter",
-            "receivedDateTime ge 1900-01-01T00:00:00Z and isRead eq false",
-        )]);
-    }
-    if folder == Folder::Starred {
-        request = request.query(&[(
-            "$filter",
-            "receivedDateTime ge 1900-01-01T00:00:00Z and flag/flagStatus eq 'flagged'",
-        )]);
-    }
-    let value = oauth::read_json(request.send()?)?;
-    value["value"]
-        .as_array()
-        .ok_or("Provider returned no message list")?
-        .iter()
-        .map(|v| outlook_message(v, account))
-        .collect()
 }
 
 fn outlook_message(value: &Value, account: &Account) -> Result<Message> {
@@ -273,5 +268,25 @@ mod tests {
         assert_eq!(graph.timestamp, gmail.timestamp);
         assert!(!graph.unread);
         assert!(graph.has_attachments);
+    }
+    #[test]
+    fn gmail_body_skips_file_payloads() {
+        let payload = json!({"mimeType":"multipart/mixed","parts":[
+            {"mimeType":"multipart/alternative","parts":[{"mimeType":"text/plain","body":{"data":"Y2Fm6Q"},"headers":[{"name":"Content-Type","value":"text/plain; charset=iso-8859-1"}]},{"mimeType":"text/html","body":{"data":"PGI-SGk8L2I-"}}]},
+            {"mimeType":"application/pdf","filename":"invoice.pdf","body":{"attachmentId":"do-not-fetch"}},
+            {"mimeType":"text/plain","filename":"notes.txt","body":{"attachmentId":"do-not-fetch-either"}}]});
+        let parts = body_parts(&payload).unwrap();
+        assert_eq!(parts.len(), 2);
+        let mut body=b"MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=squaremail-body\r\n\r\n".to_vec();
+        for part in parts {
+            let bytes = URL_SAFE_NO_PAD
+                .decode(part["body"]["data"].as_str().unwrap())
+                .unwrap();
+            append_body(&mut body, part, &bytes);
+        }
+        body.extend_from_slice(b"--squaremail-body--\r\n");
+        let message = mime::parse(&body, "a", "one").unwrap();
+        assert!(message.text.unwrap().contains("café"));
+        assert!(message.html.unwrap().contains("<b>Hi</b>"));
     }
 }

@@ -82,6 +82,19 @@ The local sample calendar is lazy-created. One release run measured 90 ms from o
 
 The native probe confirms that calendar and sidebar views are released over 20 open/close cycles. Allocator and graphics caches can remain after view release. These measurements use 13 sample events, warm OS caches and no provider work; they do not qualify live sync, dense calendars or long-run memory. See [the calendar evidence](benchmarks/2026-11-17-calendar.json). Add `--calendar` to the profiling command to repeat this workload.
 
+
+## Account and sync milestone
+
+The disconnected native fixture has 30,000 headers across three accounts, 300 cached 8 KiB bodies, 12 calendar sources and 2,100 generated events. The view loads at most 2,000 events. Native checks exercise account/folder isolation, unified search, plain-text selection/copy/scrolling and calendar release without provider access.
+
+A long-paragraph body workload exposed TextKit 2 paragraph graphics surfaces. Its process footprint was about 245 MiB. Switching the native reader to TextKit 1 measured 56 MiB on the same fixture. The first TextKit 1 run measured cached switching at 17.2 ms p95. Three runs with noncontiguous layout enabled for every body measured 56.2–56.6 MiB and 18.8–19.1 ms p95. This trades memory for some layout time and still misses the 16 ms target. The current reader enables noncontiguous layout only above 64 KiB and uses explicit decoder keys; an unlocked-display rerun of those final edits remains pending. A later run overlapped checks and a locked display, so it is excluded.
+
+The dense-calendar diagnostic measured 97 ms first open, 61.6 ms month-navigation p95, 70 MiB external family footprint and 56 MiB after closing. These were before the final source-color/formatter caching edits. They include database loading, unlike the earlier 13-event sample. Dense-calendar navigation needs further work; the two workloads are not comparable.
+
+The final Rust-only 100,000-message probe measured an inbox page at 0.22 ms p95, selective search at 0.09 ms and an all-message match at 65.8 ms. Across ten accounts, account/unified inbox pages measured 0.23/0.24 ms, selective search 0.04/0.03 ms, broad account/folder matches 12.3/11.7 ms and a broad unified match 46.3 ms. These exclude Swift decoding, UI drawing and provider work. Full-body archives can cost more.
+
+[Compact account evidence](benchmarks/2026-11-17-accounts.json) records the workload and limits. No finite probe proves leak freedom. Automatic sync and HTML need separate long-run process-family profiling.
+
 ## Reproduce
 
 `scripts/profile.py` launches uniquely identified disposable copies of the app, uses a supplied local cache, samples process-family footprint and terminates only its own app. Use generated data:

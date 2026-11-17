@@ -82,10 +82,48 @@ pub(crate) enum BodyMode {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum Command {
     Accounts,
+    ClientConfig {
+        provider: Provider,
+    },
+    Configure {
+        provider: Provider,
+        client_id: String,
+        client_secret: Option<String>,
+    },
+    ImportClient {
+        path: String,
+    },
+    Folders {
+        account: String,
+    },
+    Disconnect {
+        account: String,
+        mode: DisconnectMode,
+    },
+    RefreshAccount {
+        account: String,
+    },
+    SyncNext,
+    SyncNow,
+    SyncStatus,
+    Calendars,
+    Events {
+        start: i64,
+        end: i64,
+        offset: usize,
+        limit: usize,
+    },
+    CalendarWindows {
+        months: Vec<i64>,
+    },
+    CalendarWindow {
+        month: i64,
+    },
     SeedDemo,
     List {
         account: Option<String>,
         folder: Folder,
+        folder_id: Option<String>,
         query: String,
         offset: usize,
         limit: usize,
@@ -102,10 +140,6 @@ pub(crate) enum Command {
         client_id: String,
         client_secret: Option<String>,
     },
-    Sync {
-        account: String,
-        folder: Folder,
-    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,4 +147,86 @@ pub(crate) struct Request {
     pub(crate) database: String,
     #[serde(flatten)]
     pub(crate) command: Command,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DisconnectMode {
+    KeepCache,
+    RemoveCache,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct MailFolder {
+    pub(crate) account_id: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) parent_id: Option<String>,
+    pub(crate) system: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct CalendarSource {
+    pub(crate) account_id: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) color: String,
+    pub(crate) is_primary: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct CalendarEvent {
+    #[serde(default)]
+    pub(crate) version: i64,
+    pub(crate) account_id: String,
+    pub(crate) calendar_id: String,
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) all_day: bool,
+    pub(crate) start_day: Option<String>,
+    pub(crate) end_day: Option<String>,
+    pub(crate) location: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum JobKind {
+    RecentMail,
+    Catalog,
+    Mail,
+    Calendar,
+}
+impl JobKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::RecentMail => "recent_mail",
+            Self::Catalog => "catalog",
+            Self::Mail => "mail",
+            Self::Calendar => "calendar",
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SyncJob {
+    pub(crate) account_id: String,
+    pub(crate) kind: JobKind,
+    pub(crate) resource: String,
+    pub(crate) window: i64,
+    pub(crate) state: serde_json::Value,
+    pub(crate) failures: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RetryClass {
+    Network,
+    Throttled,
+    Auth,
+}
+impl RetryClass {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Network => "network",
+            Self::Throttled => "throttled",
+            Self::Auth => "auth",
+        }
+    }
 }

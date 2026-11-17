@@ -1,19 +1,20 @@
-# Calendar UI
+# Calendar
 
-The native calendar is a read-only UI prototype with local sample events. The Google Calendar, Outlook.com/Live and Microsoft 365 entries are demo sources, not connected accounts.
+Calendar is a native, read-only month/week/day view backed by the account cache. Demo mode uses separate sample data. Google and personal Outlook live caches have been exercised; Microsoft 365 consent remains pending.
 
-![Month view with sample events](images/calendar.png)
-
-- Month, week and day views, with Today and previous/next navigation.
-- Mini calendar and selected-day agenda.
-- Source visibility toggles and sample-event search.
-- Event selection shows its sample details.
+- Today, previous/next and mini-calendar navigation.
+- Per-account calendar source toggles, visible-event search and selected-day agenda.
 - `⌘3` opens Calendar; `⌘4` returns to Mail.
+- Cached months remain readable offline. New months download while online.
 
-`ClassicCalendar` belongs to ClassicKit and has no mail/provider dependency. It paints one grid and reuses 42 native date hit targets. The agenda reuses row views. Calendar and sidebar views are constructed only when opened, then released on returning to Mail. Hidden mail HTML is eligible for the same five-second idle release as text mode.
+ClassicKit's date grid stays independent of mail/providers. It reuses 42 native hit targets. Source and agenda tables reuse cells. The calendar and sidebar are created on opening and released on returning to Mail. Hidden HTML uses the five-second idle release.
 
-The native probe checks month/week/day ranges, source/query filtering, month navigation and view release over repeated open/close cycles. The date-grid tests cover leap day and Monday week starts. Mail startup still begins without a calendar view.
+The scheduler watches current/next month and the visible grid months, at most five active windows per source. Six recently viewed month windows are retained on disk. Provider snapshots stage on disk and reconcile only after their final page. Primary Graph calendars use calendarView delta; Google and secondary Graph calendars use bounded, provider-expanded windows with conditional retrieval where available. Server versions prevent older snapshots overwriting newer occurrences.
 
-Current limits: system time zone, sample events relative to the current date, no recurrence expansion, invitations, editing, drag/resizing or live updates. The fixed-height week/day grid shows 24 hours and the first all-day bar; the agenda carries all events on the selected day. Dense schedules, daylight-saving transitions, VoiceOver navigation and real provider calendars still need qualification.
+Timed events use UTC instants. All-day events preserve calendar dates, including standard Windows/IANA zones across DST. The provider expands recurrence and exceptions within the requested window. There is no local unbounded recurrence graph.
 
-Next stages are provider login, account/folder handling, real calendar caches and incremental sync, then notifications and editing. Preserve bounded background work and measure all owned helper processes. Attachment/linked-file previews are a separate stage.
+Current limits: at most 2,000 loaded events per visible range, 1,000 source records and 2,000 account folders. Source filtering/search currently applies to loaded visible events. Dense-calendar pagination and filtering before the limit remain unfinished. The fixed-height week/day grid shows 24 hours and the first all-day bar; the agenda includes all loaded events overlapping the selected day. Legacy custom Outlook time zones, dense schedules, recurring-series edits/deletions and VoiceOver still need live qualification.
+
+Editing, invitations, drag/resizing, remote writes, notifications, push subscriptions and sync after quitting are not implemented. Live polling targets about a minute after a resource round completes, with backoff and wake/reconnect catch-up. Initial backfill, provider limits, sleep and OS scheduling can delay that target.
+
+The disconnected synthetic native probe covers three account selections, nested folders, unified search, 30,000 cached headers, 12 calendar sources, a bounded dense-event load and repeated view release. See [performance](performance.md), [sync design](sync-design.md) and [account setup](accounts.md).

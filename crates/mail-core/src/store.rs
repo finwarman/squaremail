@@ -1,6 +1,8 @@
 use crate::{Result, model::*};
 use rusqlite::{Connection, params};
 
+mod sync;
+
 pub(crate) const PAGE_LIMIT: usize = 250;
 
 pub(crate) struct Store {
@@ -9,9 +11,66 @@ pub(crate) struct Store {
 
 impl Store {
     pub(crate) fn open(path: &str) -> Result<Self> {
+        if path != ":memory:" {
+            use std::os::unix::fs::OpenOptionsExt;
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+            {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch(include_str!("schema.sql"))?;
+        let schema_version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if schema_version < 2 {
+            connection.execute_batch("BEGIN IMMEDIATE; DROP TRIGGER IF EXISTS message_update;
+                CREATE TRIGGER message_update AFTER UPDATE ON messages
+                WHEN old.subject IS NOT new.subject OR old.sender IS NOT new.sender OR old.preview IS NOT new.preview OR old.text IS NOT new.text BEGIN
+                INSERT INTO message_search(message_search,rowid,subject,sender,preview,text) VALUES('delete',old.rowid,old.subject,old.sender,old.preview,old.text);
+                INSERT INTO message_search(rowid,subject,sender,preview,text) VALUES(new.rowid,new.subject,new.sender,new.preview,new.text); END;")?;
+            let retry_column: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sync_jobs') WHERE name='retry_class')",
+            [],
+            |r| r.get(0),
+        )?;
+            if !retry_column {
+                connection.execute(
+                    "ALTER TABLE sync_jobs ADD COLUMN retry_class TEXT NOT NULL DEFAULT ''",
+                    [],
+                )?;
+            }
+            for (name, definition) in [
+                ("viewed_at", "INTEGER NOT NULL DEFAULT 0"),
+                ("active", "INTEGER NOT NULL DEFAULT 1"),
+            ] {
+                let exists: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sync_jobs') WHERE name=?1)",
+                    [name],
+                    |r| r.get(0),
+                )?;
+                if !exists {
+                    connection.execute(
+                        &format!("ALTER TABLE sync_jobs ADD COLUMN {name} {definition}"),
+                        [],
+                    )?;
+                }
+            }
+            let version_column:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('calendar_events') WHERE name='version')",[],|r|r.get(0))?;
+            if !version_column {
+                connection.execute(
+                    "ALTER TABLE calendar_events ADD COLUMN version INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )?;
+            }
+            connection.execute("CREATE INDEX IF NOT EXISTS event_versions ON calendar_events(account_id,calendar_id,id,version DESC)",[])?;
+            connection.execute_batch("PRAGMA user_version=2; COMMIT;")?;
+        }
         Ok(Self { connection })
     }
 
@@ -45,7 +104,17 @@ impl Store {
 
     pub(crate) fn save(&self, message: &Message, folder: Folder) -> Result<()> {
         let tx = self.connection.unchecked_transaction()?;
+        Self::upsert(&tx, message)?;
         tx.execute(
+            "INSERT OR IGNORE INTO folders(message_id,folder) VALUES (?1,?2)",
+            params![message.id, folder.as_str()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn upsert(connection: &Connection, message: &Message) -> Result<()> {
+        connection.execute(
             "INSERT INTO messages(id,account_id,remote_id,sender,sender_address,recipient,subject,
              preview,timestamp,unread,starred,has_attachments,text,html)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
@@ -59,11 +128,6 @@ impl Store {
                 message.timestamp,message.unread,message.starred,message.has_attachments,
                 message.text,message.html],
         )?;
-        tx.execute(
-            "INSERT OR IGNORE INTO folders(message_id,folder) VALUES (?1,?2)",
-            params![message.id, folder.as_str()],
-        )?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -71,6 +135,18 @@ impl Store {
         &self,
         account: Option<&str>,
         folder: Folder,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        self.list_folder(account, folder, None, query, offset, limit)
+    }
+
+    pub(crate) fn list_folder(
+        &self,
+        account: Option<&str>,
+        folder: Folder,
+        remote: Option<&str>,
         query: &str,
         offset: usize,
         limit: usize,
@@ -94,11 +170,15 @@ impl Store {
         } else {
             "1"
         };
-        let folder_filter = match folder {
-            Folder::All => "1",
-            Folder::Unread => "m.unread=1",
-            Folder::Starred => "m.starred=1",
-            _ => "EXISTS(SELECT 1 FROM folders f WHERE f.message_id=m.id AND f.folder=?2)",
+        let folder_filter = if remote.is_some() {
+            "EXISTS(SELECT 1 FROM mail_membership f WHERE f.account_id=m.account_id AND f.remote_id=m.remote_id AND f.folder_id=?2)"
+        } else {
+            match folder {
+                Folder::All => "1",
+                Folder::Unread => "m.unread=1",
+                Folder::Starred => "m.starred=1",
+                _ => "EXISTS(SELECT 1 FROM folders f WHERE f.message_id=m.id AND f.folder=?2)",
+            }
         };
         let sql = format!(
             "SELECT m.id,m.account_id,m.remote_id,m.sender,m.sender_address,m.recipient,
@@ -108,7 +188,7 @@ impl Store {
         );
         let mut statement = self.connection.prepare(&sql)?;
         statement.raw_bind_parameter(1, account)?;
-        statement.raw_bind_parameter(2, folder.as_str())?;
+        statement.raw_bind_parameter(2, remote.unwrap_or(folder.as_str()))?;
         statement.raw_bind_parameter(3, limit.min(PAGE_LIMIT) as i64)?;
         statement.raw_bind_parameter(4, offset.min(i64::MAX as usize) as i64)?;
         if !terms.is_empty() {
