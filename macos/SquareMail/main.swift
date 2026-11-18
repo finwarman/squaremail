@@ -42,6 +42,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let arguments = ProcessInfo.processInfo.arguments
         let appearance = arguments.contains("--theme-pink") ? ClassicTheme.Appearance.pink : (WindowPresentation.isBackground ? .classic : (ClassicTheme.Appearance(rawValue: UserDefaults.standard.string(forKey: "appearance") ?? "") ?? .classic))
         ClassicTheme.configure(appearance)
+        if WindowPresentation.isBackground, arguments.contains("--host-dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
         var stages: [String: Double] = [:]
         func stamp(_ stage: LaunchStage) {
             stages[stage.rawValue] = (ProcessInfo.processInfo.systemUptime - launchTime) * 1000

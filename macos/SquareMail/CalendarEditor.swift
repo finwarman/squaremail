@@ -23,6 +23,7 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
     private var sources: [CalendarSource] = []
     private var accounts: [Account] = []
     private let source = NSPopUpButton(frame: .zero)
+    private let sourceLabel = NSTextField(labelWithString: "")
     private let title = NSTextField(frame: .zero)
     private let location = NSTextField(frame: .zero)
     private let start = NSDatePicker(frame: .zero)
@@ -135,6 +136,9 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
         let ready = phase == .ready
         for control in [title, location, start, end, zone, allDay, reminder] as [NSControl] { control.isEnabled = ready }
         source.isEnabled = ready && key?.id == nil
+        source.isHidden = key?.id != nil
+        sourceLabel.isHidden = !source.isHidden
+        sourceLabel.stringValue = source.titleOfSelectedItem ?? "Calendar unavailable"
         guests.isEnabled = ready && (detail?.participantCount ?? 0) > 0
         save.isEnabled = ready && detail?.writable == true
         saveDraft.isEnabled = ready && key != nil
@@ -153,11 +157,18 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
         func row(_ label: String, _ view: NSView, _ y: CGFloat) {
             let caption = NSTextField(labelWithString: label)
             caption.font = ClassicTheme.font(11)
+            caption.textColor = ClassicTheme.ink
             caption.frame = NSRect(x: 14, y: y + 3, width: 108, height: 20)
             view.frame = NSRect(x: 125, y: y, width: 535, height: 26)
             form.addSubview(caption); form.addSubview(view)
         }
         row("Calendar:", source, 606); row("Title:", title, 568); row("Location:", location, 530)
+        sourceLabel.frame = source.frame; sourceLabel.font = ClassicTheme.font(12); sourceLabel.textColor = ClassicTheme.ink
+        sourceLabel.isSelectable = true; sourceLabel.isHidden = true; form.addSubview(sourceLabel)
+        for field in [title, location, zone] {
+            field.font = ClassicTheme.font(12); field.textColor = ClassicTheme.ink
+            field.backgroundColor = .white; field.drawsBackground = true
+        }
         row("Starts:", start, 492); row("Ends:", end, 454); row("Time zone:", zone, 416)
         allDay.frame = NSRect(x: 125, y: 382, width: 535, height: 24)
         row("Reminder:", reminder, 345)
@@ -165,7 +176,13 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
         source.target = self; source.action = #selector(changeSource)
         zone.target = self; zone.action = #selector(updateTimeFields)
         allDay.target = self; allDay.action = #selector(updateTimeFields)
-        for picker in [start, end] { picker.datePickerStyle = .textFieldAndStepper; picker.drawsBackground = true }
+        for picker in [start, end] {
+            picker.datePickerStyle = .textFieldAndStepper; picker.drawsBackground = true
+            picker.backgroundColor = .white; picker.textColor = ClassicTheme.ink; picker.font = ClassicTheme.font(12)
+        }
+        for checkbox in [allDay, guests] {
+            checkbox.attributedTitle = NSAttributedString(string: checkbox.title, attributes: [.font: ClassicTheme.font(12), .foregroundColor: ClassicTheme.ink])
+        }
         let scroll = NSScrollView(frame: NSRect(x: 14, y: 173, width: 646, height: 155))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder; scroll.documentView = metadata
         metadata.isEditable = false; metadata.isSelectable = true; metadata.isRichText = false
@@ -193,6 +210,7 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
         form.addSubview(saveDraft)
         let note = NSTextField(labelWithString: "Drafts stay on this Mac until you choose Save to calendar.")
         note.frame = NSRect(x: 154, y: 12, width: 506, height: 20); note.font = ClassicTheme.font(10)
+        note.textColor = ClassicTheme.muted
         form.addSubview(note)
         window = panel
     }
@@ -330,6 +348,10 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
     }
     func verify() async throws {
         await task?.value
+        guard window?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua,
+              title.textColor == ClassicTheme.ink, start.textColor == ClassicTheme.ink,
+              source.isHidden, !sourceLabel.isHidden, !sourceLabel.stringValue.isEmpty else { throw MailError(message: "Calendar form lost readable light appearance or calendar identity") }
+        if let content = window?.contentView { try WindowPresentation.snapshot(content, name: "calendar-editor") }
         guard let detail, let key, detail.organizer == "Team", detail.participants == ["Ada (accepted)"], title.stringValue == "Original", metadata.string.contains("Team"), metadata.bounds.width > 0, metadata.bounds.height > 0 else {
             throw MailError(message: "Cached event metadata did not populate the native editor")
         }

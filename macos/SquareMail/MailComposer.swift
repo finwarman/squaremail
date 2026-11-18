@@ -133,6 +133,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         content.wantsLayer = true; content.layer?.backgroundColor = ClassicTheme.face.cgColor
         func field(_ caption: String, _ view: NSView, _ y: CGFloat) {
             let label = NSTextField(labelWithString: caption); label.font = ClassicTheme.font(11)
+            label.textColor = ClassicTheme.ink
             label.frame = NSRect(x: 12, y: y + 3, width: 62, height: 21)
             view.setAccessibilityLabel(caption)
             view.frame = NSRect(x: 76, y: y, width: 690, height: 26); view.autoresizingMask = [.width, .minYMargin]
@@ -142,7 +143,10 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         for account in self.accounts { sender.addItem(withTitle: account.email); sender.lastItem?.representedObject = account.id }
         sender.target = self; sender.action = #selector(changed)
         field("From:", sender, 610); field("To:", to, 576); field("CC:", cc, 542); field("BCC:", bcc, 508); field("Subject:", subject, 474)
-        for input in [to, cc, bcc, subject] { input.delegate = self; input.font = ClassicTheme.font(12); input.stringValue = "" }
+        for input in [to, cc, bcc, subject] {
+            input.delegate = self; input.font = ClassicTheme.font(12); input.stringValue = ""
+            input.textColor = ClassicTheme.ink; input.backgroundColor = .white; input.drawsBackground = true
+        }
         for input in [to, cc, bcc] { input.placeholderString = "Email addresses, separated by commas" }
         let scroll = NSScrollView(frame: NSRect(x: 12, y: 106, width: 754, height: 356))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder; scroll.autoresizingMask = [.width, .height]
@@ -154,6 +158,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         text.textContainerInset = NSSize(width: 12, height: 12); text.allowsUndo = true; text.delegate = self
         scroll.documentView = text; content.addSubview(scroll)
         status.frame = NSRect(x: 12, y: 45, width: 754, height: 50); status.font = ClassicTheme.font(10); status.autoresizingMask = [.width]
+        status.textColor = ClassicTheme.muted
         content.addSubview(status)
         for (index, button) in [save, send, cancel].enumerated() { button.frame = NSRect(x: 12 + index * 145, y: 9, width: 135, height: 28); content.addSubview(button) }
         save.keyEquivalent = "s"; save.keyEquivalentModifierMask = [.command]

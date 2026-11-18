@@ -13,3 +13,7 @@ ClassicKit stays independent of mail and Rust. Shared vector/layer drawing and s
 Global controls navigate Mail/Calendar, sync and manage accounts/workspaces. Message controls sit above the email header. Primary actions wrap in narrow panes; secondary actions move to a native More menu. Rendering/attachment controls remain local to the reader. Progress uses the same bevel and selection colors: segmented motion for unknown work, filled segments for known image totals. Animation runs only for visible, active work and stops on idle, hide, app inactivity or sleep.
 
 ![Pink palette with generated mail](images/pink.png)
+
+App-owned classic panels use a light native appearance in both palettes, even when macOS uses dark mode. Form labels, fields and date pickers have explicit ink/background colors. Existing-event calendar identity is selectable read-only text rather than a faded disabled picker. Disabled custom buttons use muted text with the same minimum text contrast as other UI labels.
+
+![Calendar form under a dark host, generated data](images/calendar-editor.png)

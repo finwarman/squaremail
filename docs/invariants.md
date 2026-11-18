@@ -39,7 +39,7 @@
 | INV-MAIL-reading-layout | Divider and window resizing fill both viewports; changing orientation preserves the selected message and bounded page. | native reader resize/layout probe |
 | INV-UI-action-scope | Message actions remain in the selected reader, with current enabled/label states in narrow overflow menus; global navigation does not retarget them. | ClassicKit overflow and hidden native layout/action probes |
 | INV-UI-progress | Unknown totals stay indeterminate; known totals clamp safely. Idle/hidden/inactive/sleeping progress has no animation work. Cancellation and stale results cannot restore previous selection progress. | ClassicKit progress and hidden reader/media action probes |
-| INV-UI-appearance | Classic is default. Saved appearance applies before constructing views on restart; text/selection contrast remains readable in both palettes. | palette contrast and hidden appearance-menu probes |
+| INV-UI-appearance | Classic is default. Saved appearance applies before constructing views on restart; text/selection contrast remains readable in both palettes. Classic auxiliary panels retain a light native appearance under a dark host. | palette contrast and hidden appearance-menu probes |
 | INV-MEDIA-opt-in | Default HTML makes no image request; approved resources are scoped to the selected message and cleared on selection change. | native image-delivery probe and sanitizer contracts |
 | INV-MEDIA-bounds | File downloads, image references, pixels and disk cache have explicit bounds. | cache/URL contracts and native downsampling probe |
 | INV-MEDIA-office | Office previews reject external relationships, XML document types, macros and excessive expansion. | XML contracts and native Office fixtures |

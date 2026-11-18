@@ -76,7 +76,7 @@ public final class ClassicButton: NSButton {
             ClassicTheme.bevel(bounds, edge: down ? .sunken : .raised)
         }
         let shift: CGFloat = down ? 1 : 0
-        let ink = isEnabled ? ClassicTheme.ink : ClassicTheme.shadow
+        let ink = isEnabled ? ClassicTheme.ink : ClassicTheme.muted
         if style == .toolbar {
             if let icon { icon.draw(in: NSRect(x: (bounds.width - 24) / 2 + shift, y: 5 + shift, width: 24, height: 24)) }
             ClassicTheme.text(title, in: NSRect(x: 2 + shift, y: 34 + shift, width: bounds.width - 4, height: 18), size: 11, color: ink, alignment: .center)

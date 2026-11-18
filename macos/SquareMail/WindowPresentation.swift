@@ -25,6 +25,8 @@ enum WindowPresentation {
         try data.write(to: directory.appendingPathComponent(name + ".png"), options: .atomic)
     }
     static func show(_ window: NSWindow) {
+        // Classic surfaces are light in both palettes, including on a dark macOS desktop.
+        window.appearance = NSAppearance(named: .aqua)
         window.contentView?.layoutSubtreeIfNeeded()
         if isBackground { window.ignoresMouseEvents = true; window.orderOut(nil); return }
         window.makeKeyAndOrderFront(nil)
