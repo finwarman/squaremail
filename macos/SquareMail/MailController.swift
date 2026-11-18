@@ -67,6 +67,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private static let rowReuseID = NSUserInterfaceItemIdentifier("mail-row")
     private static let pageSize = 250
     private var pageOffset = 0
+    private var searchScope: MailSearchScope = .folder
+    private var searchMode: MailSearchMode = WindowPresentation.isBackground ? .smart : (MailSearchMode(rawValue: UserDefaults.standard.string(forKey: "mailSearchMode") ?? "") ?? .smart)
+    private var searchMatch: MailSearchMatch = .none
+    private var syncFeedback: Task<Void, Never>?
+    private var syncFailureText: String?
     private enum Section { case mail, calendar }
     private var section: Section = .mail
     private var calendarView: CalendarView?
@@ -85,11 +90,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var mailSearch = ""
     private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
     private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions"]
-    private let textButton = ClassicButton("Text only", icon: .text, style: .toggle)
-    private let htmlButton = ClassicButton("HTML", icon: .html, style: .toggle)
+    private let textButton = ClassicButton("", icon: .text, style: .iconToggle)
+    private let htmlButton = ClassicButton("", icon: .html, style: .iconToggle)
     private let more = ClassicButton("Older")
     private let newer = ClassicButton("Newer")
-    private let syncButton = ClassicButton("Sync", icon: .sync, style: .toolbar)
+    private let syncButton = ClassicButton("Refresh", icon: .sync, style: .toolbar)
     private let dateFormat: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd MMM, HH:mm"
@@ -150,14 +155,64 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if self.readerMode == .html { self.layout.statusReader.stringValue = permission == .loaded ? "HTML · IMAGES LOADED" : "HTML · REMOTE OFF" }
         }
         layout.search.delegate = self
+        layout.clearSearch.onPress = { [weak self] in self?.clearSearch() }
+        layout.searchScope.target = self; layout.searchScope.action = #selector(changeSearchScope)
+        layout.fuzzy.state = searchMode == .smart ? .on : .off
+        layout.fuzzy.onPress = { [weak self] in
+            guard let self else { return }
+            searchMode = searchMode == .smart ? .literal : .smart
+            if !WindowPresentation.isBackground { UserDefaults.standard.set(searchMode.rawValue, forKey: "mailSearchMode") }
+            searchTask?.cancel(); searchTask = Task { await self.loadList() }
+        }
         coordinator.onChange = { [weak self] reply in self?.syncChanged(reply) }
         coordinator.onStatus = { [weak self] status in
             guard let self else { return }
-            layout.syncProgress.state = status == .checking ? .indeterminate : .idle
-            layout.syncProgress.isHidden = status != .checking
-            layout.syncProgress.toolTip = status == .checking ? "Checking mail and calendars. The remaining total is unknown." : "Sync waiting, paused or offline. Cached content remains available."
-            syncButton.isEnabled = status != .checking
-            syncButton.title = status == .checking ? "Syncing…" : "Sync"
+            let busy = status == .checking || status == .syncing
+            syncButton.isEnabled = !busy
+            syncButton.title = status == .checking ? "Checking…" : (status == .syncing ? "Syncing…" : "Refresh")
+            syncButton.toolTip = busy ? "Refresh is running. Cached mail and calendars remain usable." : "Check connected mail and calendars now (⌘R). Provider retry limits still apply."
+            if busy {
+                layout.syncProgress.state = .indeterminate
+                if status == .checking {
+                    layout.syncCaption.stringValue = "Checking mail and calendars…"
+                    syncFailureText = nil
+                }
+                if layout.syncProgress.isHidden && syncFeedback == nil {
+                    syncFeedback = Task { [weak self] in
+                        do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                        self?.layout.syncProgress.isHidden = false
+                    }
+                }
+                return
+            }
+            syncFeedback?.cancel(); syncFeedback = nil
+            layout.syncProgress.state = .idle; layout.syncProgress.isHidden = true
+            switch status {
+            case .waiting: layout.syncCaption.stringValue = "Check finished at " + DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+            case .offline: layout.syncCaption.stringValue = "Offline. Cached mail stays available; refresh resumes on reconnect."
+            case .sleeping: layout.syncCaption.stringValue = "Refresh paused during sleep."
+            case .paused: layout.syncCaption.stringValue = "Refresh paused. Connect an account to check for updates."
+            case .failed: layout.syncCaption.stringValue = syncFailureText ?? "Refresh needs attention. Try again when connected."
+            case .checking, .syncing: break
+            }
+            layout.syncCaption.toolTip = layout.syncCaption.stringValue
+        }
+        coordinator.onDetail = { [weak self] reply, count in
+            guard let self else { return }
+            let account = accounts.first(where: { $0.id == reply.accountId })?.email ?? "Account"
+            let phase: String
+            switch reply.kind {
+            case .catalog: phase = "folder/calendar discovery"
+            case .calendar: phase = "calendar updates"
+            case .mail, .recentMail: phase = "mail updates"
+            case nil: phase = "refresh"
+            }
+            if let error = reply.error {
+                let retry = reply.retryAfter.map { " · retry after " + DateFormatter.localizedString(from: Date().addingTimeInterval(Double($0)), dateStyle: .none, timeStyle: .medium) } ?? " · check Drafts / outbox"
+                let caption = account + ": " + error + retry
+                syncFailureText = caption; layout.syncCaption.stringValue = caption
+            } else { layout.syncCaption.stringValue = "Syncing · \(count) sync steps · last: \(phase), \(account)" }
+            layout.syncCaption.toolTip = layout.syncCaption.stringValue
         }
         coordinator.onConnection = { [weak self] connectivity in
             guard let self, self.mailbox == .live else { return }
@@ -191,6 +246,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if mailbox == .live { Task { await registerCalendar() } }
     }
     func stop() {
+        syncFeedback?.cancel(); syncFeedback = nil
         noticeTask?.cancel(); noticeTask = nil
         mailTask?.cancel(); composer?.close(); workspace?.close(); calendarView?.setClock(.stopped)
         notifications?.stop(); editor?.close(); pendingEdits?.close(); pendingEdits = nil
@@ -217,17 +273,19 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             self.layout.folderLabel.stringValue = folder.title
             self.layout.titleBar.title = "Square Mail - \(folder.title)"
             self.layout.titleBar.needsDisplay = true
-            self.layout.search.stringValue = ""
+            self.setSearchText("")
             Task { await self.loadList() }
         }
         sidebar.onRemoteFolder = { [weak self] folder in
             guard let self else { return }
             self.noticeTask?.cancel()
+            self.account = folder.accountId
+            for item in self.sidebar.accounts.itemArray where item.representedObject as? String == folder.accountId { self.sidebar.accounts.select(item) }
             self.remoteFolder = folder
             self.layout.folderLabel.stringValue = folder.name
             self.layout.titleBar.title = "Square Mail - " + folder.name
             self.layout.titleBar.needsDisplay = true
-            self.layout.search.stringValue = ""
+            self.setSearchText("")
             Task { await self.loadList() }
         }
         sidebar.accounts.target = self
@@ -265,9 +323,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         for (button, width) in [(replyButton, 78.0), (replyAllButton, 90.0), (forwardButton, 92.0), (archiveButton, 90.0), (trashButton, 80.0)] {
             layout.messageActions.addItem(button, width: width)
         }
-        for (button, width) in [(moveButton, 90.0), (readButton, 110.0), (flagButton, 100.0), (pinButton, 70.0), (textButton, 106.0), (htmlButton, 86.0)] {
+        for (button, width) in [(moveButton, 90.0), (readButton, 110.0), (flagButton, 100.0), (pinButton, 70.0)] {
             layout.messageActions.addItem(button, width: width, priority: .secondary)
         }
+        textButton.setAccessibilityLabel("Plain text")
+        htmlButton.setAccessibilityLabel("HTML")
+        textButton.toolTip = "Plain text (⌘1). Read the text version without HTML layout."
+        htmlButton.toolTip = "HTML (⌘2). Read passive HTML; remote content remains blocked."
+        layout.reader.setModeButtons(textButton, html: htmlButton)
         cancelLogin.frame = NSRect(x: 810, y: 6, width: 175, height: 26); cancelLogin.isHidden = true
         cancelLogin.onPress = { [weak self] in self?.connectTask?.cancel(); self?.cancelLogin.isEnabled = false; self?.layout.statusText.stringValue = "Cancelling sign-in…" }
         layout.toolbar.addSubview(cancelLogin)
@@ -284,6 +347,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private func composeMail(_ kind: ComposeKind) {
         guard mailbox == .live, section == .mail else { return }
         let selected = selectedMail
+        guard kind == .new || selected?.id == current?.id else { return }
         let providers = accounts.filter { $0.provider != .local }
         let preferred = providers.first { $0.id == account }?.id ?? providers.first { $0.id == selected?.accountId }?.id ?? providers.first?.id
         let id = kind == .new ? preferred : selected?.accountId
@@ -316,11 +380,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func toggleRead() { guard let value = selectedMail else { return }; changeMail(["kind": MailActionKind.read.rawValue, "unread": !value.unread]) }
     @objc private func toggleFlag() { guard let value = selectedMail else { return }; changeMail(["kind": MailActionKind.flag.rawValue, "flagged": !value.starred]) }
     @objc private func togglePin() {
-        guard let value = selectedMail else { return }
+        guard let value = selectedMail, value.id == current?.id else { return }
         runMailCommand(["command": CoreCommand.pinMail.rawValue, "id": value.id, "pinned": value.pinned != true], message: "Pin updated on this Mac.")
     }
     private func changeMail(_ action: [String: Any]) {
-        guard let value = selectedMail, mailbox == .live else { return }
+        guard let value = selectedMail, value.id == current?.id, mailbox == .live else { return }
         runMailCommand(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], message: "Change queued. Drafts / outbox shows sync and consent status.")
     }
     private func runMailCommand(_ command: [String: Any], message: String) {
@@ -338,7 +402,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
     @objc private func moveMail() {
-        guard mailTask == nil, let value = selectedMail, mailbox == .live else { return }
+        guard mailTask == nil, let value = selectedMail, value.id == current?.id, mailbox == .live else { return }
         let source = remoteFolder?.id
         updateMailButtons(.busy)
         mailTask = Task { [weak self] in
@@ -387,11 +451,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
     private enum MailButtonPhase { case ready, busy }
     private func updateMailButtons(_ phase: MailButtonPhase = .ready) {
-        let active = section == .mail && mailbox == .live && phase == .ready && listPhase == .ready && mailTask == nil
         let selected = selectedMail
+        let active = section == .mail && mailbox == .live && phase == .ready && listPhase == .ready && mailTask == nil && selected?.id == current?.id
         let provider = accounts.contains { $0.id == selected?.accountId && $0.provider != .local }
         newButton.isEnabled = section == .mail && mailbox == .live && accounts.contains { $0.provider != .local }
         newButton.isHidden = section != .mail
+        layout.searchScope.isHidden = section != .mail
+        layout.fuzzy.isHidden = section != .mail
         for button in [replyButton, replyAllButton, forwardButton, trashButton, archiveButton, moveButton, readButton, flagButton, pinButton] { button.isEnabled = active && selected != nil && provider }
         pinButton.isEnabled = active && selected != nil
         readButton.title = selected?.unread == true ? "Mark read" : "Mark unread"
@@ -512,14 +578,28 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     private var listCommand: [String: Any] {
-        ["command": CoreCommand.list.rawValue, "account": account as Any? ?? NSNull(), "folder": folder.rawValue,
-         "folder_id": remoteFolder?.id as Any? ?? NSNull(), "query": layout.search.stringValue,
-         "offset": pageOffset, "limit": Self.pageSize]
+        ["command": CoreCommand.searchMail.rawValue, "account": (allFolderSearch ? account : remoteFolder?.accountId ?? account) as Any? ?? NSNull(), "folder": (allFolderSearch ? Folder.all : folder).rawValue,
+         "folder_id": (allFolderSearch ? nil : remoteFolder?.id) as Any? ?? NSNull(), "query": layout.search.stringValue,
+         "mode": searchMode.rawValue, "offset": pageOffset, "limit": Self.pageSize]
+    }
+    private var allFolderSearch: Bool { searchScope == .allFolders && !layout.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var listTitle: String { allFolderSearch ? "All folders" : folderTitle }
+    private func searchIsCurrent(_ command: [String: Any]) -> Bool {
+        var expected = listCommand
+        expected["offset"] = command["offset"]
+        return NSDictionary(dictionary: command).isEqual(NSDictionary(dictionary: expected))
+    }
+    private var matchCaption: String { searchMatch == .approximate ? "Approximate matches · " : "" }
+    @objc private func changeSearchScope() {
+        searchScope = MailSearchScope(rawValue: layout.searchScope.indexOfSelectedItem) ?? .folder
+        layout.search.placeholderString = searchScope == .allFolders ? "Search all folders (⌘F)" : "Search this folder (⌘F)"
+        searchTask?.cancel(); searchTask = Task { await self.loadList() }
     }
     private var folderTitle: String { remoteFolder?.name ?? folder.title }
     private enum ListPage { case start, older, newer }
 
     private func loadList(page direction: ListPage = .start) async {
+        updateClearSearch()
         listRevision += 1
         let revision = listRevision
         listPhase = .loading; updateMailButtons()
@@ -539,8 +619,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         var command = listCommand
         command["offset"] = offset
         do {
-            let page: [Mail] = try await core.request(command, mode: mailbox)
-            guard revision == listRevision else { return }
+            let result: MailSearchPage = try await core.request(command, mode: mailbox)
+            guard !Task.isCancelled, revision == listRevision, searchIsCurrent(command) else { return }
+            let page = result.messages; searchMatch = result.kind
             table.deselectAll(nil)
             messages = page
             pageOffset = offset
@@ -548,16 +629,18 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             updateMailButtons()
             more.isEnabled = page.count == Self.pageSize
             newer.isEnabled = pageOffset > 0
-            layout.listCaption.stringValue = "\(folderTitle.uppercased())  ·  \(messages.isEmpty ? "0" : "\(offset + 1)-\(offset + messages.count)") SHOWN"
-            layout.statusText.stringValue = "\(messages.count) messages  ·  \(messages.filter(\.unread).count) unread  ·  \(mailbox == .demo ? "Demo data" : "Cached on this Mac")"
+            layout.listCaption.stringValue = "\(listTitle.uppercased())  ·  \(messages.isEmpty ? "0" : "\(offset + 1)-\(offset + messages.count)") SHOWN"
+            layout.statusText.stringValue = matchCaption + "\(messages.count) messages  ·  \(messages.filter(\.unread).count) unread  ·  \(mailbox == .demo ? "Demo data" : "Cached on this Mac")"
             if !messages.isEmpty {
                 let index = selected.flatMap { id in messages.firstIndex(where: { $0.id == id }) } ?? 0
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                table.scrollRowToVisible(index)
             } else {
-                layout.reader.showNotice(mailbox == .demo ? "No messages match this view." : "No cached messages. Connect an account, then choose Sync.")
+                let notice = layout.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (mailbox == .demo ? "No messages match this view." : "No cached messages. Connect an account, then choose Sync.") : "No matches in this search scope.\n\nSearch covers cached sender names, email addresses, subjects, previews and downloaded text. Try All folders or All accounts, or enable Fuzzy."
+                layout.reader.showNotice(notice)
             }
         } catch {
-            guard revision == listRevision else { return }
+            guard !Task.isCancelled, revision == listRevision, searchIsCurrent(command) else { return }
             layout.reader.showNotice(error.localizedDescription)
             layout.statusText.stringValue = "Could not read the local mailbox: " + error.localizedDescription
         }
@@ -617,9 +700,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         bodyRevision += 1
         let revision = bodyRevision
         let mode = mailbox
-        bodyPhase = .loading; updateMailButtons()
         current = summary
         layout.header.display(summary)
+        bodyPhase = .loading; updateMailButtons()
         layout.reader.showNotice("Loading message…")
         readingTask = Task {
             defer { if revision == bodyRevision { bodyPhase = .ready; updateMailButtons() } }
@@ -651,7 +734,26 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
+    private func setSearchText(_ value: String) {
+        layout.search.stringValue = value
+        if let editor = layout.search.currentEditor() as? NSTextView {
+            editor.string = value
+            editor.setSelectedRange(NSRange(location: value.utf16.count, length: 0))
+        }
+        updateClearSearch()
+    }
+
+    private func clearSearch() {
+        searchTask?.cancel(); setSearchText("")
+        updateClearSearch()
+        if section == .calendar { calendarView?.setQuery("") }
+        else { searchTask = Task { await self.loadList() } }
+        layout.window?.makeFirstResponder(layout.search)
+    }
+    private func updateClearSearch() { layout.clearSearch.isHidden = layout.search.stringValue.isEmpty }
+
     func controlTextDidChange(_ obj: Notification) {
+        updateClearSearch()
         searchTask?.cancel()
         if section == .calendar { calendarView?.setQuery(layout.search.stringValue); return }
         searchTask = Task {
@@ -723,7 +825,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 setSection(.mail)
                 sidebar.select(folder)
                 layout.folderLabel.stringValue = folder.title
-                layout.search.stringValue = ""
+                setSearchText("")
                 try await loadAccounts()
                 await loadList()
             } catch { showError(error) }
@@ -735,9 +837,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layout.statusText.stringValue = "Demo data is local. Connect an account to sync."
             return
         }
-        startSync()
-        coordinator.requestRefresh()
-        layout.statusText.stringValue = "Sync requested. Cached mail and calendars remain available."
+        if !networkReady { startSync() }
+        coordinator.requestRefresh(.manual)
+        layout.statusText.stringValue = "Refresh requested. Cached mail and calendars remain available."
     }
 
     private func syncChanged(_ reply: SyncStep) {
@@ -765,19 +867,28 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let revision = listRevision
         let command = listCommand
         do {
-            let rows: [Mail] = try await core.request(command, mode: mailbox)
-            guard !Task.isCancelled, revision == listRevision, section == .mail, rows != messages else { return }
+            let result: MailSearchPage = try await core.request(command, mode: mailbox)
+            let rows = result.messages
+            guard !Task.isCancelled, revision == listRevision, section == .mail, searchIsCurrent(command) else { return }
+            let changedKind = searchMatch != result.kind
+            searchMatch = result.kind
+            if rows == messages {
+                if changedKind { layout.statusText.stringValue = matchCaption + String(rows.count) + " messages shown" }
+                return
+            }
             let selected = current?.id
             table.deselectAll(nil)
             messages = rows
             table.reloadData()
             more.isEnabled = rows.count == Self.pageSize
+            layout.listCaption.stringValue = "\(listTitle.uppercased())  ·  \(rows.isEmpty ? "0" : "\(pageOffset + 1)-\(pageOffset + rows.count)") SHOWN"
             if let id = selected, let index = rows.firstIndex(where: { $0.id == id }) {
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                table.scrollRowToVisible(index)
             } else if !rows.isEmpty { table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
             else { current = nil; layout.header.display(nil); layout.reader.showNotice("No cached messages in this view.") }
             updateMailButtons()
-            layout.statusText.stringValue = "Cache updated · " + String(rows.count) + " messages shown"
+            layout.statusText.stringValue = matchCaption + "Cache updated · " + String(rows.count) + " messages shown"
         } catch is CancellationError {} catch { layout.statusText.stringValue = error.localizedDescription }
     }
 
@@ -917,7 +1028,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         appearance.addItem(withTitle: "Applies after restarting Square Mail", action: nil, keyEquivalent: "")
         view.addItem(withTitle: "Appearance", action: nil, keyEquivalent: "").submenu = appearance
         let tools = NSMenu(title: "Tools")
-        addItem(tools, "Sync mail and calendars", #selector(syncMail), "r")
+        addItem(tools, "Refresh mail and calendars", #selector(syncMail), "r")
         addItem(tools, "Notifications…", #selector(showNotices), "")
         addItem(file, "New calendar event…", #selector(newCalendarEvent), "")
         addItem(file, "Calendar drafts / pending…", #selector(showCalendarChanges), "")
@@ -965,7 +1076,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if item.action == #selector(toggleRead) { item.title = selectedMail?.unread == true ? "Mark as read" : "Mark as unread" }
             if item.action == #selector(toggleFlag) { item.title = selectedMail?.starred == true ? "Unflag / unstar" : "Flag / star" }
             if item.action == #selector(togglePin) { item.title = selectedMail?.pinned == true ? "Unpin on this Mac" : "Pin on this Mac" }
-            return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && mailTask == nil
+            return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && selectedMail?.id == current?.id && mailTask == nil
 
         case #selector(classicAppearance): item.state = pendingAppearance == .classic ? .on : .off
         case #selector(pinkAppearance): item.state = pendingAppearance == .pink ? .on : .off
@@ -1008,8 +1119,6 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         section = next
         updateMailButtons()
         calendarView?.setClock(.stopped)
-        textButton.isEnabled = next == .mail
-        htmlButton.isEnabled = next == .mail
         splitButton.isEnabled = next == .mail
         if next == .calendar {
             calendarIdleTask?.cancel()
@@ -1053,7 +1162,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             calendarSidebar = side
             layout.folderLabel.stringValue = "Calendar"
             layout.titleBar.title = "Square Mail - Calendar"
-            layout.search.stringValue = calendarState.query
+            setSearchText(calendarState.query)
             layout.search.placeholderString = mailbox == .demo ? "Search sample events (⌘F)" : "Search cached events (⌘F)"
             layout.statusText.stringValue = mailbox == .demo ? "Sample calendars · not connected" : (accounts.contains(where: { $0.connected == true }) ? "Cached calendars · updates while online" : "Offline calendars · reconnect an account to update")
             layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
@@ -1076,8 +1185,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             sidebar.isHidden = false
             layout.folderLabel.stringValue = folderTitle
             layout.titleBar.title = "Square Mail - \(folderTitle)"
-            layout.search.stringValue = mailSearch
-            layout.search.placeholderString = "Search this folder (⌘F)"
+            setSearchText(mailSearch)
+            layout.search.placeholderString = searchScope == .allFolders ? "Search all folders (⌘F)" : "Search this folder (⌘F)"
             layout.statusText.stringValue = "\(messages.count) messages shown · Cached on this Mac"
             layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
             setReader(readerMode)
@@ -1089,6 +1198,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 }
             }
         }
+        updateClearSearch()
         layout.titleBar.needsDisplay = true
         layout.search.setAccessibilityLabel(next == .calendar ? (mailbox == .demo ? "Search sample events" : "Search cached events") : "Search this folder")
         calendarButton.setAccessibilityLabel(calendarButton.title)
@@ -1152,7 +1262,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 }
                 setSection(.mail, reload: .skip)
                 account = notice.account; remoteFolder = nil; folder = .all
-                layout.search.stringValue = ""
+                setSearchText("")
                 sidebar.select(.all)
                 layout.folderLabel.stringValue = folder.title
                 try await loadAccounts()
@@ -1218,6 +1328,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func checkMailActions() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
+        try await SyncCoordinator.verifyFlow()
         await finishSelection(); try await layout.reader.verifySpacing()
         try verifyActionPlacement()
         guard let summary = selectedMail else { throw MailError(message: "Reader action fixture lost selection") }
@@ -1252,11 +1363,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         calendarView?.selectDate(Calendar.current.date(byAdding: .day, value: offset, to: Date())!)
         try calendarView?.verifyClock()
         coordinator.onStatus?(.checking)
-        guard !syncButton.isEnabled, layout.syncProgress.state == .indeterminate else { throw MailError(message: "Sync activity did not disable duplicate work") }
+        try await Task.sleep(for: .milliseconds(240))
+        guard !syncButton.isEnabled, syncButton.title == "Checking…", !layout.syncProgress.isHidden, layout.syncProgress.state == .indeterminate else { throw MailError(message: "Sync activity did not disable duplicate work") }
+        coordinator.onStatus?(.syncing)
+        guard !layout.syncProgress.isHidden, syncButton.title == "Syncing…" else { throw MailError(message: "Sync progress disappeared between pages") }
         mailButton.performClick(nil)
         guard !syncButton.isEnabled else { throw MailError(message: "Navigation re-enabled an active sync button") }
         coordinator.onStatus?(.offline)
-        guard syncButton.isEnabled, layout.syncProgress.state == .idle else { throw MailError(message: "Offline sync retained its busy state") }
+        guard syncButton.isEnabled, syncButton.title == "Refresh", layout.syncProgress.isHidden, !syncButton.isHighlighted, layout.syncProgress.state == .idle else { throw MailError(message: "Offline sync retained its busy state") }
         let appearance = pendingAppearance
         chooseAppearance(appearance == .classic ? .pink : .classic)
         guard pendingAppearance != appearance, ClassicTheme.appearance == appearance else { throw MailError(message: "Appearance choice did not remain pending until restart") }
@@ -1352,7 +1466,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         for value in accounts {
             account = value.id
             remoteFolder = nil
-            layout.search.stringValue = ""
+            setSearchText("")
             folder = .inbox
             await loadFolders()
             await loadList()
@@ -1368,13 +1482,34 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             guard messages.count == Self.pageSize else {
                 throw MailError(message: "Nested folder paging failed: \(value.id), rows \(messages.count), command \(listCommand), mode \(mailbox), \(layout.statusText.stringValue)")
             }
-            layout.search.stringValue = value.id + " project"
+            setSearchText(value.id + " project")
             await loadList()
             guard !messages.isEmpty, messages.allSatisfy({ $0.accountId == value.id }) else { throw MailError(message: "Scoped search lost account isolation") }
+            setSearchText("ada@example.test"); await loadList()
+            guard messages.count == Self.pageSize, searchMatch == .literal, messages.allSatisfy({ $0.accountId == value.id && $0.text == nil }) else { throw MailError(message: "Address search lost bounded headers or account scope") }
+            setSearchText("ada@exmaple.test"); await loadList()
+            guard searchMatch == .approximate, messages.count == Self.pageSize else { throw MailError(message: "Fuzzy email search lost approximate feedback") }
+            layout.fuzzy.performClick(nil); await searchTask?.value
+            guard searchMode == .literal, messages.isEmpty else { throw MailError(message: "Literal toggle kept fuzzy results") }
+            layout.fuzzy.performClick(nil); await searchTask?.value
+            layout.searchScope.selectItem(at: MailSearchScope.allFolders.rawValue)
+            changeSearchScope(); await searchTask?.value
+            guard listCommand["folder"] as? String == Folder.all.rawValue, listCommand["folder_id"] is NSNull, messages.allSatisfy({ $0.accountId == value.id }) else { throw MailError(message: "All folders changed the account scope") }
+            layout.clearSearch.performClick(nil); await searchTask?.value
+            guard layout.search.stringValue.isEmpty, layout.search.currentEditor()?.string.isEmpty != false, searchScope == .allFolders, searchMode == .smart, messages.count == Self.pageSize else { throw MailError(message: "Clear search changed filters or did not restore mail") }
+            layout.searchScope.selectItem(at: MailSearchScope.folder.rawValue)
+            changeSearchScope(); await searchTask?.value
+
         }
-        account = nil; remoteFolder = nil; layout.search.stringValue = ""
+        account = nil; remoteFolder = nil; setSearchText("")
         await loadList()
         guard Set(messages.map(\.accountId)).count == 3 else { throw MailError(message: "Unified inbox omitted an account") }
+        setSearchText("ada@exmaple.test"); await loadList()
+        guard searchMatch == .approximate, Set(messages.map(\.accountId)).count == 3 else { throw MailError(message: "Unified fuzzy search lost an account") }
+        await finishSelection()
+        try WindowPresentation.snapshot(layout, name: "fuzzy-search")
+        layout.clearSearch.performClick(nil); await searchTask?.value
+
         setSection(.calendar)
         calendarTask?.cancel()
         await loadCalendar()
@@ -1627,8 +1762,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func verifyActionPlacement() throws {
         layout.layoutSubtreeIfNeeded()
-        let actions = [replyButton, replyAllButton, forwardButton, archiveButton, trashButton, moveButton, readButton, flagButton, pinButton, textButton, htmlButton]
+        let actions = [replyButton, replyAllButton, forwardButton, archiveButton, trashButton, moveButton, readButton, flagButton, pinButton]
         guard actions.allSatisfy({ $0.superview === layout.messageActions }), layout.messageActions.superview === layout.readerPane,
+              textButton.isDescendant(of: layout.reader), htmlButton.isDescendant(of: layout.reader),
               [mailButton, calendarButton, syncButton, draftsButton, splitButton].allSatisfy({ $0.superview === layout.toolbar }) else { throw MailError(message: "Message and global actions have mixed ownership") }
         for bar in [layout.messageActions, layout.toolbar] {
             let visible = bar.subviews.filter { !$0.isHidden }
@@ -1639,6 +1775,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
         guard layout.header.frame.minY >= layout.messageActions.frame.maxY,
               layout.reader.frame.minY >= layout.header.frame.maxY else { throw MailError(message: "Message controls overlap headers or content") }
+        try layout.reader.verifyControlLayout()
         let overflow = layout.messageActions.overflowMenu()
         if readButton.isHidden {
             guard let item = overflow.items.first(where: { $0.title == readButton.title }), item.isEnabled == readButton.isEnabled else { throw MailError(message: "Overflow lost the current message state") }
@@ -1666,7 +1803,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 guard let cell = table.view(atColumn: 0, row: table.selectedRow, makeIfNecessary: true) as? MessageSummaryCell,
                       let mail = current else { throw MailError(message: "Compact message row is missing") }
                 let labels = cell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
-                guard labels.contains(mail.subject), labels.contains(mail.preview) else {
+                guard labels.contains(mail.subject), labels.contains(MessagePreview.render(mail.preview).text) else {
                     throw MailError(message: "Compact row lost its subject or preview")
                 }
             }
@@ -1697,12 +1834,12 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let initial = messages[0]
         let body: Mail = try await core.request(["command": CoreCommand.message.rawValue, "id": initial.id, "mode": BodyFetch.cached.rawValue], mode: .demo)
         guard body.text?.contains("quiet inbox") == true else { throw MailError(message: "Body round trip failed") }
-        layout.search.stringValue = "machine"
+        setSearchText("machine")
         await loadList()
         guard !messages.isEmpty, messages.allSatisfy({ $0.subject.contains("machine") }) else {
             throw MailError(message: "Native search did not filter the mailbox")
         }
-        layout.search.stringValue = ""
+        setSearchText("")
         await loadList()
         table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
         table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)

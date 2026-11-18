@@ -3,7 +3,7 @@ import AppKit
 private enum PixelFill { case outline, solid }
 
 public enum ClassicIcon {
-    case mail, inbox, sent, draft, trash, folder, search, sync, star, account, html, text, attach, settings, calendar, bell
+    case mail, inbox, sent, draft, trash, folder, search, sync, star, account, html, text, attach, settings, calendar, bell, link, spacing
 
     public func draw(in rect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -25,6 +25,15 @@ public enum ClassicIcon {
             if fill == .solid { path.close(); path.fill() } else { path.lineWidth = 1; path.stroke() }
         }
         switch self {
+        case .link:
+            line([.init(x: 7, y: 3), .init(x: 10, y: 1), .init(x: 14, y: 1), .init(x: 15, y: 5), .init(x: 12, y: 8), .init(x: 9, y: 8)], 0x315E9B)
+            line([.init(x: 9, y: 13), .init(x: 6, y: 15), .init(x: 2, y: 15), .init(x: 1, y: 11), .init(x: 4, y: 8), .init(x: 7, y: 8)], 0x315E9B)
+            line([.init(x: 5, y: 11), .init(x: 11, y: 5)], 0x333333)
+        case .spacing:
+            for y: CGFloat in [3, 7, 11] { box(6, y, 9, 1, 0x333333) }
+            line([.init(x: 2, y: 1), .init(x: 2, y: 13)], 0x315E9B)
+            line([.init(x: 0, y: 4), .init(x: 2, y: 2), .init(x: 4, y: 4)], 0x315E9B)
+            line([.init(x: 0, y: 10), .init(x: 2, y: 12), .init(x: 4, y: 10)], 0x315E9B)
         case .mail, .inbox, .sent:
             box(1, 4, 14, 10, 0x333333)
             box(2, 5, 12, 8, 0xFFF6C5)

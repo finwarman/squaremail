@@ -144,7 +144,12 @@ fn next_value(value: &Value, key: &str) -> Value {
 }
 
 fn catalog(store: &Store, account: &Account, job: &SyncJob, remote: &Remote<'_>) -> Result<()> {
-    let mut state = job.state.clone();
+    // A completed snapshot is a checkpoint, not the next traversal's cursor.
+    let mut state = if job.state["finish_catalog"].as_bool() == Some(true) {
+        json!({})
+    } else {
+        job.state.clone()
+    };
     let phase = text(&state, "phase").unwrap_or("folders").to_string();
     let mut folders = Vec::new();
     let mut sources = Vec::new();
@@ -925,6 +930,83 @@ mod tests {
             state: json!({}),
             failures: 0,
         }
+    }
+    #[test]
+    fn catalog_round_resets_marker() {
+        let store = Store::open(":memory:").unwrap();
+        let account = account(Provider::Outlook);
+        store.save_account(&account).unwrap();
+        let initial = job(&store, JobKind::Catalog, "", 0);
+        let old = MailFolder {
+            account_id: "a".into(),
+            id: "old".into(),
+            name: "Old".into(),
+            parent_id: None,
+            system: None,
+        };
+        let completed = json!({"finish_catalog":true,"parent":"stale-parent","pending":["stale-child"],"systems":{"stale":"trash"}});
+        store
+            .apply_catalog(&initial, &[old], &[], &completed, 900)
+            .unwrap();
+        let mut first = initial;
+        first.state = completed;
+        let fixture = Fixture::new(vec![
+            (
+                "/graph/mailFolders/inbox?$select=id",
+                200,
+                json!({"id":"i"}),
+            ),
+            (
+                "/graph/mailFolders/sentitems?$select=id",
+                200,
+                json!({"id":"s"}),
+            ),
+            (
+                "/graph/mailFolders/drafts?$select=id",
+                200,
+                json!({"id":"d"}),
+            ),
+            (
+                "/graph/mailFolders/archive?$select=id",
+                200,
+                json!({"id":"a"}),
+            ),
+            (
+                "/graph/mailFolders/deleteditems?$select=id",
+                200,
+                json!({"id":"t"}),
+            ),
+            (
+                "/graph/mailFolders?$top=100",
+                200,
+                json!({"value":[{"id":"i","displayName":"Inbox"}],"@odata.nextLink":"$ROOT/graph/folders-next"}),
+            ),
+            (
+                "/graph/folders-next",
+                200,
+                json!({"value":[{"id":"t","displayName":"Deleted Items"}]}),
+            ),
+            ("/graph/calendars?$top=100", 200, json!({"value":[]})),
+        ]);
+        let context = Context::new(None, 10);
+        let remote = fixture.remote(&context);
+        catalog(&store, &account, &first, &remote).unwrap();
+        assert_eq!(store.folders("a").unwrap().len(), 2);
+        let next = store.next_job(Utc::now().timestamp()).unwrap().unwrap();
+        assert_eq!(next.kind, JobKind::Catalog);
+        assert!(next.state["finish_catalog"].is_null());
+        catalog(&store, &account, &next, &remote).unwrap();
+        assert_eq!(store.folders("a").unwrap().len(), 3);
+        let next = store.next_job(Utc::now().timestamp()).unwrap().unwrap();
+        catalog(&store, &account, &next, &remote).unwrap();
+        let folders = store.folders("a").unwrap();
+        assert_eq!(folders.len(), 2);
+        assert!(
+            folders
+                .iter()
+                .any(|f| f.id == "t" && f.system.as_deref() == Some("trash"))
+        );
+        fixture.finish();
     }
     fn gmail(id: &str, labels: Value) -> Value {
         json!({"id":id,"internalDate":"1700000000000","labelIds":labels,"payload":{"headers":[{"name":"Subject","value":"Cached notes"},{"name":"From","value":"Ada <ada@example.test>"}]}})

@@ -1,5 +1,6 @@
 import AppKit
 import ClassicKit
+import MessageText
 
 final class MessageSummaryCell: NSTableCellView {
     private let sender = NSTextField(labelWithString: "")
@@ -7,6 +8,7 @@ final class MessageSummaryCell: NSTableCellView {
     private let preview = NSTextField(labelWithString: "")
     private let date = NSTextField(labelWithString: "")
     private var icon: ClassicIcon?
+    private var snippet = MessagePreview.render("")
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -29,10 +31,11 @@ final class MessageSummaryCell: NSTableCellView {
         sender.font = ClassicTheme.font(11, weight: mail.unread ? .bold : .regular)
         subject.stringValue = (mail.pinned == true ? "Pinned · " : "") + mail.subject
         subject.font = ClassicTheme.font(12, weight: mail.unread ? .bold : .regular)
-        preview.stringValue = mail.preview
+        snippet = MessagePreview.render(mail.preview)
         date.stringValue = value
         icon = mail.starred ? .star : (mail.hasAttachments ? .attach : (mail.unread ? .mail : nil))
-        setAccessibilityLabel([sender.stringValue, value, mail.subject, mail.preview].joined(separator: ". "))
+        setAccessibilityLabel([sender.stringValue, value, mail.subject, snippet.text].joined(separator: ". "))
+        updateColors()
         needsLayout = true
         needsDisplay = true
     }
@@ -45,7 +48,10 @@ final class MessageSummaryCell: NSTableCellView {
         let selected = backgroundStyle == .emphasized
         sender.textColor = selected ? .white : ClassicTheme.ink
         subject.textColor = selected ? .white : ClassicTheme.ink
-        preview.textColor = selected ? .white : ClassicTheme.muted
+        let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
+        let value = NSMutableAttributedString(string: snippet.text, attributes: [.font: ClassicTheme.font(11), .foregroundColor: selected ? NSColor.white : ClassicTheme.muted, .paragraphStyle: paragraph])
+        for separator in snippet.separators { value.addAttributes([.font: ClassicTheme.font(9), .foregroundColor: (selected ? NSColor.white : ClassicTheme.muted).withAlphaComponent(0.75), .baselineOffset: 1], range: separator) }
+        preview.attributedStringValue = value
         date.textColor = selected ? .white : ClassicTheme.muted
     }
 

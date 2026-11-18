@@ -21,7 +21,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 
 - Local demo mailbox, separate from personal mail.
 - Import `.eml`, including MIME text/HTML alternatives and encoded headers.
-- Persistent SQLite WAL cache with FTS5 prefix search.
+- Persistent SQLite WAL/FTS5 search over sender names/addresses, subjects, previews and cached text. Optional bounded fuzzy fallback, account/folder scope, clear button and approximate-match feedback. See [search behavior](docs/search.md).
 - Native reusable rows with bounded pages and a draggable reading-pane divider.
 - Side by side toolbar toggle and View menu choices for a reading pane below or on the right. The choice survives restart; the right-pane list shows sender, date, subject and preview.
 - Older/Newer paging retains at most 250 message headers.
@@ -33,7 +33,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
 - Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
-- Classic segmented sync/loading indicators, Cancel/Retry feedback and known image-item progress. Unknown provider totals stay indeterminate.
+- One Refresh action with persistent batch progress, account/operation detail and distinct retry/offline/completion states. Classic segmented indicators keep unknown totals indeterminate; image loading uses known item counts.
 - Passive HTML with scripts and direct web requests blocked. Load images opts in for the current message; Hide images or changing messages resets access.
 - Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
 - Five-second idle release of the HTML renderer after returning to text.

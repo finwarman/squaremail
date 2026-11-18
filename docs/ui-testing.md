@@ -15,3 +15,9 @@ The reader self-test checks readable link attributes, click callbacks without op
 Reader action checks cover global/message ownership, narrow overflow states, no overlapping buttons/headers, cancelled body loads and Retry. Synthetic sync states verify navigation does not re-enable an active Sync button. Appearance choices remain pending until restart and background probes never save personal preferences. Classic/Pink renders use generated mail. Progress lifecycle and palette contrast are separate from whole-app performance qualification.
 
 `--host-dark` in background probes simulates a dark app appearance without changing macOS settings. Calendar/composer fixtures verify and capture light native form controls on classic surfaces, including the read-only calendar label. No real mail/calendar contents are captured.
+
+Search probes use the disconnected30,000-header/three-account fixture. They check sender-address indexing, fuzzy/literal feedback, nested-folder isolation, All folders scope, clear and unified typo results. Reader checks verify visible32-point icon controls, labels/tooltips, non-overlap, Safe Links copy/click preservation and multiline preview formatting. Migration contracts include retained local drafts and queued work.
+
+Programmatic query changes update both the text field and its active field editor. Clear is checked while the search field is focused. Selected results scroll into view; stale responses compare the full search scope/mode snapshot before updating the UI.
+
+The mail-action probe also drives a disconnected scripted sync worker through multiple pages, completion, immediate manual wake, retry and pause/replacement. It checks delayed visible progress, retained progress across pages, Refresh labels and recovery. These probes perform no provider reads or writes.

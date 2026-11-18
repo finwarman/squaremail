@@ -159,3 +159,9 @@ Reproduce with `SQUAREMAIL_TEXT_PROFILE=1 swift test -c release --filter ReaderT
 Reader/global action bars reuse their native controls. Secondary actions use a temporary native overflow menu; resizing changes frames and visibility. Both palettes share fixed color tables, bevel layers and icon geometry. Theme selection applies at restart, with no observer per row. Progress uses small segmented native drawing, with150ms ticks only for visible active indeterminate work. It stops during idle, hide, app inactivity, minimization or sleep. Known image totals do not animate. No additional WebKit instance or provider polling loop is created.
 
 Full hidden checks and Classic/Pink generated-mail renders passed. These changes have no new whole-app startup, memory, switching, power or leak qualification. Provider backfill totals remain unknown and display indeterminate progress.
+
+## Sender and fuzzy search, 18 November 2026
+
+The100,000-message/10-account release probe uses unique sender addresses and current FTS fields. Scoped/unified email-typo p95 is8.66/8.82ms; broad body-typo22.44/60.65ms; scoped/unified selective literal0.051/0.035ms. Broad literal matching ranges13.1-93.6ms across the fixtures. Inbox headers remain below0.6ms p95. These are SQLite query timings, excluding bridge, UI, debounce and network. The initial single-account run overlapped Swift tests, so compare it cautiously. [Measured data](benchmarks/2026-11-18-sender-fuzzy-search.json).
+
+Fuzzy fallback uses bounded dictionary equality probes and returns header-only pages. It does not load a corpus into memory. No new whole-app startup, memory, draw/switch, power or leak qualification was run. Schema4 requires a one-time transactional rebuild of cached search fields.

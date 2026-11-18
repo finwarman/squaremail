@@ -9,7 +9,7 @@ const RECEIPT_LIMIT: i64 = 200;
 
 impl Store {
     pub(crate) fn action_message(&self, id: &str) -> Result<Message> {
-        Ok(self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,subject,preview,timestamp,unread,starred,has_attachments,NULL,NULL,pinned FROM messages WHERE id=?1",[id],Self::read_row)?)
+        self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,subject,preview,timestamp,unread,starred,has_attachments,NULL,NULL,pinned FROM messages WHERE id=?1",[id],Self::read_row).optional()?.ok_or_else(|| "This message changed during sync. Refresh the list and select it again.".into())
     }
     pub(crate) fn reply_headers(&self, id: &str) -> Result<Option<ReplyHeaders>> {
         let data: Option<String> = self
@@ -545,11 +545,22 @@ fn project(db: &Connection, work: &QueuedMail) -> Result<()> {
     Ok(())
 }
 fn system_folder(db: &Connection, account: &str, folder: Folder) -> Result<String> {
-    Ok(db.query_row(
-        "SELECT id FROM mail_folders WHERE account_id=?1 AND system=?2 LIMIT 1",
-        params![account, folder.as_str()],
-        |r| r.get(0),
-    )?)
+    if let Some(id) = db
+        .query_row(
+            "SELECT id FROM mail_folders WHERE account_id=?1 AND system=?2 LIMIT 1",
+            params![account, folder.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
+    // Graph accepts these aliases before the catalog has resolved physical IDs.
+    match folder {
+        Folder::Trash => Ok("deleteditems".into()),
+        Folder::Archive => Ok("archive".into()),
+        _ => Err("This account's destination folder is not cached. Refresh folders first.".into()),
+    }
 }
 
 impl Store {

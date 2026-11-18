@@ -60,6 +60,11 @@ impl<'a> MailRemote<'a> {
                 .iter()
                 .find(|f| f.system.as_deref() == Some(system.as_str()))
                 .map(|f| f.id.clone())
+                .or_else(|| match system {
+                    Folder::Trash => Some("deleteditems".into()),
+                    Folder::Archive => Some("archive".into()),
+                    _ => None,
+                })
                 .ok_or_else(|| "Sync this account's folders before moving mail".into())
         };
         if gmail {

@@ -390,7 +390,10 @@ fn seed_mail_actions_fixture() {
     let path =
         std::env::var("SQUAREMAIL_MAIL_ACTIONS_DB").expect("Use a synthetic output database");
     let store = Store::open(&path).unwrap();
-    seed(&store);
+    let mut original = seed(&store);
+    original.reply = None;
+    original.preview = "Hi both,\n\nThe review is complete.\n\nNext steps are attached.".into();
+    store.save(&original, Folder::Inbox).unwrap();
     store
         .pause_account("fixture", DisconnectMode::KeepCache)
         .unwrap();
@@ -850,4 +853,64 @@ fn gmail_move_targets() {
     let work = store.next_mail_work(MailWorkKind::Action).unwrap().unwrap();
     let queued: QueuedMail = serde_json::from_str(&work.data).unwrap();
     assert_eq!(queued.action, MailAction::Trash);
+}
+
+#[test]
+fn outlook_trash_without_catalog() {
+    use crate::network::fixture::Fixture;
+    let store = Store::open(":memory:").unwrap();
+    let account = Account {
+        id: "outlook".into(),
+        email: "reader@example.test".into(),
+        provider: Provider::Outlook,
+    };
+    store.save_account(&account).unwrap();
+    let message = mime::parse(
+        b"From: Ada <ada@example.test>\r\nSubject: Trash fallback\r\n\r\nBody",
+        &account.id,
+        "original",
+    )
+    .unwrap();
+    store.save(&message, Folder::Inbox).unwrap();
+    queue(&store, "trash-without-map", &message.id, MailAction::Trash).unwrap();
+    assert!(
+        store
+            .list(Some(&account.id), Folder::Inbox, "", 0, 250)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list(Some(&account.id), Folder::Trash, "", 0, 250)
+            .unwrap()
+            .len(),
+        1
+    );
+    let pending = store.next_mail_work(MailWorkKind::Action).unwrap().unwrap();
+    let work: QueuedMail = serde_json::from_str(&pending.data).unwrap();
+    let fixture = Fixture::new(vec![
+        (
+            "GET /messages/original?$select=id,parentFolderId ",
+            200,
+            Some(json!({"id":"original","parentFolderId":"inbox-id"})),
+        ),
+        (
+            "POST /messages/original/move ",
+            201,
+            Some(json!({"id":"original"})),
+        ),
+    ]);
+    let context = Context::new(None, 10);
+    let remote = MailRemote::fixture(&account, &context, fixture.root.clone());
+    remote.action(&work, &[]).unwrap();
+    let requests = fixture.finish();
+    assert_eq!(requests[1].value["destinationId"], "deleteditems");
+    assert!(requests.iter().all(|r| !r.line.starts_with("DELETE")));
+    assert!(
+        store
+            .action_message("missing")
+            .unwrap_err()
+            .to_string()
+            .contains("changed during sync")
+    );
 }

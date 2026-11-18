@@ -2,6 +2,27 @@ mod mail;
 pub(crate) use mail::*;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SearchMode {
+    Literal,
+    Smart,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SearchMatch {
+    Literal,
+    Approximate,
+    None,
+}
+
+#[derive(Serialize)]
+pub(crate) struct SearchPage {
+    pub(crate) messages: Vec<Message>,
+    pub(crate) kind: SearchMatch,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Provider {
@@ -202,6 +223,15 @@ pub(crate) enum Command {
         folder: Folder,
         folder_id: Option<String>,
         query: String,
+        offset: usize,
+        limit: usize,
+    },
+    SearchMail {
+        account: Option<String>,
+        folder: Folder,
+        folder_id: Option<String>,
+        query: String,
+        mode: SearchMode,
         offset: usize,
         limit: usize,
     },

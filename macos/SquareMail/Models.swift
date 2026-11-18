@@ -20,6 +20,10 @@ enum Folder: String, CaseIterable {
 
 enum ReaderMode { case text, html }
 enum ReadingLayout: String { case below, right }
+enum MailSearchMode: String { case literal, smart }
+enum MailSearchScope: Int { case folder, allFolders }
+enum MailSearchMatch: String, Decodable { case literal, approximate, none }
+struct MailSearchPage: Decodable { let messages: [Mail]; let kind: MailSearchMatch }
 enum MailboxMode { case demo, live }
 enum WorkQueue { case local, network, sync, login, media, calendar, notifications }
 
@@ -132,18 +136,22 @@ struct CalendarEvent: Decodable, Equatable {
 }
 struct SyncStep: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case worked
+        case worked, more
         case accountId = "account_id"
         case kind
         case error
         case retryAfter = "retry_after"
     }
 
+    let more: Bool?
     let worked: Bool
     let accountId: String?
     let kind: SyncKind?
     let error: String?
     let retryAfter: Int?
+    init(worked: Bool, accountId: String?, kind: SyncKind?, error: String?, retryAfter: Int?, more: Bool? = nil) {
+        self.worked = worked; self.accountId = accountId; self.kind = kind; self.error = error; self.retryAfter = retryAfter; self.more = more
+    }
 }
 struct ClientConfig: Decodable {
     private enum CodingKeys: String, CodingKey {
@@ -177,6 +185,7 @@ struct SyncStatus: Decodable {
 enum SyncKind: String, Decodable { case catalog, mail, calendar; case recentMail = "recent_mail" }
 
 enum CoreCommand: String {
+    case searchMail = "search_mail"
     case compose
     case moveFolders = "move_folders"
     case queueMail = "queue_mail"

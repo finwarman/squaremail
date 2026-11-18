@@ -114,6 +114,13 @@ final class ClassicKitTests: XCTestCase {
             button.onPress = { invoked = true }
             button.performClick(nil)
             XCTAssertTrue(invoked)
+            button.onPress = { button.isEnabled = false }
+            button.highlight(true); button.performClick(nil)
+            XCTAssertFalse(button.isHighlighted)
+            XCTAssertEqual(button.state, .off)
+            let toggle = ClassicButton("Format", style: .toggle)
+            toggle.performClick(nil); XCTAssertEqual(toggle.state, .on)
+            toggle.performClick(nil); XCTAssertEqual(toggle.state, .off)
         }
     }
 

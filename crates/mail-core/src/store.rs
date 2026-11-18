@@ -4,9 +4,17 @@ use rusqlite::{Connection, params};
 mod mail;
 mod media;
 mod notices;
+mod search;
 mod sync;
 
 pub(crate) const PAGE_LIMIT: usize = 250;
+
+#[derive(Clone, Copy)]
+pub(crate) struct MailScope<'a> {
+    pub(crate) account: Option<&'a str>,
+    pub(crate) folder: Folder,
+    pub(crate) remote: Option<&'a str>,
+}
 
 pub(crate) struct Store {
     connection: Connection,
@@ -79,6 +87,15 @@ impl Store {
                 CREATE INDEX messages_pins ON messages(pinned DESC,timestamp DESC,id);
                 CREATE INDEX messages_account_pins ON messages(account_id,pinned DESC,timestamp DESC,id);
                 PRAGMA user_version=3; COMMIT;")?;
+        }
+        if schema_version < search::SCHEMA_VERSION {
+            let tx = connection.unchecked_transaction()?;
+            let current: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+            if current < search::SCHEMA_VERSION {
+                tx.execute_batch(include_str!("search-schema.sql"))?;
+                tx.pragma_update(None, "user_version", search::SCHEMA_VERSION)?;
+            }
+            tx.commit()?;
         }
         Ok(Self { connection })
     }
@@ -166,12 +183,19 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<Message>> {
-        // Quotes make user input literal FTS terms. Operators and punctuation are data.
-        let terms = query
-            .split_whitespace()
-            .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" AND ");
+        let terms = search::literal(query)?;
+        self.match_rows(account, folder, remote, &terms, offset, limit)
+    }
+
+    fn match_rows(
+        &self,
+        account: Option<&str>,
+        folder: Folder,
+        remote: Option<&str>,
+        terms: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
         let (join, search) = if terms.is_empty() {
             ("", "")
         } else {
@@ -207,7 +231,7 @@ impl Store {
         statement.raw_bind_parameter(3, limit.min(PAGE_LIMIT) as i64)?;
         statement.raw_bind_parameter(4, offset.min(i64::MAX as usize) as i64)?;
         if !terms.is_empty() {
-            statement.raw_bind_parameter(5, &terms)?;
+            statement.raw_bind_parameter(5, terms)?;
         }
         let rows = statement.raw_query();
         Ok(rows
@@ -484,6 +508,7 @@ mod tests {
             message.remote_id = (index / 10).to_string();
             message.id = format!("{}:{}", message.account_id, message.remote_id);
             message.subject = format!("Engine invoice {index:06}");
+            message.sender_address = format!("sender{index:06}@dept{}.example.test", index % 10);
             message.timestamp = index;
             let folder = [Folder::Inbox, Folder::Sent, Folder::Archive][index as usize % 3];
             store.save(&message, folder).unwrap();
@@ -529,6 +554,68 @@ mod tests {
             }
             times.sort_by(f64::total_cmp);
             results.insert(name.into(), serde_json::json!({"p95_ms": times[28]}));
+        }
+        let scope = MailScope {
+            account: Some("scale-0"),
+            folder: Folder::All,
+            remote: None,
+        };
+        for (name, query, expected, kind) in [
+            (
+                "address_exact",
+                "sender073000@dept0.example.test",
+                1,
+                SearchMatch::Literal,
+            ),
+            (
+                "address_typo",
+                "sender073000@dept0.exmaple.test",
+                1,
+                SearchMatch::Approximate,
+            ),
+            ("name_typo", "Exmaple", 250, SearchMatch::Approximate),
+            ("body_typo", "differnece", 250, SearchMatch::Approximate),
+            ("typo_no_hit", "zzzzzzzz", 0, SearchMatch::None),
+        ] {
+            let mut times = Vec::new();
+            for _ in 0..30 {
+                let begin = Instant::now();
+                let page = store
+                    .search_folder(scope, query, SearchMode::Smart, 0, PAGE_LIMIT)
+                    .unwrap();
+                assert_eq!(page.messages.len(), expected, "{name}");
+                assert_eq!(page.kind, kind, "{name}");
+                assert!(
+                    page.messages
+                        .iter()
+                        .all(|m| m.account_id == "scale-0" && m.text.is_none())
+                );
+                times.push(begin.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(f64::total_cmp);
+            results.insert(name.into(), serde_json::json!({"p95_ms":times[28]}));
+        }
+        for (name, query, expected) in [
+            ("unified_address_typo", "sender073000@dept0.exmaple.test", 1),
+            ("unified_body_typo", "differnece", 250),
+        ] {
+            let scope = MailScope {
+                account: None,
+                folder: Folder::All,
+                remote: None,
+            };
+            let mut times = Vec::new();
+            for _ in 0..30 {
+                let begin = Instant::now();
+                let page = store
+                    .search_folder(scope, query, SearchMode::Smart, 0, PAGE_LIMIT)
+                    .unwrap();
+                assert_eq!(page.messages.len(), expected);
+                assert_eq!(page.kind, SearchMatch::Approximate);
+                times.push(begin.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(f64::total_cmp);
+            results.insert(name.into(), serde_json::json!({"p95_ms":times[28]}));
         }
         println!(
             "MULTI_ACCOUNT_BENCHMARK {}",

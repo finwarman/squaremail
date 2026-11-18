@@ -7,6 +7,13 @@ const EVENT_LIMIT: usize = 2000;
 const WINDOW_LIMIT: i64 = 6;
 
 impl Store {
+    pub(crate) fn sync_ready(&self, now: i64) -> Result<bool> {
+        Ok(self.connection.query_row("SELECT
+            EXISTS(SELECT 1 FROM sync_jobs j WHERE active=1 AND next_due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=j.account_id)) OR
+            EXISTS(SELECT 1 FROM mail_actions a WHERE state IN('pending','retry','sending') AND due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=a.account)) OR
+            EXISTS(SELECT 1 FROM mail_outbox a WHERE state IN('pending','retry') AND due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=a.account)) OR
+            EXISTS(SELECT 1 FROM event_writes e WHERE state IN('pending','retry','sending') AND next_due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=e.account_id))",[now],|r|r.get(0))?)
+    }
     pub(crate) fn connected(&self, account: &str) -> Result<bool> {
         Ok(!self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM account_paused WHERE account_id=?1)",
@@ -569,6 +576,72 @@ mod tests {
             window,
             state: json!({}),
             failures: 0,
+        }
+    }
+    #[test]
+    fn ready_respects_retry_and_pause() {
+        let store = Store::open(":memory:").unwrap();
+        account(&store, "a");
+        assert!(!store.sync_ready(100).unwrap());
+        let due = job(&store, "a", JobKind::Mail, "inbox", 0);
+        assert!(store.sync_ready(100).unwrap());
+        store
+            .fail_job(&due, 100, "throttled", 120, RetryClass::Throttled)
+            .unwrap();
+        store.sync_now().unwrap();
+        assert!(!store.sync_ready(219).unwrap());
+        assert!(store.sync_ready(220).unwrap());
+        store.pause_account("a", DisconnectMode::KeepCache).unwrap();
+        assert!(!store.sync_ready(220).unwrap());
+        store
+            .connection
+            .execute("DELETE FROM account_paused", [])
+            .unwrap();
+        store
+            .connection
+            .execute("DELETE FROM sync_jobs", [])
+            .unwrap();
+        // These isolated queues must keep the batch alive even with no provider job.
+        for (table, insert, due) in [
+            (
+                "mail_actions",
+                "INSERT INTO mail_actions(id,account,message_id,data,state,created) VALUES('work','a','message','{}','pending',0)",
+                "due",
+            ),
+            (
+                "mail_outbox",
+                "INSERT INTO mail_outbox(id,account,data,state,created) VALUES('work','a','{}','pending',0)",
+                "due",
+            ),
+            (
+                "event_writes",
+                "INSERT INTO event_writes(operation,account_id,calendar_id,data,state,created) VALUES('work','a','cal','{}','pending',0)",
+                "next_due",
+            ),
+        ] {
+            store.connection.execute(insert, []).unwrap();
+            assert!(store.sync_ready(100).unwrap(), "{table}");
+            store
+                .connection
+                .execute(&format!("UPDATE {table} SET state='retry',{due}=200"), [])
+                .unwrap();
+            assert!(!store.sync_ready(199).unwrap(), "{table}");
+            store.pause_account("a", DisconnectMode::KeepCache).unwrap();
+            assert!(!store.sync_ready(200).unwrap(), "{table}");
+            store
+                .connection
+                .execute("DELETE FROM account_paused", [])
+                .unwrap();
+            assert!(store.sync_ready(200).unwrap(), "{table}");
+            store
+                .connection
+                .execute(&format!("UPDATE {table} SET state='uncertain'"), [])
+                .unwrap();
+            assert!(!store.sync_ready(200).unwrap(), "{table}");
+            store
+                .connection
+                .execute(&format!("DELETE FROM {table}"), [])
+                .unwrap();
         }
     }
     #[test]

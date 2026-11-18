@@ -15,6 +15,11 @@
 | INV-MAIL-upsert | Header refresh preserves an already cached body. | store contract tests |
 | INV-MAIL-bounded-list | A list returns only a bounded page, without bodies. | store contract tests |
 | INV-MAIL-query-literal | User search text cannot become SQL or FTS syntax. | store contract tests |
+| INV-SEARCH-scope | Fuzzy fallback and all-folder searches retain account/custom-folder scope, literal precedence, stable order and bounded header-only pages. | SQLite contracts and hidden account probe |
+| INV-SEARCH-index | Schema4 indexes existing sender addresses atomically; header/body updates and deletions keep the index current without losing drafts or queued work. | legacy migration/index lifecycle contracts |
+| INV-SEARCH-bounds | Input, dictionary probes and expansions are bounded; fuzzy search does not load body text into application memory. | bound/query-plan contracts and100k release benchmark |
+| INV-READER-controls | Rendering/spacing/link toggles remain visible as labelled icon controls, with tooltips and current pressed/disabled states. | hidden layout/control probes |
+| INV-READER-preview | Row previews flatten newlines with separators without changing stored content. | MessageText contracts and native renders |
 | INV-MAIL-plain-text | MIME text and HTML alternatives remain separate. | MIME tests |
 | INV-MAIL-html-passive | Cached HTML excludes scripts, forms and remote resources. | HTML tests and native policy self-test |
 | INV-MAIL-oauth-state | OAuth callback state must match the pending login. | OAuth callback tests |
@@ -27,6 +32,9 @@
 | INV-CALENDAR-bounded-grid | Period/date changes reuse 42 native date targets. | ClassicKit calendar range/lifecycle test |
 | INV-CALENDAR-lazy-release | Calendar views are absent during mail startup, reused during rapid toggles and released after five idle seconds in Mail. | native calendar probe |
 
+| INV-SYNC-batch-feedback | Progress spans due pages/lanes, manual refresh wakes only idle waits, retries/offline/pause stop busy feedback, and stale workers cannot change replacements. | scheduler fixture, queue-readiness contract and hidden native action probe |
+| INV-SYNC-catalog-round | Completed catalog markers cannot prune the next round before its final page. | Outlook multi-page HTTP/catalog regression |
+| INV-MAIL-trash-catalog | Missing Outlook folder maps still permit reversible Trash moves; no hard-delete request is issued. | synthetic missing-catalog HTTP/action contract |
 | INV-SYNC-page-checkpoint | Page changes and cursor advance commit together; stale cursor updates roll back. | real SQLite cursor/replay test |
 | INV-SYNC-snapshot | An interrupted calendar snapshot preserves the previous offline window. | staged snapshot/restart test |
 | INV-SYNC-recent-mail | New-mail work does not wait for archive backfill or erase its reconciliation markers. | synthetic Gmail HTTP history test |

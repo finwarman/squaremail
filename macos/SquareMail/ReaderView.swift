@@ -31,9 +31,10 @@ enum HTMLPolicy {
 }
 
 final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
-    private let spacingButton = ClassicButton("Compact spacing", style: .toggle)
+    private let spacingButton = ClassicButton("", icon: .spacing, style: .iconToggle)
     private var spacing: TextSpacing = WindowPresentation.isBackground ? .original : (TextSpacing(rawValue: UserDefaults.standard.string(forKey: "readerSpacing") ?? "") ?? .original)
-    private let linksButton = ClassicButton("Readable links", style: .toggle)
+    private let linksButton = ClassicButton("", icon: .link, style: .iconToggle)
+    private var modeButtons: [ClassicButton] = []
     private var linkStyle: LinkStyle = WindowPresentation.isBackground ? .readable : (LinkStyle(rawValue: UserDefaults.standard.string(forKey: "readerLinks") ?? "") ?? .readable)
     private var textTask: Task<Void, Never>?
     private var textRevision = 0
@@ -113,6 +114,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         mediaLabel.font = ClassicTheme.font(10)
         mediaLabel.textColor = ClassicTheme.muted
         imagesButton.toolTip = "Load up to 12 images for this message. Remote servers may learn that you opened it."
+        attachmentsButton.toolTip = "Show attachment metadata. Previews download only when requested."
         imagesButton.onPress = { [weak self] in
             guard let self, let message = self.message else { return }
             if self.imagePermission == .loaded { self.hideImages(); return }
@@ -124,6 +126,8 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
             self.onAttachments?(message)
         }
         linksButton.toolTip = "Short labels with full destinations on hover. Copy retains full links. No hover requests."
+        linksButton.setAccessibilityLabel("Readable links")
+        spacingButton.setAccessibilityLabel("Compact spacing")
         linksButton.onPress = { [weak self] in
             guard let self, let message else { return }
             linkStyle = linkStyle == .original ? .readable : .original
@@ -152,24 +156,32 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
+    func setModeButtons(_ plain: ClassicButton, html: ClassicButton) {
+        modeButtons = [plain, html]
+        for button in modeButtons { mediaBar.addSubview(button) }
+        needsLayout = true
+    }
+
     override func layout() {
         super.layout()
-        let narrow = bounds.width < 650
+        let narrow = bounds.width < 600
         let loading = progress.state != .idle
-        let barHeight: CGFloat = message == nil && !loading && retryLoad.isHidden ? 0 : (narrow ? 84 : 34) + (loading ? 16 : 0)
+        let barHeight: CGFloat = message == nil && !loading && retryLoad.isHidden ? 0 : (narrow ? 64 : 34) + (loading ? 16 : 0)
         let attachmentHeight: CGFloat = attachments.isHidden ? 0 : min(150, max(0, bounds.height - barHeight) / 2)
         mediaBar.isHidden = barHeight == 0
         mediaBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         imagesButton.frame = NSRect(x: 7, y: 5, width: 102, height: 24)
         attachmentsButton.frame = NSRect(x: 116, y: 5, width: 100, height: 24)
-        spacingButton.frame = NSRect(x: narrow ? 7 : bounds.width - 270, y: narrow ? 33 : 5, width: 132, height: 24)
-        linksButton.frame = NSRect(x: narrow ? 146 : bounds.width - 132, y: narrow ? 33 : 5, width: 124, height: 24)
+        let controls = modeButtons + [spacingButton, linksButton]
+        let groupWidth = CGFloat(controls.count * 36 - 4)
+        let groupX: CGFloat = narrow ? 7 : bounds.width - groupWidth - 7
+        for (index, button) in controls.enumerated() { button.frame = NSRect(x: groupX + CGFloat(index * 36), y: narrow ? 35 : 5, width: 32, height: 24) }
         let labelStart: CGFloat = loading || !retryLoad.isHidden ? 304 : 226
-        mediaLabel.frame = NSRect(x: narrow ? 7 : labelStart, y: narrow ? 62 : 8, width: max(0, bounds.width - (narrow ? 14 : labelStart + 279)), height: 18)
+        mediaLabel.frame = NSRect(x: narrow ? groupWidth + 16 : labelStart, y: narrow ? 38 : 8, width: max(0, narrow ? bounds.width - groupWidth - 23 : groupX - labelStart - 8), height: 18)
         cancelLoad.frame = NSRect(x: 223, y: 5, width: 70, height: 24)
         retryLoad.frame = cancelLoad.frame
         progress.isHidden = !loading
-        progress.frame = NSRect(x: 7, y: narrow ? 84 : 34, width: max(0, bounds.width - 14), height: 12)
+        progress.frame = NSRect(x: 7, y: narrow ? 64 : 34, width: max(0, bounds.width - 14), height: 12)
         let content = NSRect(x: 0, y: attachmentHeight, width: bounds.width, height: max(0, bounds.height - barHeight - attachmentHeight))
         scroll.frame = content
         web?.frame = content
@@ -186,8 +198,10 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         onImageState?(imagePermission)
         linksButton.isEnabled = mode == .text
         linksButton.state = linkStyle == .readable ? .on : .off
+        linksButton.toolTip = linkStyle == .readable ? "Readable links on. Click to show original URL text. Hover links for full targets; copying keeps full URLs." : "Readable links off. Click to shorten email/Markdown links and long URLs."
         spacingButton.isEnabled = mode == .text
         spacingButton.state = spacing == .compact ? .on : .off
+        spacingButton.toolTip = spacing == .compact ? "Compact spacing on. Click to restore original spacing." : "Compact spacing off. Click to reduce blank lines, invisible padding and prose gutters, preserving lists and quotes."
         imagesButton.isEnabled = mode == .html && progress.state == .idle
         attachmentsButton.isEnabled = progress.state == .idle
         needsLayout = true
@@ -458,6 +472,16 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
 }
 
 extension ReaderView {
+    func verifyControlLayout() throws {
+        guard message != nil else { return }
+        let controls = modeButtons + [spacingButton, linksButton, imagesButton, attachmentsButton]
+        guard modeButtons.count == 2, controls.allSatisfy({ mediaBar.bounds.contains($0.frame) && $0.toolTip?.isEmpty == false }),
+              (modeButtons + [spacingButton, linksButton]).allSatisfy({ $0.frame.width == 32 && $0.accessibilityLabel()?.isEmpty == false }) else { throw MailError(message: "Compact reader icons lost bounds, labels or tooltips") }
+        for (index, button) in controls.enumerated() {
+            guard controls.dropFirst(index + 1).allSatisfy({ !button.frame.intersects($0.frame) }) else { throw MailError(message: "Reader icons overlap other controls") }
+        }
+    }
+
     func verifyLoading() async throws {
         let saved = message
         let cancel = onCancelLoad; let retry = onRetryLoad

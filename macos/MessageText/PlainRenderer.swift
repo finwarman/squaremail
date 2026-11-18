@@ -79,16 +79,32 @@ public actor PlainRenderer {
         return (range, "")
     }
     private func displayLabel(_ label: String, url: URL) -> String {
-        let host = url.host ?? url.path
+        if let destination = safeDestination(url) {
+            let prefix = label.isEmpty ? "" : clipped(label, limit: Self.labelLimit) + " ↗ · "
+            return prefix + shortURL(destination) + " [Safe Links]"
+        }
         if !label.isEmpty { return clipped(label, limit: Self.labelLimit) + " ↗" }
+        return shortURL(url)
+    }
+    private func shortURL(_ url: URL) -> String {
+        let host = url.host ?? url.path
         if url.absoluteString.count <= Self.labelLimit { return url.scheme == "mailto" ? url.path : url.absoluteString }
         let path = url.path.isEmpty || url.path == "/" ? "" : clipped(url.path, limit: 28)
         return clipped(host, limit: 44) + path + "…"
     }
+    private func safeDestination(_ url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
+              host == "safelinks.protection.outlook.com" || host.hasSuffix(".safelinks.protection.outlook.com"),
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let raw = parts.queryItems?.first(where: { $0.name == "url" })?.value,
+              let destination = URL(string: raw), Self.permits(destination),
+              ["https", "http"].contains(destination.scheme?.lowercased()) else { return nil }
+        return destination
+    }
     private func tooltip(_ url: URL) -> String {
         var result = url.absoluteString
-        if let host = url.host?.lowercased(), host.hasSuffix(".safelinks.protection.outlook.com"), let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let raw = parts.queryItems?.first(where: { $0.name == "url" })?.value, let destination = URL(string: raw), Self.permits(destination), destination.scheme != "mailto" {
-            result = "Destination: \(destination.absoluteString)\nOutlook protection: \(url.absoluteString)"
+        if let destination = safeDestination(url) {
+            result = "Destination: \(destination.absoluteString)\nOutlook protection: \(url.absoluteString)\nDecoded locally. Further redirects are not checked."
         }
         return result
     }

@@ -33,7 +33,8 @@ public final class ClassicCheckbox: NSButton {
 
 public final class ClassicButton: NSButton {
     public override var title: String { didSet { setAccessibilityLabel(title); needsDisplay = true } }
-    public enum Style { case normal, toolbar, toggle, title, menu }
+    public override var isEnabled: Bool { didSet { if !isEnabled { hovered = false; highlight(false) }; needsDisplay = true } }
+    public enum Style { case normal, toolbar, toggle, iconToggle, title, menu }
     public var onPress: (() -> Void)?
     public var icon: ClassicIcon?
     private let style: Style
@@ -47,7 +48,7 @@ public final class ClassicButton: NSButton {
         self.title = title
         self.font = ClassicTheme.font()
         self.isBordered = false
-        self.setButtonType(style == .toggle ? .pushOnPushOff : .momentaryPushIn)
+        self.setButtonType(style == .toggle || style == .iconToggle ? .pushOnPushOff : .momentaryPushIn)
         self.target = self
         self.action = #selector(pressed)
         self.setAccessibilityLabel(title)
@@ -56,7 +57,12 @@ public final class ClassicButton: NSButton {
     required init?(coder: NSCoder) { fatalError("Use init(title:)") }
     public override var isFlipped: Bool { true }
 
-    @objc private func pressed() { onPress?(); needsDisplay = true }
+    @objc private func pressed() {
+        defer { highlight(false); needsDisplay = true }
+        highlight(false)
+        if style == .normal || style == .menu || style == .title { state = .off }
+        onPress?()
+    }
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -77,7 +83,12 @@ public final class ClassicButton: NSButton {
         }
         let shift: CGFloat = down ? 1 : 0
         let ink = isEnabled ? ClassicTheme.ink : ClassicTheme.muted
-        if style == .toolbar {
+        if style == .iconToggle {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.cgContext.setAlpha(isEnabled ? 1 : 0.45)
+            if let icon { icon.draw(in: NSRect(x: floor((bounds.width - 16) / 2) + shift, y: floor((bounds.height - 16) / 2) + shift, width: 16, height: 16)) }
+            NSGraphicsContext.restoreGraphicsState()
+        } else if style == .toolbar {
             if let icon { icon.draw(in: NSRect(x: (bounds.width - 24) / 2 + shift, y: 5 + shift, width: 24, height: 24)) }
             ClassicTheme.text(title, in: NSRect(x: 2 + shift, y: 34 + shift, width: bounds.width - 4, height: 18), size: 11, color: ink, alignment: .center)
         } else {

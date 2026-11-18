@@ -33,7 +33,7 @@ final class ReaderTextTests: XCTestCase {
     func testProtectionWrapper() async throws {
         let source = "View online<https://gbr01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fsurvey&data=synthetic>"
         let result = try await render(source)
-        XCTAssertEqual(result.text, "View online ↗")
+        XCTAssertEqual(result.text, "View online ↗ · https://example.com/survey [Safe Links]")
         XCTAssertEqual(result.links.first?.url.host, "gbr01.safelinks.protection.outlook.com")
         XCTAssertTrue(result.links.first?.tooltip.contains("Destination: https://example.com/survey") == true)
         XCTAssertEqual(result.copyText(NSRange(location: 0, length: result.text.utf16.count)), source)
@@ -73,6 +73,26 @@ final class ReaderTextTests: XCTestCase {
         let result = try await PlainRenderer.shared.render(source, spacing: .original, links: .original)
         XCTAssertEqual(result.text, source)
         XCTAssertTrue(result.links.isEmpty)
+    }
+
+    func testSafeLinkValidation() async throws {
+        for url in ["https://safelinks.protection.outlook.com.evil.test/?url=https%3A%2F%2Fexample.test", "https://gbr01.safelinks.protection.outlook.com/?url=javascript%3Aalert%281%29", "https://gbr01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fuser%3Asecret%40example.test"] {
+            let result = try await render(url)
+            XCTAssertFalse(result.text.contains("[Safe Links]"))
+            XCTAssertFalse(result.links.first?.tooltip.contains("Destination:") == true)
+        }
+    }
+
+    func testPreviewParagraphs() {
+        let source = "Hi both,\n\nCongratulations, the review is complete.\n\nNext\t steps are below."
+        let result = MessagePreview.render(source)
+        XCTAssertEqual(result.text, "Hi both, | Congratulations, the review is complete. | Next steps are below.")
+        XCTAssertEqual(result.separators.count, 2)
+        XCTAssertTrue(result.separators.allSatisfy { (result.text as NSString).substring(with: $0) == "|" })
+        XCTAssertEqual(MessagePreview.render("😀\r\n\r\nSecond line").text, "😀 | Second line")
+        XCTAssertLessThanOrEqual(MessagePreview.render(String(repeating: "Paragraph\n", count: 10000)).text.count, 512)
+        let padding = String(repeating: "\u{2007}\u{034F}\u{00AD}", count: 128)
+        XCTAssertEqual(MessagePreview.render("First" + padding + "\nSecond").text, "First | Second")
     }
 
     func testLargeBodyBounds() async throws {

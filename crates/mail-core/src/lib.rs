@@ -15,10 +15,41 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::ffi::{CStr, CString, c_char};
 use std::io::Read;
-use store::Store;
+use store::{MailScope, Store};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const MAX_MAIL_BYTES: u64 = 25 * 1024 * 1024;
+
+fn sync_cycle(store: &Store, context: &network::Context<'_>) -> Result<Value> {
+    static TURN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let turn = TURN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 3;
+    if turn == 0
+        && let Some(reply) = mailops::sync_work(store, context)?
+    {
+        return Ok(reply);
+    }
+    if turn == 1
+        && let Some(reply) = calendar::sync_write(store, context)?
+    {
+        return Ok(reply);
+    }
+    let page = providers::sync_next(store, context)?;
+    if page["worked"].as_bool() == Some(true) {
+        return Ok(page);
+    }
+    // An idle provider lane must not hide ready mail/calendar writes.
+    if turn != 0
+        && let Some(reply) = mailops::sync_work(store, context)?
+    {
+        return Ok(reply);
+    }
+    if turn != 1
+        && let Some(reply) = calendar::sync_write(store, context)?
+    {
+        return Ok(reply);
+    }
+    Ok(page)
+}
 
 fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
     let store = Store::open(&request.database)?;
@@ -134,19 +165,11 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             Ok(json!({}))
         }
         Command::SyncNext => {
-            static TURN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let turn = TURN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 3;
-            if turn == 0
-                && let Some(reply) = mailops::sync_work(&store, context)?
-            {
-                return Ok(reply);
+            let mut reply = sync_cycle(&store, context)?;
+            if reply["worked"].as_bool() == Some(true) {
+                reply["more"] = json!(store.sync_ready(chrono::Utc::now().timestamp())?);
             }
-            if turn == 1
-                && let Some(reply) = calendar::sync_write(&store, context)?
-            {
-                return Ok(reply);
-            }
-            providers::sync_next(&store, context)
+            Ok(reply)
         }
         Command::EventDetail { key, mode } => calendar::detail(&store, &key, mode, context),
         Command::QueueEvent { change } => calendar::queue(&store, change),
@@ -200,6 +223,25 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             demo::seed(&store)?;
             Ok(json!({"seeded": true}))
         }
+        Command::SearchMail {
+            account,
+            folder,
+            folder_id,
+            query,
+            mode,
+            offset,
+            limit,
+        } => Ok(serde_json::to_value(store.search_folder(
+            MailScope {
+                account: account.as_deref(),
+                folder,
+                remote: folder_id.as_deref(),
+            },
+            &query,
+            mode,
+            offset,
+            limit,
+        )?)?),
         Command::List {
             account,
             folder,

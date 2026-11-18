@@ -1,0 +1,60 @@
+{
+  "mailbox": {
+    "common_search_p95_ms": 93.574166,
+    "list_p95_ms": 0.393417,
+    "messages": 100000,
+    "seed_ms": 17005.697709,
+    "selective_search_p95_ms": 0.219958,
+    "sqlite_bytes": 64958464
+  },
+  "multi_account": {
+    "account_common": {
+      "p95_ms": 14.391292
+    },
+    "account_inbox": {
+      "p95_ms": 0.287583
+    },
+    "address_exact": {
+      "p95_ms": 1.911708
+    },
+    "address_typo": {
+      "p95_ms": 8.656291999999999
+    },
+    "body_typo": {
+      "p95_ms": 22.440041
+    },
+    "folder_common": {
+      "p95_ms": 13.104917
+    },
+    "name_typo": {
+      "p95_ms": 21.149500000000003
+    },
+    "scoped_selective": {
+      "p95_ms": 0.050667000000000004
+    },
+    "typo_no_hit": {
+      "p95_ms": 5.2608749999999995
+    },
+    "unified_address_typo": {
+      "p95_ms": 8.819417
+    },
+    "unified_body_typo": {
+      "p95_ms": 60.646375
+    },
+    "unified_common": {
+      "p95_ms": 56.073875
+    },
+    "unified_inbox": {
+      "p95_ms": 0.28891700000000003
+    },
+    "unified_selective": {
+      "p95_ms": 0.035416
+    }
+  },
+  "date": "2026-11-18",
+  "messages": 100000,
+  "accounts": 10,
+  "runs": 30,
+  "timing": "Core SQLite query only; excludes bridge/UI/debounce/network. Synthetic data.",
+  "limits": "No new whole-app memory/startup/power/leak profile. Common searches sort many matching headers."
+}
