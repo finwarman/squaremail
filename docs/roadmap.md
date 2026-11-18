@@ -15,6 +15,9 @@ Before a private daily-driver release:
 - Qualify borderless window resizing, VoiceOver, keyboard-only use, multiple displays and non-Retina scaling.
 - Profile startup, list/search latency and whole-process-tree memory with a large mailbox. Compare against a named client on the same machine and workload.
 - Add local draft composition, then separately design OAuth write scopes, sending, idempotency and an outbox. Mail remains read-only; calendar writes have separate consent.
+- Add toolbar/right-click move, archive, read/unread and trash operations. Permanent deletion needs a separate confirmation. Preserve Gmail label semantics and Outlook folder semantics in the offline queue.
+- Add reply/reply-all, CC/BCC and forward with bounded local mail drafts. Calendar drafts do not provide mail composition.
+- Design provider rules and local sweeps separately. Provider rules have different capabilities; local rules run only while Square Mail is syncing.
 - Configure signing, hardened runtime, notarization, update delivery, crash handling and an Intel build if needed.
 
 Before opening the source:

@@ -37,6 +37,9 @@
 | INV-CALENDAR-edit-metadata | An edit changes only selected fields, preserving attendee, recurrence, conferencing and unknown provider fields. | provider patch and native editor contracts |
 | INV-CALENDAR-edit-conflict | Changed revisions block writes; lost successful edits are acknowledged without repeating them. | synthetic conditional HTTP fixtures |
 | INV-CALENDAR-edit-queue | Pending edits, payloads, detail caches and completed receipts are bounded and survive restart. | real SQLite edit queue contracts |
+| INV-CALENDAR-local-draft | Local drafts survive restart, remain bounded and follow the selected account; queuing removes the draft atomically. | SQLite draft contracts |
+| INV-UI-editor-close | Unsaved calendar fields require a close choice; cancellation and failed saves restore usable controls. | hidden native control probe |
+| INV-UI-background-check | Integration windows remain hidden and non-activating; scripted dialogs never request real provider or OS permission. | hidden native control probe |
 | INV-NOTICE-bounded | History and future OS reminder plans remain bounded. | SQLite/native notification probes |
 | INV-NOTICE-replay | Baselines suppress old mail; read/clear state and deduplication survive restart. | SQLite replay/native probes |
 | INV-NOTICE-permission | The bell works without permission; system permission is requested only on explicit enable. | native action boundary and offline probe |

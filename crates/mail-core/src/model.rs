@@ -113,6 +113,9 @@ pub(crate) enum Command {
     QueueEvent {
         change: crate::calendar::EventChange,
     },
+    SaveEventDraft {
+        change: crate::calendar::EventChange,
+    },
     EventWrites,
     DiscardEvent {
         operation: String,

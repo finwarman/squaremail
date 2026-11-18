@@ -53,8 +53,8 @@ struct EventDetail: Decodable {
     }
 }
 struct EventDetailReply: Decodable { let detail: EventDetail? }
-struct EventChange: Encodable {
-    enum Updates: String, Encodable { case personal, notify }
+struct EventChange: Codable {
+    enum Updates: String, Codable { case personal, notify }
     let operation: String
     let key: EventKey
     let revision: String?
@@ -67,13 +67,14 @@ struct EventChange: Encodable {
 }
 struct EventWrite: Decodable {
     let operation: String
+    let draft: LocalEventDraft?
     let state: State
     let title: String
     let error: String?
     let account: String
     let calendar: String
     let id: String?
-    enum State: String, Decodable { case pending, sending, retry, conflict, failed, done, uncertain }
+    enum State: String, Decodable { case draft, pending, sending, retry, conflict, failed, done, uncertain }
 }
 struct AppNotice: Decodable {
     enum Kind: String, Decodable { case mail, reminder; case calendarUpdate = "calendar_update" }
@@ -107,4 +108,6 @@ enum NoticeChannel: String { case mail, calendar }
 enum NoticeToggle: String { case on, off }
 enum NoticeDelivery: String { case quiet, desktop }
 
-enum NotificationPermission { case allowed, denied }
+enum NotificationPermission { case allowed, notAsked, denied }
+
+struct LocalEventDraft: Decodable { let change: EventChange; let base: EventDetail? }

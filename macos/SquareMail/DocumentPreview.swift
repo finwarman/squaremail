@@ -20,7 +20,7 @@ final class DocumentPreview: NSObject, NSWindowDelegate {
         window = panel
         preview = view
         panel.center()
-        panel.makeKeyAndOrderFront(nil)
+        WindowPresentation.show(panel)
     }
 
     func close() {

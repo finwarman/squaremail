@@ -395,3 +395,72 @@ fn reminders_keep_floating_dates() {
     assert_eq!(body["start"]["timeZone"], "Europe/London");
     assert_eq!(body["isAllDay"], true);
 }
+
+#[test]
+fn local_drafts_survive_and_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("drafts.sqlite");
+    let store = Store::open(path.to_str().unwrap()).unwrap();
+    store.save_account(&account(Provider::Gmail)).unwrap();
+    let base = detail(Provider::Gmail);
+    let change = change(&base);
+    let write = PendingWrite {
+        change,
+        base: Some(base),
+        attempts: 0,
+    };
+    store.save_event_draft(&write).unwrap();
+    drop(store);
+    let store = Store::open(path.to_str().unwrap()).unwrap();
+    let restored = store.event_draft(&write.change.operation).unwrap().unwrap();
+    assert_eq!(restored.base.unwrap().raw, raw(Provider::Gmail));
+    for i in 2..=20 {
+        let mut draft = PendingWrite {
+            change: write.change.clone(),
+            base: write.base.clone(),
+            attempts: 0,
+        };
+        draft.change.operation = format!("fixture-draft-operation-{i:04}");
+        store.save_event_draft(&draft).unwrap();
+    }
+    let mut overflow = PendingWrite {
+        change: write.change.clone(),
+        base: write.base.clone(),
+        attempts: 0,
+    };
+    overflow.change.operation = "draft-overflow-operation".into();
+    assert!(store.save_event_draft(&overflow).is_err());
+    store.queue_event(&write).unwrap();
+    assert!(
+        store
+            .event_draft(&write.change.operation)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.event_writes().unwrap().as_array().unwrap().len(), 20);
+}
+
+#[test]
+fn moved_draft_follows_account() {
+    let store = Store::open(":memory:").unwrap();
+    let first = account(Provider::Gmail);
+    let mut second = account(Provider::Outlook);
+    second.id = "second".into();
+    store.save_account(&first).unwrap();
+    store.save_account(&second).unwrap();
+    let mut change = change(&detail(Provider::Gmail));
+    change.key.id = None;
+    change.revision = None;
+    save_draft(&store, change.clone()).unwrap();
+    change.key.account = second.id.clone();
+    save_draft(&store, change.clone()).unwrap();
+    store
+        .pause_account(&first.id, DisconnectMode::RemoveCache)
+        .unwrap();
+    let saved = store.event_draft(&change.operation).unwrap().unwrap();
+    assert_eq!(saved.change.key.account, second.id);
+    store
+        .pause_account(&second.id, DisconnectMode::RemoveCache)
+        .unwrap();
+    assert!(store.event_draft(&change.operation).unwrap().is_none());
+}

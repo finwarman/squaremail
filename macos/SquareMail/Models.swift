@@ -190,6 +190,7 @@ enum CoreCommand: String {
     case noticeSetting = "notice_setting"
     case eventDetail = "event_detail"
     case queueEvent = "queue_event"
+    case saveEventDraft = "save_event_draft"
     case eventWrites = "event_writes"
     case discardEvent = "discard_event"
     case calendarConsent = "calendar_consent"

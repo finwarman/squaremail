@@ -5,6 +5,9 @@ import UserNotifications
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     private let core: MailCore
     private let center = UNUserNotificationCenter.current()
+    private var permissionTask: Task<Void, Never>?
+    private var actionTask: Task<Void, Never>?
+    private var previewMode = false
     private var loop: Task<Void, Never>?
     private var lastPoll: ContinuousClock.Instant?
     private static let pollSpacing: Duration = .seconds(1)
@@ -17,7 +20,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     private var generation = 0
     private static let desktopKey = "desktopNotifications"
     private var desktop = UserDefaults.standard.bool(forKey: desktopKey)
-    private var permission = false
+    private var authorization: NotificationPermission = .notAsked
+    private var permission: Bool { authorization == .allowed }
     private var planned: [String: Int64] = [:]
     var onCount: ((Int) -> Void)?
     var onOpen: ((AppNotice) -> Void)?
@@ -26,6 +30,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     init(core: MailCore) { self.core = core; super.init(); center.delegate = self }
     func start(_ accounts: [Account]) {
         self.accounts = accounts
+        previewMode = false
         active = true
         if loop != nil { refresh(); return }
         loop = Task { [weak self] in
@@ -39,6 +44,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         active = false; generation += 1
         loop?.cancel(); loop = nil
         refreshTask?.cancel(); refreshTask = nil
+        actionTask?.cancel(); actionTask = nil; permissionTask?.cancel(); permissionTask = nil
         panel?.close(); panel = nil
     }
     func refresh() {
@@ -59,20 +65,28 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                 try Task.checkCancellation()
                 lastPoll = .now
                 dirty = false
-                let status = await center.notificationSettings()
-                permission = status.authorizationStatus == .authorized || status.authorizationStatus == .provisional
+                if !previewMode {
+                    let status = await center.notificationSettings()
+                    switch status.authorizationStatus {
+                    case .authorized, .provisional: authorization = .allowed
+                    case .denied: authorization = .denied
+                    default: authorization = .notAsked
+                    }
+                } else { authorization = .notAsked }
                 let delivery: NoticeDelivery = desktop && permission ? .desktop : .quiet
                 let value: NoticeBatch = try await core.request(["command": CoreCommand.notices.rawValue, "delivery": delivery.rawValue], mode: .live, queue: .notifications)
                 guard !Task.isCancelled, generation == revision else { return }
                 batch = value
                 onCount?(value.items.filter(\.unread).count)
-                panel?.show(value, accounts: accounts, desktop: delivery, permission: permission ? .allowed : .denied)
-                if delivery == .desktop {
+                panel?.show(value, accounts: accounts, desktop: delivery, permission: authorization)
+                if permissionTask != nil { panel?.permissionPending() }
+                if actionTask != nil { panel?.setCommandState(.busy) }
+                if delivery == .desktop && !previewMode {
                     for item in value.banners { try await submit(item) }
                     await trimDelivered()
                     try await schedule(value.planned)
-                } else { await removePlans() }
-            } catch is CancellationError {} catch { onStatus?(error.localizedDescription) }
+                } else if !previewMode { await removePlans() }
+            } catch is CancellationError {} catch { report(error.localizedDescription) }
         }
     }
     func show() {
@@ -84,42 +98,62 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             view.onPreference = { [weak self] account, channel, toggle in self?.setPreference(account, channel: channel, toggle: toggle) }
             panel = view
         }
-        if let batch { panel?.show(batch, accounts: accounts, desktop: desktop && permission ? .desktop : .quiet, permission: permission ? .allowed : .denied) }
+        if let batch { panel?.show(batch, accounts: accounts, desktop: desktop && permission ? .desktop : .quiet, permission: authorization) }
+        if actionTask != nil { panel?.setCommandState(.busy) }
+        if permissionTask != nil { panel?.permissionPending() }
         panel?.open()
         refresh()
     }
     func preview(_ value: NoticeBatch, accounts: [Account]) {
-        batch = value; self.accounts = accounts
+        batch = value; self.accounts = accounts; active = true; previewMode = true
         onCount?(value.items.filter(\.unread).count)
         show()
     }
     private func perform(_ action: NoticeAction) { act(action, id: nil) }
+    private func report(_ message: String) { onStatus?(message); panel?.showStatus(message) }
     private func act(_ action: NoticeAction, id: String?) {
-        Task {
+        guard actionTask == nil else { return }
+        panel?.setCommandState(.busy)
+        let revision = generation
+        actionTask = Task {
+            defer { if generation == revision { actionTask = nil; panel?.setCommandState(.ready); refresh() } }
             do {
                 let _: EmptyReply = try await core.request(["command": CoreCommand.noticeAction.rawValue, "action": action.rawValue, "id": id as Any? ?? NSNull()], mode: .live, queue: .notifications)
-                refresh()
-            } catch { onStatus?(error.localizedDescription) }
+            } catch is CancellationError {} catch { report(error.localizedDescription) }
         }
     }
     private func setPreference(_ account: String?, channel: NoticeChannel, toggle: NoticeToggle) {
-        Task {
+        guard actionTask == nil else { return }
+        panel?.setCommandState(.busy)
+        let revision = generation
+        actionTask = Task {
+            defer { if generation == revision { actionTask = nil; panel?.setCommandState(.ready); refresh() } }
             do {
                 let _: EmptyReply = try await core.request(["command": CoreCommand.noticeSetting.rawValue, "account": account as Any? ?? NSNull(), "channel": channel.rawValue, "toggle": toggle.rawValue], mode: .live, queue: .notifications)
-                refresh()
-            } catch { onStatus?(error.localizedDescription) }
+            } catch is CancellationError {} catch { report(error.localizedDescription) }
         }
     }
     private func enableDesktop() {
+        guard permissionTask == nil else { return }
+        if previewMode { report("Desktop alerts are disabled in the offline preview."); return }
         if desktop { desktop = false; UserDefaults.standard.set(false, forKey: Self.desktopKey); refresh(); return }
-        Task {
+        if authorization == .denied {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+            report("Enable Square Mail in System Settings → Notifications.")
+            return
+        }
+        panel?.permissionPending()
+        let revision = generation
+        permissionTask = Task {
+            defer { if generation == revision { permissionTask = nil; refresh() } }
             do {
                 let granted = try await center.requestAuthorization(options: [.alert, .sound])
+                guard generation == revision, !Task.isCancelled else { return }
                 desktop = granted
+                authorization = granted ? .allowed : .denied
                 UserDefaults.standard.set(granted, forKey: Self.desktopKey)
-                if !granted { onStatus?("Notifications are disabled in macOS System Settings.") }
-                refresh()
-            } catch { onStatus?(error.localizedDescription) }
+                if !granted { report("Enable Square Mail in System Settings → Notifications.") }
+            } catch is CancellationError {} catch { report(error.localizedDescription) }
         }
     }
     private func content(_ title: String, detail: String, info: [String: String]) -> UNMutableNotificationContent {
@@ -159,6 +193,28 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         let requests = await center.pendingNotificationRequests()
         center.removePendingNotificationRequests(withIdentifiers: requests.filter { $0.identifier.hasPrefix("squaremail.reminder.") }.map(\.identifier))
         planned.removeAll()
+    }
+    func verifyControls(_ value: NoticeBatch, accounts: [Account]) async throws {
+        precondition(WindowPresentation.isBackground)
+        preview(value, accounts: accounts)
+        await finishPreview()
+        try panel?.verifyButtons()
+        act(.read, id: nil); await finishPreview()
+        guard batch?.items.allSatisfy({ !$0.unread }) == true else { throw MailError(message: "Mark read did not refresh the bell") }
+        setPreference(nil, channel: .mail, toggle: .off); await finishPreview()
+        guard batch?.settings.allSatisfy({ !$0.mail }) == true else { throw MailError(message: "Bell preference did not update") }
+        setPreference(nil, channel: .mail, toggle: .on); await finishPreview()
+        enableDesktop()
+        guard permissionTask == nil, previewMode else { throw MailError(message: "Offline bell requested OS permission") }
+        act(.clear, id: nil); await finishPreview()
+        guard batch?.items.isEmpty == true else { throw MailError(message: "Clear did not refresh the bell") }
+        stop()
+    }
+    private func finishPreview() async {
+        while actionTask != nil || refreshTask != nil {
+            await actionTask?.value
+            await refreshTask?.value
+        }
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .sound] }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

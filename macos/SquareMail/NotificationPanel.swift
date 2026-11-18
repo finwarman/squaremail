@@ -3,6 +3,7 @@ import ClassicKit
 
 @MainActor
 final class NotificationPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    enum CommandState { case ready, busy }
     private let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     private let table = NSTableView()
     private let scroll = NSScrollView()
@@ -69,7 +70,7 @@ final class NotificationPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
         dateFormat.dateStyle = .short; dateFormat.timeStyle = .short
         for view in [caption, scroll, account, mail, calendar, desktop, read, clear, status] { content.addSubview(view) }
     }
-    func open() { window.center(); window.makeKeyAndOrderFront(nil) }
+    func open() { window.center(); WindowPresentation.show(window) }
     func close() { window.close() }
     func show(_ batch: NoticeBatch, accounts: [Account], desktop: NoticeDelivery, permission: NotificationPermission) {
         items = batch.items
@@ -83,10 +84,30 @@ final class NotificationPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
             if value.id == selected { account.select(account.lastItem) }
         }
         changeAccount()
-        self.desktop.title = desktop == .desktop ? "Disable macOS alerts" : "Enable macOS alerts"
+        self.desktop.isEnabled = true
+        self.desktop.title = desktop == .desktop ? "Disable macOS alerts" : (permission == .denied ? "Open System Settings…" : "Enable macOS alerts")
         self.desktop.needsDisplay = true
-        status.stringValue = desktop == .desktop ? "macOS alerts on · up to 32 upcoming reminders scheduled" : (permission == .allowed ? "macOS alerts off · history remains available" : "macOS permission is requested only when you enable alerts")
+        status.stringValue = desktop == .desktop ? "macOS alerts on · up to 32 upcoming reminders scheduled" : (permission == .denied ? "Enable Square Mail in System Settings → Notifications." : (permission == .allowed ? "macOS alerts off · history remains available" : "macOS permission is requested only when you enable alerts"))
         table.reloadData()
+    }
+    func showStatus(_ message: String) { status.stringValue = message }
+    func setCommandState(_ state: CommandState) {
+        let ready = state == .ready
+        read.isEnabled = ready; clear.isEnabled = ready; account.isEnabled = ready
+        mail.isEnabled = ready && !settings.isEmpty; calendar.isEnabled = ready && !settings.isEmpty
+    }
+    func permissionPending() {
+        desktop.isEnabled = false; desktop.title = "Waiting for permission…"; desktop.needsDisplay = true
+        status.stringValue = "Respond to the macOS notification permission prompt."
+    }
+    func verifyButtons() throws {
+        let action = onAction; let desktop = onDesktop; let preference = onPreference
+        let mailState = mail.state
+        defer { onAction = action; onDesktop = desktop; onPreference = preference; mail.state = mailState }
+        var actions: [NoticeAction] = []; var alerts = 0; var prefs = 0
+        onAction = { actions.append($0) }; onDesktop = { alerts += 1 }; onPreference = { _, _, _ in prefs += 1 }
+        read.performClick(nil); clear.performClick(nil); self.desktop.performClick(nil); mail.performClick(nil)
+        guard actions == [.read, .clear], alerts == 1, prefs == 1, !read.isHighlighted, !clear.isHighlighted else { throw MailError(message: "Bell buttons did not finish their actions") }
     }
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

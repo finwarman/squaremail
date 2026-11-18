@@ -2,7 +2,7 @@ import AppKit
 import ClassicKit
 
 @MainActor
-final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation {
     private let core: MailCore
     private let layout: MailLayout
     private let table = NSTableView()
@@ -63,7 +63,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var mailSearch = ""
     private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
     private let importButton = ClassicButton("Import .eml", icon: .folder, style: .toolbar)
-    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions"]
+    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states"]
     private let textButton = ClassicButton("Text only", icon: .text, style: .toggle)
     private let htmlButton = ClassicButton("HTML", icon: .html, style: .toggle)
     private let more = ClassicButton("Older")
@@ -529,7 +529,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         panel.message = "Choose .eml files to copy into your local mailbox."
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [.init(filenameExtension: "eml") ?? .data]
-        guard panel.runModal() == .OK else { return }
+        guard WindowPresentation.runOpen(panel) == .OK else { return }
         let files = panel.urls
         Task {
             do {
@@ -635,7 +635,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             let panel = NSOpenPanel()
             panel.title = "Import Google Desktop OAuth JSON"
             panel.allowedContentTypes = [.json]
-            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard WindowPresentation.runOpen(panel) == .OK, let url = panel.url else { return }
             command = ["command": CoreCommand.importClient.rawValue, "path": url.path]
         } else { command = ["command": CoreCommand.configure.rawValue, "provider": input.provider.rawValue, "client_id": input.clientId] }
         Task {
@@ -653,8 +653,16 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         alert.addButton(withTitle: "Keep offline cache")
         alert.addButton(withTitle: "Remove local cache")
         alert.addButton(withTitle: "Cancel")
-        let reply = alert.runModal()
+        let reply = WindowPresentation.runAlert(alert)
         guard reply == .alertFirstButtonReturn || reply == .alertSecondButtonReturn else { return }
+        guard let editor else { finishDisconnect(id, reply: reply); return }
+        editor.requestClose { [weak self] outcome in
+            guard outcome == .closed else { return }
+            self?.finishDisconnect(id, reply: reply)
+        }
+    }
+
+    private func finishDisconnect(_ id: String, reply: NSApplication.ModalResponse) {
         noticeTask?.cancel()
         media.cancel()
         editor?.close(); pendingEdits?.close()
@@ -680,7 +688,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         alert.messageText = "Square Mail"
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
-        alert.runModal()
+        WindowPresentation.runAlert(alert)
     }
 
     private func buildMenus() {
@@ -713,7 +721,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layoutItems[value] = item
         }
         let tools = NSMenu(title: "Tools")
-        addItem(tools, "Sync current folder", #selector(syncMail), "r")
+        addItem(tools, "Sync mail and calendars", #selector(syncMail), "r")
+        addItem(tools, "Notifications…", #selector(showNotices), "")
+        addItem(file, "New calendar event…", #selector(newCalendarEvent), "n")
+        addItem(file, "Calendar drafts / pending…", #selector(showCalendarChanges), "")
         let help = NSMenu(title: "Help")
         addItem(help, "About this preview", #selector(showAbout), "")
         for menu in [file, edit, view, tools, help] {
@@ -738,6 +749,29 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
         item.target = self
     }
+
+    var needsQuitConfirm: Bool { editor?.requiresClosePrompt == true }
+    func confirmQuit(_ reply: @escaping (CalendarEditor.CloseOutcome) -> Void) {
+        guard let editor else { reply(.closed); return }
+        editor.requestClose(reply)
+    }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(showText): item.state = section == .mail && readerMode == .text ? .on : .off
+        case #selector(showHTML): item.state = section == .mail && readerMode == .html ? .on : .off
+        case #selector(showCalendar): item.state = section == .calendar ? .on : .off
+        case #selector(showMail): item.state = section == .mail ? .on : .off
+        case #selector(paneBelow), #selector(paneRight): return section == .mail
+        case #selector(importMail): return section == .mail
+        case #selector(connectAccount): return connectTask == nil
+        case #selector(newCalendarEvent), #selector(showCalendarChanges): return mailbox == .live && accounts.contains { $0.provider != .local }
+        default: break
+        }
+        return true
+    }
+    @objc private func showNotices() { noticeService().show() }
+    @objc private func newCalendarEvent() { setSection(.calendar); openEditor(nil, date: calendarState.date) }
+    @objc private func showCalendarChanges() { setSection(.calendar); showPending() }
 
     @objc private func focusSearch() { layout.window?.makeFirstResponder(layout.search) }
     @objc private func showText() { setSection(.mail); setReader(.text) }
@@ -830,7 +864,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layout.statusText.stringValue = "\(messages.count) messages shown · Cached on this Mac"
             layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
             setReader(readerMode)
-            if reload == .refresh { Task { await loadList() } }
+            if reload == .refresh {
+                let revision = listRevision
+                Task {
+                    guard section == .mail, revision == listRevision else { return }
+                    await loadList()
+                }
+            }
         }
         layout.titleBar.needsDisplay = true
         layout.search.setAccessibilityLabel(next == .calendar ? (mailbox == .demo ? "Search sample events" : "Search cached events") : "Search this folder")
@@ -867,6 +907,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if pendingEdits == nil {
             let view = PendingEdits(core: core)
             view.onOpen = { [weak self] key in self?.openEditor(key, date: Date()) }
+            view.onDraft = { [weak self] draft in
+                guard let self else { return }
+                eventEditor().openDraft(draft, sources: calendarCache?.sources ?? [], accounts: accounts)
+            }
             pendingEdits = view
         }
         pendingEdits?.open()
@@ -953,6 +997,51 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             calendarSidebar?.showSources(sources, accounts: accounts, hidden: view.state.hiddenSources)
             await registerCalendar()
         } catch is CancellationError {} catch { layout.statusText.stringValue = error.localizedDescription }
+    }
+
+    func checkControls() async throws {
+        guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false else {
+            throw MailError(message: "Use the disconnected actions fixture and --background-ui")
+        }
+        let sources: [CalendarSource] = try await core.request(["command": CoreCommand.calendars.rawValue], mode: .live)
+        let prompts = ScriptedEditorPrompts()
+        let editor = CalendarEditor(core: core, prompts: prompts)
+        editor.open(EventKey(account: "fixture", calendar: "primary", id: "event"), date: Date(), sources: sources, accounts: accounts)
+        try await editor.verifyControls(prompts)
+        let pending = PendingEdits(core: core)
+        try await pending.verifyControls()
+        let notices: NoticeBatch = try await core.request(["command": CoreCommand.notices.rawValue, "delivery": NoticeDelivery.quiet.rawValue], mode: .live)
+        try await noticeService().verifyControls(notices, accounts: accounts)
+        guard !NSApp.isActive, layout.window?.isVisible != true else { throw MailError(message: "Background control probe activated a host window") }
+        guard let main = NSApp.mainMenu, let view = main.items.first(where: { $0.title == "View" })?.submenu else { throw MailError(message: "View menu is missing") }
+        func item(_ action: Selector) throws -> NSMenuItem {
+            guard let value = view.items.first(where: { $0.action == action }) else { throw MailError(message: "View action is missing") }
+            return value
+        }
+        func dispatch(_ action: Selector) throws {
+            let value = try item(action)
+            guard validateMenuItem(value), NSApp.sendAction(action, to: value.target, from: value) else { throw MailError(message: "View menu did not dispatch its action") }
+        }
+        for _ in 0..<3 {
+            calendarButton.performClick(nil)
+            guard section == .calendar, layout.split.isHidden, !calendarButton.isHighlighted else { throw MailError(message: "Calendar toolbar button retained a pressed or stale state") }
+            let pane = try item(#selector(paneRight))
+            guard !validateMenuItem(pane) else { throw MailError(message: "Reading-pane menu is enabled in Calendar") }
+            try dispatch(#selector(showMail)); try dispatch(#selector(showText))
+            let text = try item(#selector(showText)); _ = validateMenuItem(text)
+            guard section == .mail, readerMode == .text, text.state == .on, textButton.state == .on, htmlButton.state == .off else { throw MailError(message: "Plain-text menu and toolbar states diverged") }
+            try dispatch(#selector(showHTML))
+            let html = try item(#selector(showHTML)); _ = validateMenuItem(html)
+            guard readerMode == .html, html.state == .on, htmlButton.state == .on, textButton.state == .off else { throw MailError(message: "HTML menu and toolbar states diverged") }
+        }
+        showText()
+        importMail()
+        guard WindowPresentation.lastDialog?.title == "Import email" else { throw MailError(message: "Import did not present its file picker") }
+        connectAccount()
+        guard WindowPresentation.lastDialog?.title == "Mail and calendar accounts", connectTask == nil, sidebar.connect.isEnabled else { throw MailError(message: "Cancelled account prompt left controls blocked") }
+        showAbout()
+        guard WindowPresentation.lastDialog?.title == "Square Mail 0.1" else { throw MailError(message: "About action did not present its dialog") }
+        print("CONTROLS verified hidden native buttons, view menus, import/account/about dialogs, unsaved-edit prompts, local draft restore and save-error recovery. No foreground windows or provider writes.")
     }
 
     func checkActions(_ mode: CalendarProbe = .validate) async throws {
@@ -1173,7 +1262,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let alert = NSAlert()
         alert.messageText = "Square Mail 0.1"
         alert.informativeText = "Native AppKit reader. Rust mail core.\n\nA mail reader with offline caches, automatic sync and separately authorised calendar edits. Remote images stay blocked until requested. Image/PDF/DOCX/XLSX previews download on request. The bell has bounded history. macOS alerts are opt-in. Mail sending is not implemented.\n\nVisual references: Visual Basic and classic Outlook. No reference-project assets are bundled."
-        alert.runModal()
+        WindowPresentation.runAlert(alert)
     }
 
     // A native integration probe exercises the same controller and bridge as the UI.

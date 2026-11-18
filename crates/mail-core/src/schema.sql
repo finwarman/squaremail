@@ -123,3 +123,7 @@ CREATE TABLE IF NOT EXISTS notice_calendars (
     PRIMARY KEY(account_id,calendar_id),
     FOREIGN KEY(account_id,calendar_id) REFERENCES calendar_sources(account_id,id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS event_drafts (
+    operation TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    data TEXT NOT NULL, saved INTEGER NOT NULL
+);

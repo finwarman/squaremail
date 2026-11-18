@@ -33,7 +33,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
 - Five-second idle release of the HTML renderer after returning to text.
 - Native bell history with a 50-entry limit, per-account preferences and opt-in macOS alerts/reminders.
-- Provider-aware calendar creation/editing with separate write consent, bounded offline queue and conditional patches.
+- Provider-aware calendar creation/editing with separate write consent, bounded offline queue, local drafts and conditional patches.
 - Lazy native calendar UI with today highlights, month/week/day, source filters, search and agenda. One warm view pair is kept for five seconds; a bounded event snapshot survives view release. Demo mode remains separate from provider data.
 
 See [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
@@ -60,7 +60,7 @@ Visual references: [visualbasic.world](https://visualbasic.world/), [Double Drag
 ./scripts/check.sh
 ```
 
-The native integration probe starts a temporary demo mailbox and exercises the actual AppKit controller, Rust bridge, SQLite search and body reader. It never signs in or contacts a provider. Provider live qualification remains a separate release gate.
+The native integration probe starts a temporary demo mailbox and exercises the actual AppKit controller, Rust bridge, SQLite search and body reader. It uses hidden, non-activating windows and never signs in or contacts a provider. [Control checks](docs/ui-testing.md) also cover unsaved-edit prompts, local calendar drafts, menu actions and close. Provider live qualification remains a separate release gate.
 
 `scripts/profile.py` measures native selection through body layout and draw submission, startup, and process-family footprint. It can run a 1,000-switch stress test and include WebKit helpers. See [the performance method](docs/performance.md) before comparing numbers.
 

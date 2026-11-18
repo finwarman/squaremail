@@ -8,6 +8,8 @@ New-mail alerts apply to newly cached unread Inbox messages received since the a
 
 macOS banners are off until Enable macOS alerts is selected and system permission is granted. The bell works without that permission. Each poll submits at most three recent mail/change banners and trims delivered Square Mail alerts to 50. Submission is claimed before contacting macOS to prevent replay after a crash; a crash during that small interval can lose a banner, while its bell entry remains.
 
+Permission requests and history/preferences commands each allow one outstanding action. Controls show a waiting state and recover after cancellation or errors. If permission is denied, the button opens System Settings and explains where to enable alerts.
+
 One app-owned worker polls local data every 30 seconds and after sync changes, coalescing bursts to at most one poll per second. It schedules at most 32 reminders within the next 24 hours using UserNotifications. Changed, removed, disabled or disconnected events are removed from the pending OS plan on the next refresh. Recently missed reminders, up to 15 minutes late, enter the bell on wake. The history does not create one timer or task per account, message or event.
 
 Scheduled local reminders can fire after the app quits. They reflect the last cache snapshot; remote changes require reopening/syncing the app. New-mail detection and new scheduling require the app running. There is no background mail agent or push relay. Focus modes, system notification settings and OS scheduling affect delivery.

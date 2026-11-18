@@ -12,7 +12,7 @@ pub(crate) const QUEUE_LIMIT: usize = 50;
 const GOOGLE_ROOT: &str = "https://www.googleapis.com/calendar/v3";
 const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0/me";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct EventKey {
     pub(crate) account: String,
     pub(crate) calendar: String,
@@ -77,6 +77,7 @@ pub(crate) struct EventDetail {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WriteState {
+    Draft,
     Pending,
     Sending,
     Retry,
@@ -88,6 +89,7 @@ pub(crate) enum WriteState {
 impl WriteState {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::Draft => "draft",
             Self::Pending => "pending",
             Self::Sending => "sending",
             Self::Retry => "retry",
@@ -159,24 +161,52 @@ pub(crate) fn queue(store: &Store, change: EventChange) -> Result<Value> {
     if !oauth::calendar_writable(&account)? {
         return Err("Enable calendar editing for this account first".into());
     }
-    let base = if change.key.id.is_some() {
-        let base = store
-            .event_detail(&change.key)?
-            .ok_or("Open this event online once before editing offline")?;
-        if change.revision.as_deref() != Some(&base.revision) {
-            return Err("Event changed locally. Reopen it before saving.".into());
-        }
-        draft::patch(account.provider, &change, &base)?;
-        Some(base)
-    } else {
-        None
-    };
+    let base = edit_base(store, &change)?;
+    if let Some(base) = &base {
+        draft::patch(account.provider, &change, base)?;
+    }
     store.queue_event(&PendingWrite {
         change,
         base,
         attempts: 0,
     })?;
     Ok(json!({"queued":true}))
+}
+
+fn edit_base(store: &Store, change: &EventChange) -> Result<Option<EventDetail>> {
+    if change.key.id.is_none() {
+        return Ok(None);
+    }
+    if let Some(saved) = store.event_draft(&change.operation)?
+        && saved.change.key == change.key
+        && saved.change.revision == change.revision
+    {
+        return Ok(saved.base);
+    }
+    let base = store
+        .event_detail(&change.key)?
+        .ok_or("Open this event online once before editing offline")?;
+    if change.revision.as_deref() != Some(&base.revision) {
+        return Err("Event changed locally. Refresh or reopen it before saving.".into());
+    }
+    Ok(Some(base))
+}
+pub(crate) fn save_draft(store: &Store, change: EventChange) -> Result<Value> {
+    account(store, &change.key)?;
+    if change.operation.len() < 16
+        || change.operation.len() > 80
+        || change.draft.title.len() > 2048
+        || change.draft.location.len() > 4096
+    {
+        return Err("Calendar draft exceeds its limits".into());
+    }
+    let base = edit_base(store, &change)?;
+    store.save_event_draft(&PendingWrite {
+        change,
+        base,
+        attempts: 0,
+    })?;
+    Ok(json!({}))
 }
 
 pub(crate) fn sync_write(store: &Store, context: &Context<'_>) -> Result<Option<Value>> {
@@ -202,7 +232,10 @@ pub(crate) fn sync_write(store: &Store, context: &Context<'_>) -> Result<Option<
         remote::Remote::new(&account, &token, context).save(&write)
     })();
     match result {
-        Ok(detail) => store.finish_event_write(&write, &detail)?,
+        Ok(detail) => {
+            let event = parsed_event(&account, &detail.key, &detail.raw)?;
+            store.finish_event_write(&write, &detail, &event)?;
+        }
         Err(error) => {
             let http = error.downcast_ref::<crate::network::HttpError>();
             let state = match http.map(|e| e.status) {
@@ -231,10 +264,6 @@ pub(crate) fn sync_write(store: &Store, context: &Context<'_>) -> Result<Option<
 }
 
 // Provider parsers stay in the adapter layer; edits publish the same cache representation.
-pub(crate) fn parsed_event(
-    account: &Account,
-    key: &EventKey,
-    raw: &Value,
-) -> Result<CalendarEvent> {
+fn parsed_event(account: &Account, key: &EventKey, raw: &Value) -> Result<CalendarEvent> {
     providers::edit_summary(account, key, raw)
 }

@@ -8,10 +8,12 @@ cargo test --workspace --target-dir .build/rust
 swift test -c release
 test_dir="$(mktemp -d -t squaremail-test)"
 trap 'rm -rf "$test_dir"' EXIT
-".build/Square Mail.app/Contents/MacOS/SquareMail" --data-dir "$test_dir" --self-test --snapshot "$test_dir/native.png"
-".build/Square Mail.app/Contents/MacOS/SquareMail" --data-dir "$test_dir" --check-calendar
+".build/Square Mail.app/Contents/MacOS/SquareMail" --background-ui --data-dir "$test_dir" --self-test --snapshot "$test_dir/native.png"
+".build/Square Mail.app/Contents/MacOS/SquareMail" --background-ui --data-dir "$test_dir" --check-calendar
 
 ./scripts/check-accounts.sh
 ./scripts/check-media.sh
 
 ./scripts/check-calendar-actions.sh
+
+./scripts/check-controls.sh

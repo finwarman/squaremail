@@ -51,7 +51,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
     private let newEvent = ClassicButton("New event")
     private let editEvent = ClassicButton("Edit event")
-    private let pending = ClassicButton("Pending…")
+    private let pending = ClassicButton("Drafts…")
     private let grid = ClassicCalendar()
     private let surface = ClassicSurface()
     private let caption = NSTextField(labelWithString: "")
@@ -118,6 +118,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         newEvent.onPress = { [weak self] in guard let self else { return }; onNew?(grid.date) }
         editEvent.onPress = { [weak self] in self?.editSelected() }
         pending.onPress = { [weak self] in self?.onPending?() }
+        pending.toolTip = "Local calendar drafts and pending changes"
         newEvent.isEnabled = mode == .live; editEvent.isEnabled = false; pending.isEnabled = mode == .live
         buildAgenda()
         refresh()

@@ -43,10 +43,49 @@
   "webkit_helpers": 0,
   "limits": [
     "Synthetic fixtures, warm OS caches, other applications running.",
-    "The editor/bell memory snapshot predates final notification navigation/policy fixes. It excludes live sync and desktop delivery. Shared OS notification services can be outside the attributed family.",
+    "The editor/bell memory snapshot predates final notification navigation/policy fixes and later draft/control changes. It excludes live sync and desktop delivery. Shared OS notification services can be outside the attributed family.",
     "The editor diagnostic includes fixture validation and panel creation; its startup fields are not ordinary mail startup measurements.",
     "Core query timings exclude bridge decoding, drawing and provider calls. Broad search misses the selective-query target.",
     "Native functional checks observed cached editor opening around 88 to 149 ms; these are not a p95 latency qualification.",
     "No finite run proves leak freedom. Live Google/Outlook.com/Microsoft365 writes and macOS notification delivery remain unqualified."
-  ]
+  ],
+  "post_control_qualification": {
+    "mode": "Hidden non-activating functional UI probes; separate Rust release core benchmarks",
+    "core_100000": {
+      "common_search_p95_ms": 77.220292,
+      "list_p95_ms": 0.38504099999999997,
+      "messages": 100000,
+      "seed_ms": 9934.657958000002,
+      "selective_search_p95_ms": 0.11508299999999999,
+      "sqlite_bytes": 42057728
+    },
+    "multi_account_100000": {
+      "account_common": {
+        "p95_ms": 14.39325
+      },
+      "account_inbox": {
+        "p95_ms": 0.408
+      },
+      "folder_common": {
+        "p95_ms": 12.220040999999998
+      },
+      "scoped_selective": {
+        "p95_ms": 0.046542
+      },
+      "unified_common": {
+        "p95_ms": 53.368041999999996
+      },
+      "unified_inbox": {
+        "p95_ms": 0.29525
+      },
+      "unified_selective": {
+        "p95_ms": 0.030333
+      }
+    },
+    "limits": [
+      "No new foreground UI profile or memory measurement after local draft/control changes.",
+      "Core timing excludes AppKit, bridge decoding, WebKit and provider I/O.",
+      "Broad search remains above the selective-query target."
+    ]
+  }
 }

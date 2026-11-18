@@ -10,6 +10,8 @@ private final class MailWindow: NSWindow {
 
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private enum QuitState { case idle, waiting }
+    private var quitState: QuitState = .idle
     private var window: NSWindow?
     private var controller: MailController?
 
@@ -21,6 +23,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             fputs("Square Mail: \(error.localizedDescription)\n", stderr)
             NSApp.terminate(nil)
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if quitState == .waiting { return .terminateLater }
+        guard controller?.needsQuitConfirm == true else { return .terminateNow }
+        quitState = .waiting
+        Task { [weak self] in
+            self?.controller?.confirmQuit { [weak self] outcome in
+                self?.quitState = .idle
+                NSApp.reply(toApplicationShouldTerminate: outcome == .closed)
+            }
+        }
+        return .terminateLater
     }
 
     private func launch() throws {
@@ -120,8 +135,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             await controller.start()
             stamp(.mail)
             await controller.finishSelection()
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            WindowPresentation.show(window)
+            if !WindowPresentation.isBackground { NSApp.activate(ignoringOtherApps: true) }
             stamp(.window)
             controller.startSync()
             if let index = arguments.firstIndex(of: "--check-media"), arguments.indices.contains(index + 1) {
@@ -133,6 +148,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 catch { fputs("MEDIA FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
             }
             if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
+            if arguments.contains("--check-control-states") {
+                do {
+                    try await controller.checkControls()
+                    guard let close = layout.titleBar.subviews.compactMap({ $0 as? ClassicButton }).first(where: { $0.title == "×" }) else { throw MailError(message: "Window close control is missing") }
+                    print("CLOSE dispatching the native title-bar close action")
+                    fflush(stdout)
+                    close.performClick(nil)
+                    throw MailError(message: "Window close did not terminate the app")
+                }
+                catch { fputs("CONTROLS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-calendar-actions") {
                 do {
                     let mode: CalendarProbe = arguments.contains("--preview-calendar-actions") ? .preview : .validate
@@ -228,7 +254,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 switch index {
                 case 0: window?.miniaturize(nil)
                 case 1: window?.zoom(nil)
-                default: window?.performClose(nil)
+                default: NSApp.terminate(nil)
                 }
             }
             button.setAccessibilityLabel(["Minimize", "Zoom", "Close"][index])
@@ -236,13 +262,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !WindowPresentation.isBackground }
     func windowWillClose(_ notification: Notification) { NSApp.terminate(nil) }
 }
 
 MainActor.assumeIsolated {
     let app = NSApplication.shared
-    app.setActivationPolicy(.regular)
+    app.setActivationPolicy(WindowPresentation.isBackground ? .accessory : .regular)
     let delegate = AppDelegate()
     app.delegate = delegate
     withExtendedLifetime(delegate) { app.run() }

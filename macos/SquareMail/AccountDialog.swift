@@ -28,7 +28,7 @@ final class AccountDialog: NSObject {
         }
         picker.setAccessibilityLabel("Saved account")
         alert.accessoryView = picker
-        let response = alert.runModal()
+        let response = WindowPresentation.runAlert(alert)
         if response == .alertFirstButtonReturn { return .add }
         if response == .alertSecondButtonReturn, let id = picker.selectedItem?.representedObject as? String { return .disconnect(id) }
         if response.rawValue == NSApplication.ModalResponse.alertThirdButtonReturn.rawValue { return .setup }
@@ -67,7 +67,7 @@ final class AccountDialog: NSObject {
         alert.accessoryView = form
         changeProvider()
         alert.window.initialFirstResponder = provider
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard WindowPresentation.runAlert(alert) == .alertFirstButtonReturn else { return nil }
         return Input(provider: selectedProvider, clientId: client.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), clientSecret: secret.stringValue)
     }
     private var selectedProvider: Provider { provider.indexOfSelectedItem == 0 ? .gmail : .outlook }
@@ -84,7 +84,7 @@ final class AccountDialog: NSObject {
         field.placeholderString = "Microsoft Application (client) ID"
         field.setAccessibilityLabel("Microsoft Application client ID")
         alert.accessoryView = field
-        let reply = alert.runModal()
+        let reply = WindowPresentation.runAlert(alert)
         if reply == .alertFirstButtonReturn { return Input(provider: .gmail, clientId: "", clientSecret: "") }
         if reply == .alertSecondButtonReturn, !field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return Input(provider: .outlook, clientId: field.stringValue, clientSecret: "")

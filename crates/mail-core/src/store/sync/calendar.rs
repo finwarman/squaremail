@@ -3,6 +3,8 @@ use crate::calendar::{DETAIL_LIMIT, EventDetail, EventKey, PendingWrite, QUEUE_L
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
+const DRAFT_LIMIT: i64 = 20;
+
 impl Store {
     pub(crate) fn event_detail(&self, key: &EventKey) -> Result<Option<EventDetail>> {
         let value: Option<String> = self
@@ -63,6 +65,10 @@ impl Store {
             }
         }
         tx.execute("INSERT INTO event_writes(operation,account_id,calendar_id,data,state,created) VALUES(?1,?2,?3,?4,?5,?6)",params![write.change.operation,write.change.key.account,write.change.key.calendar,data,WriteState::Pending.as_str(),chrono::Utc::now().timestamp()])?;
+        tx.execute(
+            "DELETE FROM event_drafts WHERE operation=?1",
+            [&write.change.operation],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -95,10 +101,68 @@ impl Store {
     }
     pub(crate) fn event_writes(&self) -> Result<Value> {
         let mut stmt=self.connection.prepare("SELECT operation,state,error,created,json_extract(data,'$.change.draft.title'),account_id,calendar_id,json_extract(data,'$.change.key.id') FROM event_writes WHERE state<>'done' ORDER BY created DESC LIMIT 50")?;
-        let values=stmt.query_map([],|r|Ok(json!({"operation":r.get::<_,String>(0)?,"state":r.get::<_,String>(1)?,"error":r.get::<_,Option<String>>(2)?,"created":r.get::<_,i64>(3)?,"title":r.get::<_,String>(4)?,"account":r.get::<_,String>(5)?,"calendar":r.get::<_,String>(6)?,"id":r.get::<_,Option<String>>(7)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut values=stmt.query_map([],|r|Ok(json!({"operation":r.get::<_,String>(0)?,"state":r.get::<_,String>(1)?,"error":r.get::<_,Option<String>>(2)?,"created":r.get::<_,i64>(3)?,"title":r.get::<_,String>(4)?,"account":r.get::<_,String>(5)?,"calendar":r.get::<_,String>(6)?,"id":r.get::<_,Option<String>>(7)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut drafts = self
+            .connection
+            .prepare("SELECT data FROM event_drafts ORDER BY saved DESC LIMIT ?1")?;
+        let mut rows = drafts.query([DRAFT_LIMIT])?;
+        while let Some(row) = rows.next()? {
+            let mut draft: PendingWrite = serde_json::from_str(&row.get::<_, String>(0)?)?;
+            if let Some(base) = &mut draft.base {
+                base.raw = Value::Null;
+            }
+            values.push(json!({"operation":draft.change.operation,"state":WriteState::Draft.as_str(),"error":null,"title":draft.change.draft.title,"account":draft.change.key.account,"calendar":draft.change.key.calendar,"id":draft.change.key.id,"draft":draft}));
+        }
         Ok(json!(values))
     }
+    pub(crate) fn event_draft(&self, operation: &str) -> Result<Option<PendingWrite>> {
+        let data: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT data FROM event_drafts WHERE operation=?1",
+                [operation],
+                |r| r.get(0),
+            )
+            .optional()?;
+        data.map(|d| serde_json::from_str(&d).map_err(Into::into))
+            .transpose()
+    }
+    pub(crate) fn save_event_draft(&self, write: &PendingWrite) -> Result<()> {
+        let data = serde_json::to_string(write)?;
+        if data.len() > DETAIL_LIMIT + 64 * 1024 {
+            return Err("Calendar draft exceeds its size limit".into());
+        }
+        let tx = self.connection.unchecked_transaction()?;
+        let pending: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM event_writes WHERE operation=?1)",
+            [&write.change.operation],
+            |r| r.get(0),
+        )?;
+        if pending {
+            return Err(
+                "This edit is already queued. Open Pending changes before replacing it.".into(),
+            );
+        }
+        let count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM event_drafts WHERE operation<>?1",
+            [&write.change.operation],
+            |r| r.get(0),
+        )?;
+        if count >= DRAFT_LIMIT {
+            return Err("Local calendar drafts are full. Remove an older draft first.".into());
+        }
+        tx.execute("INSERT INTO event_drafts VALUES(?1,?2,?3,unixepoch()) ON CONFLICT(operation) DO UPDATE SET account_id=excluded.account_id,data=excluded.data,saved=excluded.saved",params![write.change.operation,write.change.key.account,data])?;
+        tx.commit()?;
+        Ok(())
+    }
     pub(crate) fn discard_event(&self, operation: &str) -> Result<()> {
+        if self
+            .connection
+            .execute("DELETE FROM event_drafts WHERE operation=?1", [operation])?
+            > 0
+        {
+            return Ok(());
+        }
         let changed = self.connection.execute(
             "DELETE FROM event_writes WHERE operation=?1 AND (state<>'sending' OR next_due<unixepoch())",
             [operation],
@@ -114,14 +178,9 @@ impl Store {
         &self,
         write: &PendingWrite,
         detail: &EventDetail,
+        event: &CalendarEvent,
     ) -> Result<()> {
-        let account = self
-            .accounts()?
-            .into_iter()
-            .find(|a| a.id == detail.key.account)
-            .ok_or("Account removed")?;
         self.save_event_detail(detail)?;
-        let event = crate::calendar::parsed_event(&account, &detail.key, &detail.raw)?;
         let month =
             chrono::DateTime::from_timestamp(event.start, 0).ok_or("Invalid event start")?;
         use chrono::{Datelike, TimeZone};
@@ -131,7 +190,7 @@ impl Store {
             .ok_or("Invalid event month")?
             .timestamp();
         let tx = self.connection.unchecked_transaction()?;
-        super::save_event(&tx, window, &event)?;
+        super::save_event(&tx, window, event)?;
         tx.execute(
             "UPDATE event_writes SET state='done',result_id=?2,error=NULL WHERE operation=?1",
             params![write.change.operation, detail.key.id],

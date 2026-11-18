@@ -104,6 +104,7 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
         }
         Command::EventDetail { key, mode } => calendar::detail(&store, &key, mode, context),
         Command::QueueEvent { change } => calendar::queue(&store, change),
+        Command::SaveEventDraft { change } => calendar::save_draft(&store, change),
         Command::EventWrites => store.event_writes(),
         Command::DiscardEvent { operation } => {
             store.discard_event(&operation)?;
