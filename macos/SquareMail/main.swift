@@ -70,6 +70,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
             return
         }
+        if arguments.contains("--check-media-discovery") {
+            Task {
+                do {
+                    let accounts: [Account] = try await core.request(["command": CoreCommand.accounts.rawValue], mode: .live)
+                    for account in accounts where account.connected == true {
+                        let messages: [Mail] = try await core.request(["command": CoreCommand.list.rawValue, "account": account.id, "folder": Folder.all.rawValue, "query": "", "offset": 0, "limit": 250], mode: .live)
+                        guard let message = messages.first(where: \.hasAttachments) ?? messages.first else { continue }
+                        let reply: MediaReply = try await core.request(["command": CoreCommand.media.rawValue, "id": message.id, "mode": BodyFetch.fetch.rawValue], mode: .live, queue: .media)
+                        print("Discovered \(account.provider.rawValue) media: \(reply.manifest?.assets.count ?? 0) assets. No remote images fetched.")
+                        if let asset = reply.manifest?.assets.first(where: { $0.source.kind != .remote && $0.previewable }) {
+                            let file: MediaFile = try await core.request(["command": CoreCommand.mediaFile.rawValue, "id": message.id, "asset": asset.id, "preview": PreviewSize.thumbnail.rawValue], mode: .live, queue: .media)
+                            let image = try await core.mediaThumbnail(file)
+                            print("Verified \(account.provider.rawValue) attachment thumbnail: \(image.width)x\(image.height)")
+                        }
+                    }
+                    NSApp.terminate(nil)
+                } catch { fputs("Media discovery failed: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            return
+        }
         stamp(.core)
         let size = NSSize(width: 1400, height: 920)
         let window = MailWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -104,6 +124,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             NSApp.activate(ignoringOtherApps: true)
             stamp(.window)
             controller.startSync()
+            if let index = arguments.firstIndex(of: "--check-media"), arguments.indices.contains(index + 1) {
+                do {
+                    let preview = arguments.contains("--preview-media")
+                    try await controller.checkMedia(arguments[index + 1], probe: preview ? .preview : .validate)
+                    if !preview { NSApp.terminate(nil) }
+                }
+                catch { fputs("MEDIA FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
             if arguments.contains("--check-accounts") {
                 do { try await controller.checkAccounts(); print("Offline account switching, folders, unified search and calendar cache verified") }
@@ -129,7 +157,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                         report["layers"] = LayerReport.collect(layout)
                     }
                     try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: path, options: .atomic)
-                    if arguments.contains("--perf-calendar") {
+                    if arguments.contains("--perf-media") {
+                        report["media"] = ["local_images_and_pdf_thumbnail": true]
+                    } else if arguments.contains("--perf-calendar") {
                         report["calendar"] = try await controller.measureCalendar()
                     } else {
                         report["switching"] = try await controller.measureSwitches(samples: arguments.contains("--perf-stress") ? 1000 : 200,

@@ -95,6 +95,27 @@ The final Rust-only 100,000-message probe measured an inbox page at 0.22 ms p95,
 
 [Compact account evidence](benchmarks/2026-11-17-accounts.json) records the workload and limits. No finite probe proves leak freedom. Automatic sync and HTML need separate long-run process-family profiling.
 
+## Images, documents and cached calendar toggles
+
+An 18 November release run used the same M5 Max, 64 GB, macOS 26.6 and 2× window. The disconnected fixture contains 30,000 headers, 12 calendars and 2,100 events, with at most 2,000 loaded. One prepared event snapshot survives view release; one warm view pair is retained for five idle seconds in Mail.
+
+| Measurement | Result |
+| --- | --- |
+| First dense-calendar open, including local query | 184 ms |
+| Rapid calendar reopen, p95 over ten toggles | 28.5 ms |
+| Month navigation, p95 over thirty transitions | 36.5 ms |
+| Main process footprint before / active / five seconds after Calendar | 48.8 / 80.8 / 70.9 MiB |
+| Active calendar attributed process family | 123.5 MiB |
+| HTML image and document-thumbnail attributed process family | 155.8 MiB |
+
+The media fixture uses a generated 3,200×2,400 PNG and small PDF/DOCX/XLSX documents. It verifies all four thumbnails and keeps one resized HTML image and a PDF thumbnail active. It does not contact a provider. Its diagnostic startup includes import and preview validation, so it is excluded from normal startup comparisons. Full document windows were visually checked separately.
+
+These are single uncontended runs with warm OS caches and other apps running. Timing ends at native draw submission. Family attribution now includes Metal/Safari helpers as well as WebKit, so older WebKit-only measurements are not directly comparable. Calendar had three non-WebKit helpers; media had seven helpers, including three WebKit processes. Shared Quick Look daemon memory can fall outside the attributed family. These samples do not measure peak memory or prove leak freedom.
+
+The current Rust-only 100,000-message probe measured inbox paging at 0.37 ms p95, selective search at 0.21 ms and an all-message match at 103.7 ms. Across ten accounts, account/unified inbox pages were 0.39/0.36 ms, selective search 0.06/0.05 ms, broad account/folder matches 18.6/16.5 ms and broad unified search 69.3 ms. Broad matches remain slower than the selective-query target. These timings exclude bridge decoding, UI and provider work.
+
+[Compact media/calendar evidence](benchmarks/2026-11-18-media-calendar.json) records the workload and limits. Add `--calendar` or `--media-fixture /absolute/path/to/generated.eml` to the profiling command. `scripts/media-fixture.py` creates the offline media input.
+
 ## Reproduce
 
 `scripts/profile.py` launches uniquely identified disposable copies of the app, uses a supplied local cache, samples process-family footprint and terminates only its own app. Use generated data:

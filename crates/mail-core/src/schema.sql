@@ -80,3 +80,7 @@ CREATE TABLE IF NOT EXISTS event_stage (
 CREATE TABLE IF NOT EXISTS account_paused (
     account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS message_media (
+    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    manifest TEXT NOT NULL
+);

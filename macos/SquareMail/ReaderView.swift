@@ -3,7 +3,7 @@ import WebKit
 import ClassicKit
 
 enum HTMLPolicy {
-    static let contentPolicy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; media-src 'none'; font-src 'none'"
+    static let contentPolicy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src squaremail-image:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; media-src 'none'; font-src 'none'"
 
     static func document(_ body: String) -> String {
         """
@@ -15,7 +15,9 @@ enum HTMLPolicy {
         body { font:14px/1.65 Tahoma,Verdana,sans-serif; margin:28px 34px; overflow-wrap:anywhere; }
         h1 { font-size:30px; line-height:1.2; font-weight:normal; }
         h2 { font-size:21px; } blockquote { border-left:3px solid #a6caf0; margin:24px 0; padding:8px 18px; color:#555; }
-        a { color:#0a246a; } table { max-width:100%; } pre { white-space:pre-wrap; }
+        a { color:#0a246a; } table { max-width:100%; border-spacing:0!important; }
+        table,thead,tbody,tfoot,tr,td,th { height:auto!important; min-height:0!important; width:auto!important; }
+        td,th { padding:0!important; } img { max-width:100%; height:auto; } pre { white-space:pre-wrap; }
         hr { border:0; border-top:1px solid #d4d0c8; margin:18px 0; }
         </style></head><body>\(body)</body></html>
         """
@@ -27,6 +29,20 @@ enum HTMLPolicy {
 }
 
 final class ReaderView: NSView, WKNavigationDelegate {
+    private let mediaBar = ClassicPanel()
+    private let imagesButton = ClassicButton("Load images")
+    private let attachmentsButton = ClassicButton("Attachments")
+    private let mediaLabel = NSTextField(labelWithString: "Remote images blocked")
+    private let attachments = AttachmentPanel()
+    private let imageHandler = ImageSchemeHandler()
+    private var imageHTML: String?
+    private var imagePermission: ImagePermission = .blocked
+    var onLoadImages: ((Mail) -> Void)?
+    var onAttachments: ((Mail) -> Void)?
+    var onPreview: ((MediaAsset, Mail) -> Void)?
+    var onOpenPreview: ((MediaAsset, Mail) -> Void)?
+    var onMediaReset: (() -> Void)?
+    var onImageState: ((ImagePermission) -> Void)?
     private let scroll = NSScrollView()
     // TextKit 1 avoids full-paragraph GPU surfaces for long plain-text messages.
     private let text = NSTextView(usingTextLayoutManager: false)
@@ -73,6 +89,31 @@ final class ReaderView: NSView, WKNavigationDelegate {
         text.usesFindBar = true
         scroll.documentView = text
         addSubview(scroll)
+        addSubview(mediaBar)
+        for view in [imagesButton, attachmentsButton, mediaLabel] { mediaBar.addSubview(view) }
+        mediaLabel.font = ClassicTheme.font(10)
+        mediaLabel.textColor = ClassicTheme.muted
+        imagesButton.toolTip = "Load up to 12 images for this message. Remote servers may learn that you opened it."
+        imagesButton.onPress = { [weak self] in
+            guard let self, let message = self.message else { return }
+            if self.imagePermission == .loaded { self.hideImages(); return }
+            self.onLoadImages?(message)
+        }
+        attachmentsButton.onPress = { [weak self] in
+            guard let self, let message = self.message else { return }
+            if !self.attachments.isHidden { self.attachments.isHidden = true; self.needsLayout = true; return }
+            self.onAttachments?(message)
+        }
+        attachments.isHidden = true
+        attachments.onPreview = { [weak self] asset in
+            guard let self, let message = self.message else { return }
+            self.onPreview?(asset, message)
+        }
+        attachments.onOpen = { [weak self] asset in
+            guard let self, let message = self.message else { return }
+            self.onOpenPreview?(asset, message)
+        }
+        addSubview(attachments)
         showNotice("Select a message to read it.")
     }
 
@@ -80,14 +121,28 @@ final class ReaderView: NSView, WKNavigationDelegate {
 
     override func layout() {
         super.layout()
-        scroll.frame = bounds
-        web?.frame = bounds
+        let barHeight: CGFloat = message == nil ? 0 : 34
+        let attachmentHeight: CGFloat = attachments.isHidden ? 0 : min(150, max(0, bounds.height - barHeight) / 2)
+        mediaBar.isHidden = message == nil
+        mediaBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
+        imagesButton.frame = NSRect(x: 7, y: 5, width: 102, height: 24)
+        attachmentsButton.frame = NSRect(x: 116, y: 5, width: 100, height: 24)
+        mediaLabel.frame = NSRect(x: 226, y: 8, width: max(0, bounds.width - 232), height: 18)
+        let content = NSRect(x: 0, y: attachmentHeight, width: bounds.width, height: max(0, bounds.height - barHeight - attachmentHeight))
+        scroll.frame = content
+        web?.frame = content
+        attachments.frame = NSRect(x: 0, y: 0, width: bounds.width, height: attachmentHeight)
         text.setFrameSize(NSSize(width: bounds.width, height: max(bounds.height, text.frame.height)))
     }
 
     func display(_ mail: Mail, mode: ReaderMode) {
+        if message?.id != mail.id { resetMedia() }
+        if mode == .text { onMediaReset?() }
         message = mail
         self.mode = mode
+        onImageState?(imagePermission)
+        imagesButton.isEnabled = mode == .html
+        needsLayout = true
         if mode == .text {
             queueHTMLRelease()
             web?.isHidden = true
@@ -104,36 +159,112 @@ final class ReaderView: NSView, WKNavigationDelegate {
         }
         scroll.isHidden = true
         idleTask?.cancel()
-        if let web { web.isHidden = false; load(html); return }
+        if let web { web.isHidden = false; load(imageHTML ?? html); return }
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        let view = WKWebView(frame: bounds, configuration: configuration)
+        configuration.setURLSchemeHandler(imageHandler, forURLScheme: ImageSchemeHandler.scheme)
+        let view = WKWebView(frame: scroll.frame, configuration: configuration)
         view.navigationDelegate = self
         addSubview(view)
         web = view
         // CSP and sanitization are active before the additional WebKit network rule arrives.
         let rules = """
-        [{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]
+        [{"trigger":{"url-filter":"^https?://"},"action":{"type":"block"}}]
         """
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "SquareMail.BlockResources.v1", encodedContentRuleList: rules) { [weak self] list, _ in
             DispatchQueue.main.async {
                 guard let self, let web = self.web, let list else { return }
                 web.configuration.userContentController.add(list)
-                if self.mode == .html, let html = self.message?.html { self.load(html) }
+                if self.mode == .html, let html = self.message?.html { self.load(self.imageHTML ?? html) }
             }
         }
-        load(html)
+        load(imageHTML ?? html)
     }
 
     func showNotice(_ notice: String) {
+        resetMedia()
         message = nil
         web?.isHidden = true
         scroll.isHidden = false
         showText(notice)
         queueHTMLRelease()
+        needsLayout = true
+    }
+
+    private func resetMedia() {
+        onMediaReset?()
+        web?.stopLoading()
+        htmlWaiter?.resume(throwing: CancellationError())
+        htmlWaiter = nil
+        navigation = nil
+        finished = nil
+        rendered = ""
+        imageHTML = nil
+        _ = imageHandler.replace([:])
+        imagePermission = .blocked
+        imagesButton.title = "Load images"
+        imagesButton.setAccessibilityLabel(imagesButton.title)
+        onImageState?(.blocked)
+        mediaLabel.stringValue = "Remote images blocked"
+        attachments.show([])
+        attachments.isHidden = true
+    }
+
+    func mediaStatus(_ value: String) { mediaLabel.stringValue = value; mediaLabel.toolTip = value }
+
+    func showImages(_ html: String, files: [String: URL]) {
+        guard mode == .html else { return }
+        web?.stopLoading()
+        let prefix = imageHandler.replace(files)
+        imageHTML = html.replacingOccurrences(of: "squaremail-image://asset/", with: prefix)
+        imagePermission = .loaded
+        imagesButton.title = "Hide images"
+        imagesButton.setAccessibilityLabel(imagesButton.title)
+        imagesButton.needsDisplay = true
+        onImageState?(.loaded)
+        load(imageHTML!)
+    }
+
+    private func hideImages() {
+        onMediaReset?()
+        web?.stopLoading()
+        _ = imageHandler.replace([:])
+        imageHTML = nil
+        imagePermission = .blocked
+        imagesButton.title = "Load images"
+        imagesButton.setAccessibilityLabel(imagesButton.title)
+        imagesButton.needsDisplay = true
+        onImageState?(.blocked)
+        mediaStatus("Remote images blocked")
+        if let html = message?.html { load(html) }
+    }
+
+    func showAttachments(_ assets: [MediaAsset]) {
+        attachments.show(assets)
+        let count = assets.filter { $0.source.kind != .remote }.count
+        attachments.isHidden = count == 0
+        mediaStatus(count == 0 ? "No attachments found." : "\(count) attachments · previews download on request · max 32 shown")
+        needsLayout = true
+    }
+
+    func showPreview(_ image: NSImage, asset: MediaAsset) {
+        attachments.showPreview(image, asset: asset)
+        mediaStatus("Thumbnail cached · \(asset.name)")
+    }
+
+    func verifyImages(_ expected: Int) throws {
+        guard imageHandler.delivered == expected else { throw MailError(message: "Local image delivery count mismatch: \(imageHandler.delivered), expected \(expected). \(mediaLabel.stringValue)") }
+    }
+
+    func finishImages(_ expected: Int) async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while imageHandler.delivered < expected, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try verifyImages(expected)
     }
 
     private func queueHTMLRelease() {
@@ -154,7 +285,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
         }
     }
 
-    func pause() { queueHTMLRelease() }
+    func pause() { onMediaReset?(); queueHTMLRelease() }
 
     func finishHTML() async throws {
         guard mode == .html, let navigation, finished !== navigation else { return }

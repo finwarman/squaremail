@@ -12,3 +12,4 @@ trap 'rm -rf "$test_dir"' EXIT
 ".build/Square Mail.app/Contents/MacOS/SquareMail" --data-dir "$test_dir" --check-calendar
 
 ./scripts/check-accounts.sh
+./scripts/check-media.sh

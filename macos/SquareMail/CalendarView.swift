@@ -167,6 +167,11 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         refresh()
     }
 
+    func snapshot() -> (CalendarView) -> Void {
+        // Capture bounded event values, never the view tree being released.
+        { [events] view in view.events = events; view.refresh() }
+    }
+
     private func setPeriod(_ period: ClassicCalendarPeriod) { grid.period = period; refresh(); onDateChanged?(grid.date) }
 
     private func visibleEvents() -> [SampleEvent] {
@@ -176,7 +181,8 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func refresh() {
-        grid.items = visibleEvents().map(\.mark)
+        let visible = visibleEvents()
+        grid.items = visible.map(\.mark)
         captionFormat.dateFormat = grid.period == .month ? "MMMM yyyy" : "d MMMM yyyy"
         caption.stringValue = captionFormat.string(from: grid.date)
         dayCaption.stringValue = dateFormat.string(from: grid.date) + (mode == .demo ? "  ·  SAMPLE EVENTS" : "  ·  CACHED EVENTS" + (events.count == 2000 ? " (2,000 shown)" : ""))
@@ -184,7 +190,9 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             button.state = ClassicCalendarPeriod.allCases[index] == grid.period ? .on : .off
         }
         let calendar = Calendar.current
-        agendaItems = visibleEvents().filter { $0.mark.start < calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: grid.date))! && $0.mark.end > calendar.startOfDay(for: grid.date) }.sorted { $0.mark.start < $1.mark.start }
+        let start = calendar.startOfDay(for: grid.date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start)!
+        agendaItems = visible.filter { $0.mark.start < end && $0.mark.end > start }.sorted { $0.mark.start < $1.mark.start }
         agenda.reloadData()
         detail.stringValue = agendaItems.isEmpty ? mode == .demo ? "No sample events on this day." : "No cached events on this day. Sync while online to download this month." : "Select an event for details."
     }

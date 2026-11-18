@@ -12,6 +12,16 @@ pub(crate) fn clean_html(html: &str) -> String {
     builder.clean(html).to_string()
 }
 
+pub(crate) fn alternatives(raw: &[u8]) -> Result<(String, String)> {
+    let parsed = MessageParser::default()
+        .parse(raw)
+        .ok_or("Invalid MIME body")?;
+    Ok((
+        parsed.body_text(0).unwrap_or_default().into_owned(),
+        parsed.body_html(0).unwrap_or_default().into_owned(),
+    ))
+}
+
 pub(crate) fn parse(raw: &[u8], account: &str, remote: &str) -> Result<Message> {
     let parsed = MessageParser::default()
         .parse(raw)

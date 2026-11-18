@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import MailBridge
 
 private final class RequestTicket: @unchecked Sendable {
@@ -34,6 +35,8 @@ final class MailCore {
     }()
     private let sync = MailCore.makeQueue("sync", limit: 1)
     private let login = MailCore.makeQueue("login", limit: 1)
+    private let media = MailCore.makeQueue("media", limit: 1)
+    private let renderer: MediaRenderer
     private let directory: URL
 
     private static func makeQueue(_ name: String, limit: Int) -> OperationQueue {
@@ -46,6 +49,7 @@ final class MailCore {
 
     init(directory: URL) throws {
         self.directory = directory
+        self.renderer = MediaRenderer(directory: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
     }
@@ -81,8 +85,18 @@ final class MailCore {
                 case .network: network.addOperation(work)
                 case .sync: sync.addOperation(work)
                 case .login: login.addOperation(work)
+                case .media: media.addOperation(work)
                 }
             }
         }, onCancel: { ticket.cancel() })
+    }
+
+    func mediaPreview(_ file: MediaFile, size: PreviewSize) async throws -> URL {
+        try await renderer.preview(file, size: size)
+    }
+
+    func mediaThumbnail(_ file: MediaFile) async throws -> CGImage {
+        let url = try await renderer.preview(file, size: .thumbnail)
+        return try await renderer.image(url)
     }
 }

@@ -34,7 +34,7 @@ The cached reader opens before networking. One scheduler runs while the app is o
 
 Header backfill is paged and resumes after restart. New-mail work is separate from archive backfill. Gmail uses history cursors; Graph uses per-folder delta plus a bounded recent-message refresh. Bodies download when opened and remain cached. An uncached body needs an online connection. Search covers cached headers/previews and downloaded text, not unread remote bodies. It remains full-text/prefix search, without typo tolerance or sender-address indexing.
 
-Gmail text/HTML parts are fetched without requesting binary attachment originals. Text parts have a combined 4 MiB limit. HTML remains passive. Attachment browsing/downloading is separate work.
+Gmail text/HTML parts are fetched without requesting binary attachment originals. Text parts have a combined 4 MiB limit. HTML remains passive. On-demand image/PDF/DOCX/XLSX previews use a separate bounded media queue. See [media limits](attachments.md).
 
 Calendar caches cover current/next month and the visible range, with at most five actively synced month windows and six retained windows per source. A new window appears as it downloads. Google and secondary Graph calendars use staged, bounded snapshots. Primary Graph calendars use calendarView delta. Closing Calendar releases its view; the disk cache and scheduler remain. See [calendar limits](calendar.md) and [sync design](sync-design.md).
 

@@ -7,7 +7,7 @@ Calendar is a native, read-only month/week/day view backed by the account cache.
 - `⌘3` opens Calendar; `⌘4` returns to Mail.
 - Cached months remain readable offline. New months download while online.
 
-ClassicKit's date grid stays independent of mail/providers. It reuses 42 native hit targets. Source and agenda tables reuse cells. The calendar and sidebar are created on opening and released on returning to Mail. Hidden HTML uses the five-second idle release.
+ClassicKit's date grid stays independent of mail/providers. It reuses 42 native hit targets. Source and agenda tables reuse cells. The calendar and sidebar are created on opening, reused during rapid toggles and released after five idle seconds in Mail. Hidden HTML uses the five-second idle release.
 
 The scheduler watches current/next month and the visible grid months, at most five active windows per source. Six recently viewed month windows are retained on disk. Provider snapshots stage on disk and reconcile only after their final page. Primary Graph calendars use calendarView delta; Google and secondary Graph calendars use bounded, provider-expanded windows with conditional retrieval where available. Server versions prevent older snapshots overwriting newer occurrences.
 
@@ -18,3 +18,9 @@ Current limits: at most 2,000 loaded events per visible range, 1,000 source reco
 Editing, invitations, drag/resizing, remote writes, notifications, push subscriptions and sync after quitting are not implemented. Live polling targets about a minute after a resource round completes, with backoff and wake/reconnect catch-up. Initial backfill, provider limits, sleep and OS scheduling can delay that target.
 
 The disconnected synthetic native probe covers three account selections, nested folders, unified search, 30,000 cached headers, 12 calendar sources, a bounded dense-event load and repeated view release. See [performance](performance.md), [sync design](sync-design.md) and [account setup](accounts.md).
+
+Rapid toggles reuse one view pair for five seconds. Later reopenings restore the last bounded event snapshot before querying SQLite. Period changes do not wait for the network. Today has a navy date/header and a shaded week/day column. A new uncached date range still needs provider sync.
+
+Notifications are tracked separately in2103. Provider-aware creation/editing is planned in2108 with new write consent. The current model preserves title, times, location and source IDs, but does not yet retain the full organizer/attendee/conference metadata needed for editing.
+
+Provider-aware editing will use the [Google event resource](https://developers.google.com/workspace/calendar/api/v3/reference/events) and [Microsoft Graph event resource](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0). Display names and calendar labels should take precedence over generated resource addresses, while the original identifiers remain available for correct updates. Provider-only fields must survive edits. Invitation delivery needs explicit product design and user action.

@@ -1,4 +1,5 @@
 mod demo;
+mod media;
 mod mime;
 mod model;
 mod network;
@@ -96,7 +97,14 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
         Command::SyncStatus => store.job_status(),
         Command::Disconnect { account, mode } => {
             store.pause_account(&account, mode)?;
-            oauth::disconnect(&account)?;
+            let cache = if matches!(mode, DisconnectMode::RemoveCache) {
+                media::remove_cache(&request.database, &account)
+            } else {
+                Ok(())
+            };
+            let credentials = oauth::disconnect(&account);
+            cache?;
+            credentials?;
             Ok(json!({}))
         }
         Command::SeedDemo => {
@@ -143,6 +151,12 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             }
             Ok(serde_json::to_value(message)?)
         }
+        Command::Media { id, mode } => {
+            Ok(json!({"manifest":media::manifest(&store,&id,mode,context)?}))
+        }
+        Command::MediaFile { id, asset, preview } => {
+            media::file(&store, &request.database, &id, &asset, preview, context)
+        }
         Command::Import { path } => {
             let mut raw = Vec::new();
             std::fs::File::open(path)?
@@ -160,6 +174,7 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             let remote = format!("{:x}", Sha256::digest(&raw));
             let message = mime::parse(&raw, &account.id, &remote)?;
             store.save(&message, Folder::Inbox)?;
+            media::import_media(&store, &request.database, &message, &raw)?;
             Ok(serde_json::to_value(message)?)
         }
         Command::Connect {

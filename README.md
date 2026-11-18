@@ -29,19 +29,20 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Read-only Gmail and Microsoft Graph adapters, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
 - Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
-- HTML sanitization, JavaScript disabled, nonpersistent WebKit storage, CSP and blocked subresources.
+- Passive HTML with scripts and direct web requests blocked. Load images opts in for the current message; Hide images or changing messages resets access.
+- Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
 - Five-second idle release of the HTML renderer after returning to text.
-- Lazy native calendar UI: month/week/day, mini calendar, per-account source filters, cached-event search and selected-day agenda. Demo mode remains separate from provider data.
+- Lazy native calendar UI with today highlights, month/week/day, source filters, search and agenda. One warm view pair is kept for five seconds; a bounded event snapshot survives view release. Demo mode remains separate from provider data.
 
 See [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
 
-Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Read-only calendar caches and sync are wired up. Editing and notifications are not implemented. See [calendar UI](docs/calendar.md) and [attachment plan](docs/attachments.md).
+Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Read-only calendar caches and sync are wired up. Editing and notifications are not implemented. See [calendar UI](docs/calendar.md) and [media previews and limits](docs/attachments.md).
 
 ![Square Mail calendar with sample events](docs/images/calendar.png)
 
 ## Limits
 
-This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads were exercised; Microsoft 365 consent and broader live qualification remain pending. It does not send mail, edit provider state, browse attachments or deliver notifications. Header backfill is gradual, and provider reconciliation is still being qualified. Search covers downloaded headers, previews and text, not uncached provider bodies. Calendar views cap loaded events at 2,000, and account folder/source lists have explicit bounds. Dense-calendar pagination remains unfinished. HTML intentionally removes images and some formatting. There is no claim of performance parity with any other client.
+This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads were exercised; Microsoft 365 consent and broader live qualification remain pending. It does not send mail, edit provider state or deliver notifications. Header backfill is gradual, and provider reconciliation is still being qualified. Search covers downloaded headers, previews and text, not uncached provider bodies. Calendar views cap loaded events at 2,000, and account folder/source lists have explicit bounds. Dense-calendar pagination remains unfinished. Remote images are blocked by default. Media previews cap downloads at 8 MiB and support limited formats. Office packages with external relationships, macros or embedded objects are blocked. HTML formatting is simplified. There is no claim of performance parity with any other client.
 
 Mail is stored as plaintext in `~/Library/Application Support/Square Mail/`, with user-only filesystem permissions. Tokens are stored separately in macOS Keychain. No telemetry is configured.
 

@@ -8,8 +8,9 @@ Before a private daily-driver release:
 - Qualify the implemented Gmail history, Graph delta, staged calendar snapshots, retries, cancellation and folder reconciliation against live changes, interrupted backfill and token expiry. Synthetic HTTP/SQLite fixtures cover replay and isolation.
 - Qualify sync freshness, wake/reconnect catch-up, concurrent refresh and long-run whole-process memory. Polling runs while the app is open; there is no push relay or quit-time agent.
 - Add native mail notifications and calendar reminders with replay/restart deduplication and initial-backfill suppression.
+- Design provider-aware event creation/editing, write consent, version conflicts and offline retries. Preserve organiser/attendee identity, recurrence, RSVP, conferencing and provider metadata before enabling writes.
 - Add dense-calendar pagination and filtering before the current 2,000-event limit. Qualify recurrence, time zones and large/malformed MIME bodies with real providers.
-- Support attachment listing, safe saving and CID images. Decide explicit per-message external-image permissions.
+- Qualify implemented per-message image permissions, attachment metadata, CID images and native image/PDF/DOCX/XLSX previews. Add safe saving, offline pinning and independently authorised cloud-link previews.
 - Qualify implemented account disconnect, Keychain deletion and optional local-cache removal with live reconnects.
 - Qualify borderless window resizing, VoiceOver, keyboard-only use, multiple displays and non-Retina scaling.
 - Profile startup, list/search latency and whole-process-tree memory with a large mailbox. Compare against a named client on the same machine and workload.

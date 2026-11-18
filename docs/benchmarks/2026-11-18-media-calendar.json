@@ -1,0 +1,67 @@
+{
+  "date": "2026-11-18",
+  "machine": "Apple M5 Max, 64 GB, macOS 26.6, arm64 release, 1400x920 points at 2x",
+  "calendar_workload": "Disconnected 30000-header fixture, 12 calendars, 2100 events, 2000 loaded. Ten rapid reopenings within the five-second retention window, thirty month transitions.",
+  "calendar": {
+    "cached_reopen_p95_ms": 28.50770833902061,
+    "calendar_active": {
+      "footprint_mib": 80.75102996826172,
+      "rss_mib": 114.3125
+    },
+    "first_open_ms": 183.7667500367388,
+    "mail_after_close": {
+      "footprint_mib": 70.90730285644531,
+      "rss_mib": 122.171875
+    },
+    "mail_before": {
+      "footprint_mib": 48.76654052734375,
+      "rss_mib": 106.078125
+    },
+    "month_navigation_p95_ms": 36.54854162596166
+  },
+  "calendar_family_footprint_mib": 123.5494155883789,
+  "calendar_helpers": 3,
+  "media_workload": "Synthetic 3200x2400 PNG, PDF, DOCX and XLSX. Four native thumbnails, one active local HTML image and PDF thumbnail. No provider calls.",
+  "media_family_footprint_mib": 155.77061462402344,
+  "media_helpers": 7,
+  "media_webkit_helpers": 3,
+  "core_100000": {
+    "common_search_p95_ms": 103.730375,
+    "list_p95_ms": 0.37033299999999997,
+    "messages": 100000,
+    "seed_ms": 14079.991917,
+    "selective_search_p95_ms": 0.206,
+    "sqlite_bytes": 41975808
+  },
+  "multi_account_100000": {
+    "account_common": {
+      "p95_ms": 18.634083999999998
+    },
+    "account_inbox": {
+      "p95_ms": 0.39187500000000003
+    },
+    "folder_common": {
+      "p95_ms": 16.543125
+    },
+    "scoped_selective": {
+      "p95_ms": 0.06420899999999999
+    },
+    "unified_common": {
+      "p95_ms": 69.324
+    },
+    "unified_inbox": {
+      "p95_ms": 0.355833
+    },
+    "unified_selective": {
+      "p95_ms": 0.047125
+    }
+  },
+  "limits": [
+    "One uncontended run per native workload. Other apps were running.",
+    "CPU draw submission, not physical screen presentation. Warm OS caches.",
+    "Attributed family includes Metal/Safari helpers as well as WebKit. Older WebKit-only results are not directly comparable.",
+    "Shared Quick Look daemon memory can remain outside the attributed family. These are finite samples, not peak-memory or leak-freedom evidence.",
+    "Media diagnostic startup includes importing and validating previews, so is excluded from normal startup comparisons.",
+    "Broad search misses the selective-query target. Core timings exclude Swift decoding and drawing."
+  ]
+}

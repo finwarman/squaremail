@@ -146,6 +146,7 @@ final class MessageHeader: NSView {
         return value
     }()
     var mode: ReaderMode = .text { didSet { needsDisplay = true } }
+    var images: ImagePermission = .blocked { didSet { needsDisplay = true } }
     override var isFlipped: Bool { true }
 
     func display(_ mail: Mail?) {
@@ -168,6 +169,6 @@ final class MessageHeader: NSView {
         ClassicTheme.text("To:", in: NSRect(x: 16, y: 70, width: 42, height: 18), size: 11, color: ClassicTheme.muted)
         ClassicTheme.text(message.recipient, in: NSRect(x: 61, y: 68, width: bounds.width - 290, height: 20), size: 12)
         ClassicTheme.text(date, in: NSRect(x: bounds.width - 255, y: 44, width: 236, height: 18), size: 11, color: ClassicTheme.muted, alignment: .right)
-        ClassicTheme.text(mode == .text ? "PLAIN TEXT  ·  LOCAL CACHE" : "HTML  ·  REMOTE CONTENT BLOCKED", in: NSRect(x: bounds.width - 280, y: 70, width: 261, height: 18), size: 10, color: ClassicTheme.muted, alignment: .right)
+        ClassicTheme.text(mode == .text ? "PLAIN TEXT  ·  LOCAL CACHE" : (images == .loaded ? "HTML  ·  IMAGES LOADED" : "HTML  ·  REMOTE CONTENT BLOCKED"), in: NSRect(x: bounds.width - 280, y: 70, width: 261, height: 18), size: 10, color: ClassicTheme.muted, alignment: .right)
     }
 }

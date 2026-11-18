@@ -9,7 +9,9 @@ use serde_json::Value;
 const GMAIL_ROOT: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0/me";
 
+mod media;
 mod sync;
+pub(crate) use media::{attachment_bytes, media_content};
 pub(crate) use sync::sync_next;
 
 pub(crate) fn body(
@@ -67,11 +69,7 @@ pub(crate) fn body(
                 append_body(&mut body, part, &bytes);
             }
             body.extend_from_slice(b"--squaremail-body--\r\n");
-            let message = mime::parse(&body, &account.id, remote_id)?;
-            Ok((
-                message.text.unwrap_or_default(),
-                message.html.unwrap_or_default(),
-            ))
+            mime::alternatives(&body)
         }
 
         Provider::Outlook => {

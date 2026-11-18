@@ -132,6 +132,15 @@ pub(crate) enum Command {
         id: String,
         mode: BodyMode,
     },
+    Media {
+        id: String,
+        mode: BodyMode,
+    },
+    MediaFile {
+        id: String,
+        asset: String,
+        preview: crate::media::PreviewMode,
+    },
     Import {
         path: String,
     },

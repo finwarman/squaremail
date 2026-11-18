@@ -22,6 +22,7 @@ parser.add_argument("--stress", action="store_true")
 parser.add_argument("--heap", action="store_true")
 parser.add_argument("--visible-only", action="store_true")
 parser.add_argument("--calendar", action="store_true")
+parser.add_argument("--media-fixture", type=pathlib.Path)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 results = []
@@ -35,7 +36,7 @@ def process_family(pid):
     listing = subprocess.check_output(["ps", "-ww", "-axo", "pid=,comm="], text=True)
     for line in listing.splitlines():
         candidate, _, name = line.strip().partition(" ")
-        if "WebKit" in name and responsible(int(candidate)) == pid:
+        if int(candidate) != pid and responsible(int(candidate)) == pid:
             family.append(int(candidate))
     return family
 
@@ -57,6 +58,8 @@ for run in range(args.runs):
     with log_path.open("w") as log:
         start = time.monotonic()
         flags = (["--perf-html"] if args.html else []) + (["--perf-html-idle"] if args.html_idle else []) + (["--perf-stress"] if args.stress else []) + (["--perf-visible-only"] if args.visible_only else []) + (["--perf-calendar"] if args.calendar else [])
+        if args.media_fixture:
+            flags += ["--check-media", str(args.media_fixture.resolve()), "--preview-media", "--perf-media"]
         process = subprocess.Popen(["/usr/bin/open", "-n", "-W", "--stdout", str(log_path), "--stderr", str(log_path),
                                     str(bundle), "--args", "--data-dir", str(args.data.resolve()),
                                     "--perf-report", str(report.resolve()), "--layer-report"] + flags, stdout=log, stderr=log)
@@ -95,7 +98,9 @@ for run in range(args.runs):
             result["steady_rss_mib"] = int(rss.strip()) / 1024
             memory = json.loads((args.output / f"footprint-{run + 1}.json").read_text())
             result["family_footprint_mib"] = sum(item["footprint"] for item in memory["processes"]) / 1048576
-            result["webkit_helpers"] = len(family) - 1
+            result["app_owned_helpers"] = len(family) - 1
+            names = subprocess.check_output(["ps", "-o", "comm=", "-p", ",".join(map(str, family))], text=True)
+            result["webkit_helpers"] = sum("WebKit" in name for name in names.splitlines())
             if args.heap:
                 heap = subprocess.run(["heap", "-sortBySize", str(app_pid)], capture_output=True, text=True, timeout=30)
                 (args.output / f"heap-{run + 1}.log").write_text(heap.stdout + heap.stderr)

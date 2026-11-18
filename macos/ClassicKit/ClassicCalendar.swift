@@ -57,6 +57,8 @@ public final class ClassicCalendar: NSView {
     private var calendar = Calendar(identifier: .iso8601)
     private let buttons = (0..<42).map { _ in CalendarHitButton() }
     private var hits: [(NSRect, String)] = []
+    private var dirty = true
+    private var dailyMarks: [Date: [ClassicCalendarMark]] = [:]
     private let dayFormat = DateFormatter()
     private let timeFormat = DateFormatter()
     private let headerFormat = DateFormatter()
@@ -83,6 +85,7 @@ public final class ClassicCalendar: NSView {
 
     public override func layout() {
         super.layout()
+        if dirty { updateDays() }
         guard bounds.width > 0, bounds.height > headingHeight else {
             buttons.forEach { $0.isHidden = true }
             return
@@ -96,8 +99,21 @@ public final class ClassicCalendar: NSView {
     }
 
     private func refresh() {
-        headerFormat.dateFormat = period == .day ? "EEEE d MMMM" : "EEE d"
+        dirty = true
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    private func updateDays() {
+        dirty = false
+        let format = period == .day ? "EEEE d MMMM" : "EEE d"
+        if headerFormat.dateFormat != format { headerFormat.dateFormat = format }
         let dates = visibleDates
+        dailyMarks.removeAll(keepingCapacity: true)
+        for day in dates {
+            let end = calendar.date(byAdding: .day, value: 1, to: day)!
+            dailyMarks[day] = items.filter { $0.start < end && $0.end > day }.sorted { $0.start < $1.start }
+        }
         for (index, button) in buttons.enumerated() where index < dates.count {
             let marks = marksOn(dates[index])
             let label = dayFormat.string(from: dates[index]) + (marks.isEmpty ? "" : ": " + marks.map(\.title).joined(separator: ", "))
@@ -106,13 +122,10 @@ public final class ClassicCalendar: NSView {
             button.setAccessibilityLabel(label)
             button.toolTip = label
         }
-        needsLayout = true
-        needsDisplay = true
     }
 
     private func marksOn(_ day: Date) -> [ClassicCalendarMark] {
-        let end = calendar.date(byAdding: .day, value: 1, to: day)!
-        return items.filter { $0.start < end && $0.end > day }.sorted { $0.start < $1.start }
+        dailyMarks[day] ?? []
     }
 
     private func dayRect(_ index: Int) -> NSRect {
@@ -122,7 +135,7 @@ public final class ClassicCalendar: NSView {
             return NSRect(x: CGFloat(index % 7) * width, y: headingHeight + CGFloat(index / 7) * height,
                           width: width, height: height).integral
         }
-        let width = (bounds.width - 42) / CGFloat(visibleDates.count)
+        let width = (bounds.width - 42) / CGFloat(period == .week ? 7 : 1)
         return NSRect(x: 42 + CGFloat(index) * width, y: 0, width: width, height: bounds.height).integral
     }
 
@@ -141,6 +154,7 @@ public final class ClassicCalendar: NSView {
     }
 
     public override func draw(_ dirtyRect: NSRect) {
+        if dirty { updateDays() }
         NSColor.white.setFill(); bounds.fill()
         hits.removeAll(keepingCapacity: true)
         if period == .month { drawMonth() } else { drawTimeGrid() }
@@ -152,6 +166,10 @@ public final class ClassicCalendar: NSView {
         ClassicTheme.face.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: headingHeight).fill()
         for index in 0..<7 {
+            if calendar.isDate(date, equalTo: Date(), toGranularity: .month), index == (calendar.component(.weekday, from: Date()) + 5) % 7 {
+                ClassicTheme.color(0xDCE9FA).setFill()
+                NSRect(x: CGFloat(index) * width, y: 0, width: width, height: headingHeight).fill()
+            }
             ClassicTheme.text(names[index], in: NSRect(x: CGFloat(index) * width, y: 5, width: width, height: 18),
                               size: density == .compact ? 9 : 11, color: ClassicTheme.muted, alignment: .center)
         }
@@ -164,9 +182,13 @@ public final class ClassicCalendar: NSView {
             NSBezierPath(rect: rect).stroke()
             let dayNumber = String(calendar.component(.day, from: day))
             let today = calendar.isDateInToday(day)
+            if today {
+                ClassicTheme.navy.setFill()
+                NSRect(x: rect.minX + 1, y: rect.minY + 1, width: rect.width - 2, height: density == .compact ? rect.height - 2 : 24).fill()
+            }
             let number = density == .compact ? rect.insetBy(dx: 1, dy: 4) : NSRect(x: rect.minX + 6, y: rect.minY + 5, width: rect.width - 12, height: 19)
             ClassicTheme.text(dayNumber, in: number, size: density == .compact ? 10 : 12,
-                              color: today ? ClassicTheme.navy : (inMonth ? ClassicTheme.ink : ClassicTheme.muted),
+                              color: today ? .white : (inMonth ? ClassicTheme.ink : ClassicTheme.muted),
                               weight: today ? .bold : .regular, alignment: density == .compact ? .center : .left)
             if density == .compact { continue }
             let marks = marksOn(day)
@@ -192,6 +214,10 @@ public final class ClassicCalendar: NSView {
         ClassicTheme.face.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: top).fill()
         ClassicTheme.text("All day", in: NSRect(x: 2, y: headingHeight + 5, width: 38, height: 14), size: 8, color: ClassicTheme.muted)
+        for (index, day) in dates.enumerated() where calendar.isDateInToday(day) {
+            ClassicTheme.color(0xEFF5FF).setFill()
+            NSRect(x: left + CGFloat(index) * width, y: top, width: width, height: max(0, bounds.height - top)).fill()
+        }
         for hour in 0..<24 {
             let y = top + CGFloat(hour) * hourHeight
             ClassicTheme.color(0xE5E3DD).setFill()
@@ -202,8 +228,12 @@ public final class ClassicCalendar: NSView {
         }
         for (index, day) in dates.enumerated() {
             let x = left + CGFloat(index) * width
+            if calendar.isDateInToday(day) {
+                ClassicTheme.navy.setFill()
+                NSRect(x: x, y: 0, width: width, height: headingHeight).fill()
+            }
             ClassicTheme.text(headerFormat.string(from: day), in: NSRect(x: x + 3, y: 6, width: width - 6, height: 18),
-                              size: 12, color: calendar.isDateInToday(day) ? ClassicTheme.navy : ClassicTheme.ink, weight: .bold, alignment: .center)
+                              size: 12, color: calendar.isDateInToday(day) ? .white : ClassicTheme.ink, weight: .bold, alignment: .center)
             ClassicTheme.color(0xC8C6C0).setFill()
             NSRect(x: x, y: 0, width: 1, height: bounds.height).fill()
             let marks = marksOn(day)

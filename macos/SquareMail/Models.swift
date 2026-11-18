@@ -21,7 +21,7 @@ enum Folder: String, CaseIterable {
 enum ReaderMode { case text, html }
 enum ReadingLayout: String { case below, right }
 enum MailboxMode { case demo, live }
-enum WorkQueue { case local, network, sync, login }
+enum WorkQueue { case local, network, sync, login, media }
 
 struct Account: Decodable {
     let id: String
@@ -87,7 +87,7 @@ struct MailFolder: Decodable {
     let parentId: String?
     let system: String?
 }
-struct CalendarSource: Decodable {
+struct CalendarSource: Decodable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case accountId = "account_id"
         case id
@@ -103,7 +103,7 @@ struct CalendarSource: Decodable {
     let isPrimary: Bool
     var key: String { accountId + ":" + id }
 }
-struct CalendarEvent: Decodable {
+struct CalendarEvent: Decodable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case accountId = "account_id"
         case calendarId = "calendar_id"
@@ -185,6 +185,37 @@ enum CoreCommand: String {
     case refreshAccount = "refresh_account"
     case syncNext = "sync_next"
     case syncNow = "sync_now"
+    case media
+    case mediaFile = "media_file"
 }
+enum ImagePermission { case blocked, loaded }
+enum PreviewSize: String, Sendable {
+    case thumbnail, reader, document
+    var pixels: Int { self == .thumbnail ? 320 : 1024 }
+}
+struct MediaReply: Decodable { let manifest: MediaManifest? }
+struct MediaManifest: Decodable {
+    let html: String
+    let assets: [MediaAsset]
+    let imageIDs: [String]
+    private enum CodingKeys: String, CodingKey { case html, assets; case imageIDs = "image_ids" }
+}
+struct MediaAsset: Decodable {
+    let id: String
+    let name: String
+    let mime: String
+    let size: UInt64
+    let source: Source
+    struct Source: Decodable { let kind: Kind }
+    enum Kind: String, Decodable { case remote, gmail, graph, local; case gmailPart = "gmail_part" }
+    var previewable: Bool { size <= 8 * 1024 * 1024 && (documentType != nil || ["image/png", "image/jpeg", "image/gif", "image/webp", "image/tiff", "image/heic", "image/heif"].contains(mime)) }
+    var documentType: DocumentType? { DocumentType(rawValue: mime) }
+}
+enum DocumentType: String {
+    case pdf = "application/pdf"
+    case docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    case xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+}
+struct MediaFile: Decodable, Sendable { let path: String; let mime: String }
 enum BodyFetch: String { case cached, fetch }
 enum AccountDisconnect: String { case keepCache = "keep_cache", removeCache = "remove_cache" }

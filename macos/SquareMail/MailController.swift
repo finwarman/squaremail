@@ -13,6 +13,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var folder: Folder = .inbox
     private var remoteFolder: MailFolder?
     private let coordinator: SyncCoordinator
+    private let media: MessageMedia
     private var connectTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var calendarTask: Task<Void, Never>?
@@ -44,10 +45,20 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var calendarView: CalendarView?
     private var calendarSidebar: CalendarSidebar?
     private var calendarState = CalendarState()
+    private struct CalendarCache {
+        let sources: [CalendarSource]
+        let events: [CalendarEvent]
+        let restore: (CalendarView) -> Void
+    }
+    private var calendarCache: CalendarCache?
+    private var idleCalendar: (CalendarView, CalendarSidebar)?
+    private var calendarMode: MailboxMode = .demo
+    private var calendarIdleTask: Task<Void, Never>?
+    private static let calendarIdleDelay: Duration = .seconds(5)
     private var mailSearch = ""
     private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
     private let importButton = ClassicButton("Import .eml", icon: .folder, style: .toolbar)
-    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts"]
+    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media"]
     private let textButton = ClassicButton("Text only", icon: .text, style: .toggle)
     private let htmlButton = ClassicButton("HTML", icon: .html, style: .toggle)
     private let more = ClassicButton("Older")
@@ -63,6 +74,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.core = core
         self.layout = layout
         self.coordinator = SyncCoordinator(core: core)
+        self.media = MessageMedia(core: core, reader: layout.reader)
         super.init()
         let arguments = ProcessInfo.processInfo.arguments
         if Self.offlineArgs.isDisjoint(with: arguments), let value = UserDefaults.standard.string(forKey: Self.layoutKey) {
@@ -75,6 +87,28 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         buildTable()
         buildMenus()
         updateLayoutButtons()
+        layout.reader.onLoadImages = { [weak self] mail in
+            guard let self else { return }
+            self.media.loadImages(mail, mode: self.mailbox)
+        }
+        layout.reader.onAttachments = { [weak self] mail in
+            guard let self else { return }
+            self.media.attachments(mail, mode: self.mailbox)
+        }
+        layout.reader.onPreview = { [weak self] asset, mail in
+            guard let self else { return }
+            self.media.preview(asset, mail: mail, mode: self.mailbox)
+        }
+        layout.reader.onOpenPreview = { [weak self] asset, mail in
+            guard let self else { return }
+            self.media.open(asset, mail: mail, mode: self.mailbox)
+        }
+        layout.reader.onMediaReset = { [weak self] in self?.media.cancel() }
+        layout.reader.onImageState = { [weak self] permission in
+            guard let self else { return }
+            self.layout.header.images = permission
+            if self.readerMode == .html { self.layout.statusReader.stringValue = permission == .loaded ? "HTML · IMAGES LOADED" : "HTML · REMOTE OFF" }
+        }
         layout.search.delegate = self
         coordinator.onChange = { [weak self] reply in self?.syncChanged(reply) }
         coordinator.onConnection = { [weak self] connectivity in
@@ -108,6 +142,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if mailbox == .live { Task { await registerCalendar() } }
     }
     func stop() {
+        calendarIdleTask?.cancel()
+        idleCalendar = nil
+        media.cancel()
         coordinator.setActivity(.paused)
         connectTask?.cancel(); readingTask?.cancel(); searchTask?.cancel()
         refreshTask?.cancel(); calendarTask?.cancel(); folderTask?.cancel()
@@ -336,7 +373,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         } catch {
             guard revision == listRevision else { return }
             layout.reader.showNotice(error.localizedDescription)
-            layout.statusText.stringValue = "Could not read the local mailbox"
+            layout.statusText.stringValue = "Could not read the local mailbox: " + error.localizedDescription
         }
     }
 
@@ -450,6 +487,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     @objc private func toggleDemo() {
+        setSection(.mail)
+        calendarCache = nil
+        idleCalendar = nil
         bodyRevision += 1
         mailbox = mailbox == .demo ? .live : .demo
         account = nil
@@ -596,7 +636,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         alert.addButton(withTitle: "Cancel")
         let reply = alert.runModal()
         guard reply == .alertFirstButtonReturn || reply == .alertSecondButtonReturn else { return }
+        media.cancel()
+        calendarCache = nil
         setSection(.mail)
+        idleCalendar = nil
         coordinator.setActivity(.paused)
         readingTask?.cancel()
         Task {
@@ -694,6 +737,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         splitButton.isEnabled = next == .mail
         syncButton.isEnabled = true
         if next == .calendar {
+            calendarIdleTask?.cancel()
+            calendarIdleTask = nil
+            let cached = calendarMode == mailbox ? idleCalendar : nil
+            calendarMode = mailbox
+            idleCalendar = nil
             listRevision += 1
             bodyRevision += 1
             readingTask?.cancel()
@@ -701,8 +749,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layout.split.isHidden = true
             sidebar.isHidden = true
             layout.reader.pause()
-            let view = CalendarView(state: calendarState, mode: mailbox)
-            let side = CalendarSidebar(state: calendarState, mode: mailbox)
+            let view = cached?.0 ?? CalendarView(state: calendarState, mode: mailbox)
+            let side = cached?.1 ?? CalendarSidebar(state: calendarState, mode: mailbox)
             view.frame = layout.split.frame
             view.autoresizingMask = [.width, .height]
             side.frame = layout.sidebar.bounds.insetBy(dx: 2, dy: 2)
@@ -714,6 +762,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             view.onDateChanged = { [weak self, weak side] date in
                 side?.showDate(date)
                 self?.scheduleCalendar()
+            }
+            if cached == nil, mailbox == .live, let cache = calendarCache {
+                cache.restore(view)
+                side.showSources(cache.sources, accounts: accounts, hidden: view.state.hiddenSources)
             }
             layout.addSubview(view)
             layout.sidebar.addSubview(side)
@@ -733,8 +785,15 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             calendarTask?.cancel()
             calendarRevision += 1
             if let view = calendarView { calendarState = view.state }
+            if let view = calendarView, let side = calendarSidebar { idleCalendar = (view, side) }
             calendarView?.removeFromSuperview(); calendarView = nil
             calendarSidebar?.removeFromSuperview(); calendarSidebar = nil
+            calendarIdleTask?.cancel()
+            calendarIdleTask = Task { [weak self] in
+                do { try await Task.sleep(for: Self.calendarIdleDelay) } catch { return }
+                self?.idleCalendar = nil
+                self?.calendarIdleTask = nil
+            }
             layout.split.isHidden = false
             sidebar.isHidden = false
             calendarButton.title = "Calendar"
@@ -759,7 +818,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         calendarRevision += 1
         let revision = calendarRevision
         calendarTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
             guard let self, revision == self.calendarRevision else { return }
             await self.loadCalendar()
         }
@@ -794,7 +854,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             let events: [CalendarEvent] = try await core.request(["command": CoreCommand.events.rawValue, "start": Int64(range.0.timeIntervalSince1970),
                 "end": Int64(range.1.timeIntervalSince1970), "offset": 0, "limit": 2000], mode: .live)
             guard !Task.isCancelled, revision == calendarRevision, calendarView === view else { return }
-            view.setData(sources: sources, events: events)
+            if calendarCache?.sources != sources || calendarCache?.events != events {
+                view.setData(sources: sources, events: events)
+                calendarCache = CalendarCache(sources: sources, events: events, restore: view.snapshot())
+            }
             calendarSidebar?.showSources(sources, accounts: accounts, hidden: view.state.hiddenSources)
             await registerCalendar()
         } catch is CancellationError {} catch { layout.statusText.stringValue = error.localizedDescription }
@@ -813,14 +876,16 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             await loadList()
             await finishSelection()
             guard messages.count == Self.pageSize, messages.allSatisfy({ $0.accountId == value.id }), current?.text?.contains(value.id) == true else {
-                throw MailError(message: "Account fixture mismatch: \(value.id), rows \(messages.count), body \(current?.text?.contains(value.id) == true)")
+                throw MailError(message: "Account fixture mismatch: \(value.id), rows \(messages.count), current \(current?.accountId ?? "none"), selected \(table.selectedRow), body \(current?.text?.contains(value.id) == true), \(layout.statusText.stringValue)")
             }
             try layout.reader.verifyText(current!.text!)
             let folders: [MailFolder] = try await core.request(["command": CoreCommand.folders.rawValue, "account": value.id], mode: .live)
             remoteFolder = folders.first(where: { $0.parentId != nil })
             guard remoteFolder != nil else { throw MailError(message: "Nested folders were lost") }
             await loadList()
-            guard messages.count == Self.pageSize else { throw MailError(message: "Nested folder paging failed") }
+            guard messages.count == Self.pageSize else {
+                throw MailError(message: "Nested folder paging failed: \(value.id), rows \(messages.count), \(layout.statusText.stringValue)")
+            }
             layout.search.stringValue = value.id + " project"
             await loadList()
             guard !messages.isEmpty, messages.allSatisfy({ $0.accountId == value.id }) else { throw MailError(message: "Scoped search lost account isolation") }
@@ -843,11 +908,66 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if let side = calendarSidebar { retired.add(side) }
             setSection(.mail)
             try await Task.sleep(for: .milliseconds(30))
-            guard retired.allObjects.isEmpty else { throw MailError(message: "Live calendar cache views were retained") }
             setSection(.calendar)
+            guard retired.allObjects.contains(where: { $0 === calendarView }) else { throw MailError(message: "Warm calendar view was rebuilt") }
+            guard calendarCache != nil else { throw MailError(message: "Calendar snapshot was discarded between toggles") }
             calendarTask?.cancel()
             await loadCalendar()
         }
+    }
+
+    func checkMedia(_ path: String, probe: MediaProbe = .validate) async throws {
+        guard accounts.allSatisfy({ $0.provider == .local }) else { throw MailError(message: "Media probe requires a disposable local cache") }
+        let mail: Mail = try await core.request(["command": CoreCommand.importMail.rawValue, "path": path], mode: .live)
+        mailbox = .live
+        account = "local"
+        try await loadAccounts()
+        await loadList()
+        if let index = messages.firstIndex(where: { $0.id == mail.id }) {
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        }
+        await finishSelection()
+        guard current?.id == mail.id else { throw MailError(message: "Media probe selected the wrong message") }
+        setReader(.html)
+        try await layout.reader.finishHTML()
+        try layout.reader.verifyImages(0)
+        let reply: MediaReply = try await core.request(["command": CoreCommand.media.rawValue, "id": mail.id, "mode": BodyFetch.cached.rawValue], mode: .live)
+        guard let manifest = reply.manifest, manifest.assets.count == 4, manifest.imageIDs.count == 1 else { throw MailError(message: "Media fixture lost metadata") }
+        for asset in manifest.assets {
+            let file: MediaFile = try await core.request(["command": CoreCommand.mediaFile.rawValue, "id": mail.id, "asset": asset.id, "preview": PreviewSize.thumbnail.rawValue], mode: .live, queue: .media)
+            let image = try await core.mediaThumbnail(file)
+            guard image.width > 0, image.height > 0 else { throw MailError(message: "Empty attachment thumbnail") }
+        }
+        media.attachments(mail, mode: .live)
+        await media.finish()
+        if let pdf = manifest.assets.first(where: { $0.mime == "application/pdf" }) {
+            media.preview(pdf, mail: mail, mode: .live)
+            await media.finish()
+        }
+        media.loadImages(mail, mode: .live)
+        await media.finish()
+        try await layout.reader.finishHTML()
+        try await layout.reader.finishImages(1)
+        setReader(.text)
+        layout.reader.display(mail, mode: .html)
+        try await layout.reader.finishHTML()
+        try await layout.reader.finishImages(1)
+        layout.reader.showNotice("Media probe complete")
+        try layout.reader.verifyImages(0)
+        if probe == .preview {
+            setReader(.html)
+            media.attachments(mail, mode: .live)
+            await media.finish()
+            if let pdf = manifest.assets.first(where: { $0.mime == "application/pdf" }) {
+                media.preview(pdf, mail: mail, mode: .live)
+                await media.finish()
+            }
+            media.loadImages(mail, mode: .live)
+            await media.finish()
+            try await layout.reader.finishHTML()
+            await finishSelection()
+        }
+        print("MEDIA verified blocked defaults, local image delivery, image/PDF/DOCX/XLSX thumbnails and selection reset")
     }
 
     func checkCalendar(_ mode: CalendarProbe = .validate) async throws {
@@ -861,12 +981,17 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if let side = calendarSidebar { retired.add(side) }
             setSection(.mail)
             try await Task.sleep(for: .milliseconds(20))
-            guard retired.allObjects.isEmpty else { throw MailError(message: "Closed calendar views were retained") }
             setSection(.calendar)
+            guard retired.allObjects.contains(where: { $0 === calendarView }) else { throw MailError(message: "Warm calendar view was rebuilt") }
             layout.layoutSubtreeIfNeeded()
             layout.window?.displayIfNeeded()
         }
+        let retired = NSHashTable<AnyObject>.weakObjects()
+        if let view = calendarView { retired.add(view) }
+        if let side = calendarSidebar { retired.add(side) }
         setSection(.mail)
+        try await Task.sleep(for: Self.calendarIdleDelay + .milliseconds(200))
+        guard retired.allObjects.isEmpty else { throw MailError(message: "Idle calendar view was retained") }
     }
 
     func measureCalendar() async throws -> [String: Any] {
@@ -892,18 +1017,35 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         try await Task.sleep(for: .seconds(2))
         let active = try MemoryProbe.snapshot()
         setSection(.mail)
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: Self.calendarIdleDelay + .milliseconds(200))
         let closed = try MemoryProbe.snapshot()
         setSection(.calendar)
+        layout.layoutSubtreeIfNeeded()
+        layout.window?.displayIfNeeded()
+        var reopening: [Double] = []
+        for _ in 0..<10 {
+            setSection(.mail)
+            let start = ProcessInfo.processInfo.systemUptime
+            setSection(.calendar)
+            calendarTask?.cancel()
+            layout.layoutSubtreeIfNeeded()
+            layout.window?.displayIfNeeded()
+            CATransaction.flush()
+            reopening.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            try await Task.sleep(for: .milliseconds(33))
+        }
+        setSection(.calendar)
         timings.sort()
+        reopening.sort()
         return ["first_open_ms": opening, "month_navigation_p95_ms": timings[28],
+                "cached_reopen_p95_ms": reopening[9],
                 "mail_before": before, "calendar_active": active, "mail_after_close": closed]
     }
 
     @objc private func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Square Mail 0.1"
-        alert.informativeText = "Native AppKit reader. Rust mail core.\n\nA read-only client with offline caches and automatic mail/calendar sync while open. Initial header backfill is gradual. HTML blocks scripts and remote content. Attachment browsing, sending and notifications are not implemented.\n\nVisual references: Visual Basic and classic Outlook. No reference-project assets are bundled."
+        alert.informativeText = "Native AppKit reader. Rust mail core.\n\nA read-only client with offline caches and automatic mail/calendar sync while open. Remote images stay blocked until requested. Image/PDF/DOCX/XLSX previews download on request. Sending and notifications are not implemented.\n\nVisual references: Visual Basic and classic Outlook. No reference-project assets are bundled."
         alert.runModal()
     }
 

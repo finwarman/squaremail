@@ -17,7 +17,7 @@
 | INV-MAIL-row-reuse | Revisiting the same rows does not allocate more row views after warm-up. | native reader self-test and 1,000-switch heap probe |
 | INV-MAIL-header-window | Older/Newer navigation retains only the current page, at most 250 summaries. | generated 512-message native paging probe |
 | INV-CALENDAR-bounded-grid | Period/date changes reuse 42 native date targets. | ClassicKit calendar range/lifecycle test |
-| INV-CALENDAR-lazy-release | Calendar views are absent during mail startup and released on returning to Mail. | native calendar probe |
+| INV-CALENDAR-lazy-release | Calendar views are absent during mail startup, reused during rapid toggles and released after five idle seconds in Mail. | native calendar probe |
 
 | INV-SYNC-page-checkpoint | Page changes and cursor advance commit together; stale cursor updates roll back. | real SQLite cursor/replay test |
 | INV-SYNC-snapshot | An interrupted calendar snapshot preserves the previous offline window. | staged snapshot/restart test |
@@ -29,6 +29,9 @@
 | INV-CALENDAR-floating-dates | All-day dates survive time-zone and DST conversion. | Google/Graph date fixtures |
 | INV-CALENDAR-window-cache | Calendar source caches retain at most six month windows. | window eviction test |
 | INV-MAIL-reading-layout | Divider and window resizing fill both viewports; changing orientation preserves the selected message and bounded page. | native reader resize/layout probe |
+| INV-MEDIA-opt-in | Default HTML makes no image request; approved resources are scoped to the selected message and cleared on selection change. | native image-delivery probe and sanitizer contracts |
+| INV-MEDIA-bounds | File downloads, image references, pixels and disk cache have explicit bounds. | cache/URL contracts and native downsampling probe |
+| INV-MEDIA-office | Office previews reject external relationships, XML document types, macros and excessive expansion. | XML contracts and native Office fixtures |
 | INV-MAIL-copy-text | The native plain reader preserves displayed/copy text and scrolls long bodies. | private-pasteboard native account probe |
 
 The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Provider access is read-only.
