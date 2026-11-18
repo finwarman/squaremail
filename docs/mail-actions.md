@@ -1,6 +1,7 @@
 # Mail actions and local drafts
 
-Mail and Calendar are the leftmost toolbar controls. New mail, Reply, Reply all, Forward, Archive, Trash and Move follow them. The second row contains reader choices, read/unread, flag/star, local pin and Drafts / outbox. Import .eml remains in File. The Message menu and message-list right-click menu provide the same operations. Right-click targets the clicked row. Controls are disabled while the list changes or a local mutation is committing.
+Message actions sit above the selected email header. Reply/Reply all/Forward/Archive/Trash stay visible; narrow panes put Move, Read, Flag, Pin and text/HTML choices in More. Overflow reflects the current selection and disabled states. Global controls navigate Mail/Calendar, sync, accounts, alerts and drafts/outbox. New mail sits beside the folder heading. Import stays in File. Right-click and Message-menu actions use the same handlers. Controls disable during list changes or local mutations. The reader header follows selection immediately.
+
 
 Delete always moves to Trash/Deleted Items. Deleting from Trash repeats that reversible operation. There is no permanent-delete command or provider hard-delete endpoint in this milestone. Moving stays within the message's account. Gmail removes Inbox/current source membership while keeping unrelated labels; Outlook moves the message to a folder using immutable IDs. Gmail stars and Outlook flags share the Flag control. Pins are local to Square Mail and order messages before unpinned rows through indexed queries. Reading a message does not automatically mark it read in this milestone.
 

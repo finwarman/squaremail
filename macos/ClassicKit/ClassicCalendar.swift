@@ -167,7 +167,7 @@ public final class ClassicCalendar: NSView {
         NSRect(x: 0, y: 0, width: bounds.width, height: headingHeight).fill()
         for index in 0..<7 {
             if calendar.isDate(date, equalTo: Date(), toGranularity: .month), index == (calendar.component(.weekday, from: Date()) + 5) % 7 {
-                ClassicTheme.color(0xDCE9FA).setFill()
+                ClassicTheme.todaySurface.setFill()
                 NSRect(x: CGFloat(index) * width, y: 0, width: width, height: headingHeight).fill()
             }
             ClassicTheme.text(names[index], in: NSRect(x: CGFloat(index) * width, y: 5, width: width, height: 18),
@@ -177,8 +177,8 @@ public final class ClassicCalendar: NSView {
             let rect = dayRect(index)
             let inMonth = calendar.isDate(day, equalTo: date, toGranularity: .month)
             if !inMonth { ClassicTheme.row.setFill(); rect.fill() }
-            if calendar.isDate(day, inSameDayAs: date) { ClassicTheme.color(0xE7EFFB).setFill(); rect.fill() }
-            ClassicTheme.color(0xC8C6C0).setStroke()
+            if calendar.isDate(day, inSameDayAs: date) { ClassicTheme.selectedSurface.setFill(); rect.fill() }
+            ClassicTheme.grid.setStroke()
             NSBezierPath(rect: rect).stroke()
             let dayNumber = String(calendar.component(.day, from: day))
             let today = calendar.isDateInToday(day)
@@ -191,7 +191,7 @@ public final class ClassicCalendar: NSView {
                               color: today ? .white : (inMonth ? ClassicTheme.ink : ClassicTheme.muted),
                               weight: today ? .bold : .regular, alignment: density == .compact ? .center : .left)
             if calendar.isDate(day, inSameDayAs: date) {
-                ClassicTheme.blue.setStroke()
+                ClassicTheme.focus.setStroke()
                 let selection = NSBezierPath(rect: rect.insetBy(dx: 2, dy: 2)); selection.lineWidth = 2; selection.stroke()
             }
             if density == .compact { continue }
@@ -219,7 +219,7 @@ public final class ClassicCalendar: NSView {
         NSRect(x: 0, y: 0, width: bounds.width, height: top).fill()
         ClassicTheme.text("All day", in: NSRect(x: 2, y: headingHeight + 5, width: 38, height: 14), size: 8, color: ClassicTheme.muted)
         for (index, day) in dates.enumerated() where calendar.isDateInToday(day) {
-            ClassicTheme.color(0xEFF5FF).setFill()
+            ClassicTheme.todaySurface.setFill()
             NSRect(x: left + CGFloat(index) * width, y: top, width: width, height: max(0, bounds.height - top)).fill()
         }
         let now = Date()
@@ -247,7 +247,7 @@ public final class ClassicCalendar: NSView {
             }
             ClassicTheme.text(headerFormat.string(from: day), in: NSRect(x: x + 3, y: 6, width: width - 6, height: 18),
                               size: 12, color: calendar.isDateInToday(day) ? .white : ClassicTheme.ink, weight: .bold, alignment: .center)
-            ClassicTheme.color(0xC8C6C0).setFill()
+            ClassicTheme.grid.setFill()
             NSRect(x: x, y: 0, width: 1, height: bounds.height).fill()
             let marks = marksOn(day)
             for item in marks.filter({ $0.span == .allDay }).prefix(1) {
@@ -271,9 +271,9 @@ public final class ClassicCalendar: NSView {
         }
         if let index = dates.firstIndex(where: { calendar.isDate($0, inSameDayAs: now) }) {
             let y = top + clockHour(now) * hourHeight
-            ClassicTheme.color(0xBD3345).setFill()
+            ClassicTheme.timeMarker.setFill()
             NSRect(x: left + CGFloat(index) * width, y: floor(y), width: width, height: 2).fill()
-            ClassicTheme.text(timeFormat.string(from: now), in: NSRect(x: 0, y: min(bounds.height - 15, max(top, y - 7)), width: left - 3, height: 15), size: 9, color: ClassicTheme.color(0xBD3345), weight: .bold, alignment: .right)
+            ClassicTheme.text(timeFormat.string(from: now), in: NSRect(x: 0, y: min(bounds.height - 15, max(top, y - 7)), width: left - 3, height: 15), size: 9, color: ClassicTheme.timeMarker, weight: .bold, alignment: .right)
         }
     }
 

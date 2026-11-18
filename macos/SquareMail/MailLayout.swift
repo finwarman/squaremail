@@ -4,7 +4,8 @@ import ClassicKit
 final class MailLayout: NSView, NSSplitViewDelegate {
     let titleBar = ClassicTitleBar()
     let menus = NSView()
-    let toolbar = ClassicPanel()
+    let toolbar = ClassicActionBar()
+    let messageActions = ClassicActionBar()
     let sidebar = ClassicPanel()
     let filter = ClassicPanel()
     let split = NSSplitView()
@@ -18,6 +19,7 @@ final class MailLayout: NSView, NSSplitViewDelegate {
     let statusText = NSTextField(labelWithString: "Opening local mailbox…")
     let statusMode = NSTextField(labelWithString: "LOCAL DEMO")
     let statusReader = NSTextField(labelWithString: "PLAIN TEXT")
+    let syncProgress = ClassicProgress()
     let searchBorder = ClassicPanel()
     let search = NSTextField()
     let folderLabel = NSTextField(labelWithString: "Inbox")
@@ -33,7 +35,6 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         for view in [titleBar, menus, toolbar, sidebar, filter, split, status] { addSubview(view) }
-        toolbar.edge = .raised
         sidebar.edge = .sunken
         filter.edge = .flat
         split.isVertical = false
@@ -53,6 +54,7 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         listScroll.borderType = .noBorder
         readerPane.edge = .sunken
         readerPane.fill = .white
+        readerPane.addSubview(messageActions)
         readerPane.addSubview(header)
         readerPane.addSubview(reader)
         searchBorder.edge = .sunken
@@ -72,6 +74,8 @@ final class MailLayout: NSView, NSSplitViewDelegate {
             field.textColor = ClassicTheme.muted
             status.addSubview(field)
         }
+        status.addSubview(syncProgress)
+        syncProgress.isHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
@@ -91,17 +95,19 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         let height = bounds.height
         titleBar.frame = NSRect(x: 3, y: 3, width: width - 6, height: 32)
         menus.frame = NSRect(x: 5, y: 36, width: width - 10, height: 25)
-        toolbar.frame = NSRect(x: 4, y: 62, width: width - 8, height: 96)
+        toolbar.frame = NSRect(x: 4, y: 62, width: width - 8, height: toolbar.fittingHeight(width - 8))
+        let contentTop = toolbar.frame.maxY + 4
         let left: CGFloat = 210
-        sidebar.frame = NSRect(x: 4, y: 162, width: left - 8, height: height - 190)
-        filter.frame = NSRect(x: left, y: 162, width: width - left - 4, height: 40)
-        folderLabel.frame = NSRect(x: 10, y: 9, width: 230, height: 22)
+        sidebar.frame = NSRect(x: 4, y: contentTop, width: left - 8, height: height - contentTop - 28)
+        filter.frame = NSRect(x: left, y: contentTop, width: width - left - 4, height: 40)
+        folderLabel.frame = NSRect(x: 10, y: 9, width: 110, height: 22)
         searchBorder.frame = NSRect(x: max(245, filter.bounds.width - 365), y: 5, width: 355, height: 28)
         search.frame = searchBorder.bounds.insetBy(dx: 8, dy: 5)
-        split.frame = NSRect(x: left, y: 204, width: width - left - 4, height: height - 232)
+        split.frame = NSRect(x: left, y: contentTop + 42, width: width - left - 4, height: max(0, height - contentTop - 70))
         layoutPanes()
         status.frame = NSRect(x: 4, y: height - 25, width: width - 8, height: 21)
-        statusText.frame = NSRect(x: 8, y: 3, width: width - 360, height: 16)
+        statusText.frame = NSRect(x: 8, y: 3, width: width - 500, height: 16)
+        syncProgress.frame = NSRect(x: width - 485, y: 3, width: 130, height: 15)
         statusMode.frame = NSRect(x: width - 342, y: 3, width: 170, height: 16)
         statusReader.frame = NSRect(x: width - 164, y: 3, width: 148, height: 16)
         needsDisplay = true
@@ -125,14 +131,19 @@ final class MailLayout: NSView, NSSplitViewDelegate {
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        min(proposedMaximumPosition, splitView.isVertical ? splitView.bounds.width - 340 : splitView.bounds.height - 200)
+        min(proposedMaximumPosition, splitView.isVertical ? splitView.bounds.width - 340 : splitView.bounds.height - 280)
     }
 
     private func layoutPanes() {
         listCaption.frame = NSRect(x: 10, y: 7, width: max(0, listPane.bounds.width - 165), height: 17)
         listScroll.frame = NSRect(x: 2, y: 29, width: max(0, listPane.bounds.width - 4), height: max(0, listPane.bounds.height - 31))
-        header.frame = NSRect(x: 2, y: 2, width: max(0, readerPane.bounds.width - 4), height: 108)
-        reader.frame = NSRect(x: 2, y: 110, width: max(0, readerPane.bounds.width - 4), height: max(0, readerPane.bounds.height - 112))
+        let width = max(0, readerPane.bounds.width - 4)
+        let actionHeight = messageActions.fittingHeight(width)
+        messageActions.frame = NSRect(x: 2, y: 2, width: width, height: actionHeight)
+        let headerHeight: CGFloat = width < 600 ? 142 : 108
+        header.frame = NSRect(x: 2, y: actionHeight + 2, width: width, height: headerHeight)
+        let bodyTop = header.frame.maxY
+        reader.frame = NSRect(x: 2, y: bodyTop, width: width, height: max(0, readerPane.bounds.height - bodyTop - 2))
     }
 }
 
@@ -165,10 +176,11 @@ final class MessageHeader: NSView {
         }
         ClassicTheme.text(message.subject, in: NSRect(x: 16, y: 12, width: bounds.width - 30, height: 25), size: 17, weight: .bold)
         ClassicTheme.text("From:", in: NSRect(x: 16, y: 45, width: 42, height: 18), size: 11, color: ClassicTheme.muted)
-        ClassicTheme.text("\(message.sender) <\(message.senderAddress)>", in: NSRect(x: 61, y: 43, width: bounds.width - 290, height: 20), size: 12)
+        let narrow = bounds.width < 600
+        ClassicTheme.text("\(message.sender) <\(message.senderAddress)>", in: NSRect(x: 61, y: 43, width: bounds.width - (narrow ? 77 : 290), height: 20), size: 12)
         ClassicTheme.text("To:", in: NSRect(x: 16, y: 70, width: 42, height: 18), size: 11, color: ClassicTheme.muted)
-        ClassicTheme.text(message.recipient, in: NSRect(x: 61, y: 68, width: bounds.width - 290, height: 20), size: 12)
-        ClassicTheme.text(date, in: NSRect(x: bounds.width - 255, y: 44, width: 236, height: 18), size: 11, color: ClassicTheme.muted, alignment: .right)
-        ClassicTheme.text(mode == .text ? "PLAIN TEXT  ·  LOCAL CACHE" : (images == .loaded ? "HTML  ·  IMAGES LOADED" : "HTML  ·  REMOTE CONTENT BLOCKED"), in: NSRect(x: bounds.width - 280, y: 70, width: 261, height: 18), size: 10, color: ClassicTheme.muted, alignment: .right)
+        ClassicTheme.text(message.recipient, in: NSRect(x: 61, y: 68, width: bounds.width - (narrow ? 77 : 290), height: 20), size: 12)
+        ClassicTheme.text(date, in: NSRect(x: narrow ? 16 : bounds.width - 255, y: narrow ? 96 : 44, width: narrow ? bounds.width - 32 : 236, height: 18), size: 11, color: ClassicTheme.muted, alignment: narrow ? .left : .right)
+        ClassicTheme.text(mode == .text ? "PLAIN TEXT  ·  LOCAL CACHE" : (images == .loaded ? "HTML  ·  IMAGES LOADED" : "HTML  ·  REMOTE CONTENT BLOCKED"), in: NSRect(x: narrow ? 16 : bounds.width - 280, y: narrow ? 118 : 70, width: narrow ? bounds.width - 32 : 261, height: 18), size: 10, color: ClassicTheme.muted, alignment: narrow ? .left : .right)
     }
 }

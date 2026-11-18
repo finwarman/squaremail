@@ -153,3 +153,9 @@ Full hidden functional checks passed, with synthetic provider HTTP for reversibl
 The native text formatter runs on one actor and lazily reuses its detector. A generated334,800-byte newsletter took29.17ms median and33.44ms p95 across30 release runs. This includes normalization and document construction, excludes AppKit layout/draw/network, and is not an email-switch benchmark. Links cap at128 per body. No new memory, power or leak claim is made. [Compact evidence](benchmarks/2026-11-18-reader-links.json).
 
 Reproduce with `SQUAREMAIL_TEXT_PROFILE=1 swift test -c release --filter ReaderTextTests.testLargeBodyBounds`. The regular test checks bounds without a timing threshold.
+
+## Reader actions, progress and palettes, 18 November 2026
+
+Reader/global action bars reuse their native controls. Secondary actions use a temporary native overflow menu; resizing changes frames and visibility. Both palettes share fixed color tables, bevel layers and icon geometry. Theme selection applies at restart, with no observer per row. Progress uses small segmented native drawing, with150ms ticks only for visible active indeterminate work. It stops during idle, hide, app inactivity, minimization or sleep. Known image totals do not animate. No additional WebKit instance or provider polling loop is created.
+
+Full hidden checks and Classic/Pink generated-mail renders passed. These changes have no new whole-app startup, memory, switching, power or leak qualification. Provider backfill totals remain unknown and display indeterminate progress.

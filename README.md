@@ -25,7 +25,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Native reusable rows with bounded pages and a draggable reading-pane divider.
 - Side by side toolbar toggle and View menu choices for a reading pane below or on the right. The choice survives restart; the right-pane list shows sender, date, subject and preview.
 - Older/Newer paging retains at most 250 message headers.
-- Mail/Calendar navigation at the left, native toolbar/right-click mail actions, read/unread, stars/flags and indexed local pins. Delete moves to Trash; there is no permanent-delete command.
+- Global Mail/Calendar, sync, accounts and workspace navigation. Reply, Forward, Archive, Trash, Move, read/flag/pin and text/HTML controls live in the selected message pane, with More overflow in narrow layouts. Right-click actions remain available. Delete moves to Trash; there is no permanent-delete command.
 - Native reply/reply-all/forward and To/CC/BCC composition, bounded local autosaving drafts and an offline outbox with explicit send review.
 - Optional plain-text compact spacing preserves quote nesting, bullets and separators. Calendar shows current date/time and a day/week time marker with separate today/selection highlights.
 - Readable plain-text links condense email/Markdown links and long URLs, with full hover targets and copy. Compact spacing also removes invisible newsletter padding. See [reader behavior](docs/reader-text.md).
@@ -33,6 +33,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
 - Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
+- Classic segmented sync/loading indicators, Cancel/Retry feedback and known image-item progress. Unknown provider totals stay indeterminate.
 - Passive HTML with scripts and direct web requests blocked. Load images opts in for the current message; Hide images or changing messages resets access.
 - Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
 - Five-second idle release of the HTML renderer after returning to text.
@@ -53,6 +54,8 @@ This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads 
 Mail is stored as plaintext in `~/Library/Application Support/Square Mail/`, with user-only filesystem permissions. Tokens are stored separately in macOS Keychain. No telemetry is configured.
 
 ## UI system
+
+View > Appearance offers Classic and Pink. The saved choice applies after restart. Mail/document content retains its own colors; OS controls retain macOS styling.
 
 `ClassicKit` is an independent Swift package product. It has no mail or Rust dependency. It provides the palette, Tahoma-first font selection, raised/inset borders, original pixel icons, buttons, title bars and native table cells. Coordinates use integral logical points; macOS draws at the display's backing scale, including 2× Retina. OS-owned sheets retain macOS styling.
 

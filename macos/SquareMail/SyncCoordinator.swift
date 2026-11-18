@@ -5,6 +5,7 @@ import Network
 final class SyncCoordinator {
     enum Activity { case running, paused }
     enum Connectivity { case online, offline }
+    enum Status { case checking, waiting, offline, sleeping, paused, failed }
     private let core: MailCore
     private var loop: Task<Void, Never>?
     private var monitor: NWPathMonitor?
@@ -15,12 +16,13 @@ final class SyncCoordinator {
     private var refresh = false
     var onChange: ((SyncStep) -> Void)?
     var onConnection: ((Connectivity) -> Void)?
+    var onStatus: ((Status) -> Void)?
 
     init(core: MailCore) {
         self.core = core
         let workspace = NSWorkspace.shared.notificationCenter
         observations.append(workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.sleeping = true; self?.loop?.cancel(); self?.loop = nil }
+            Task { @MainActor in self?.sleeping = true; self?.loop?.cancel(); self?.loop = nil; self?.onStatus?(.sleeping) }
         })
         observations.append(workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.sleeping = false; self?.kick() }
@@ -32,6 +34,7 @@ final class SyncCoordinator {
         guard enabled else {
             loop?.cancel(); loop = nil
             monitor?.cancel(); monitor = nil
+            onStatus?(.paused)
             return
         }
         if monitor == nil {
@@ -43,7 +46,7 @@ final class SyncCoordinator {
                     let regained = !self.online && connected
                     self.online = connected
                     self.onConnection?(connected ? .online : .offline)
-                    if !connected { self.loop?.cancel(); self.loop = nil }
+                    if !connected { self.loop?.cancel(); self.loop = nil; self.onStatus?(.offline) }
                     if regained { self.requestRefresh() }
                 }
             }
@@ -67,16 +70,21 @@ final class SyncCoordinator {
     private func tick() async -> Int? {
         guard enabled, online, !sleeping else { return nil }
         do {
+            onStatus?(.checking)
             if refresh {
                 refresh = false
                 let _: EmptyReply = try await core.request(["command": CoreCommand.syncNow.rawValue], mode: .live)
+                try Task.checkCancellation()
             }
             let reply: SyncStep = try await core.request(["command": CoreCommand.syncNext.rawValue], mode: .live, queue: .sync)
             try Task.checkCancellation()
             if reply.worked { onChange?(reply) }
+            onStatus?(reply.error == nil ? .waiting : .failed)
             return reply.worked ? 300 : 5000
         } catch is CancellationError { return nil }
         catch {
+            guard !Task.isCancelled, enabled, online, !sleeping else { return nil }
+            onStatus?(.failed)
             onChange?(SyncStep(worked: false, accountId: nil, kind: nil, error: error.localizedDescription, retryAfter: 15))
             return 15000
         }

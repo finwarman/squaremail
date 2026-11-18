@@ -1,4 +1,5 @@
 import AppKit
+import ClassicKit
 
 @MainActor
 final class MessageMedia {
@@ -9,20 +10,24 @@ final class MessageMedia {
     private let document = DocumentPreview()
 
     init(core: MailCore, reader: ReaderView) { self.core = core; self.reader = reader }
-    func cancel() { generation += 1; task?.cancel(); task = nil; document.close() }
+    func cancel() { generation += 1; task?.cancel(); task = nil; document.close(); reader?.mediaProgress(.idle) }
     func finish() async { await task?.value }
 
     func loadImages(_ mail: Mail, mode: MailboxMode) {
         cancel()
         let revision = generation
         reader?.mediaStatus("Loading images. Remote servers may record this request.")
+        reader?.mediaProgress(.indeterminate)
         task = Task { [weak self] in
             guard let self else { return }
+            defer { if generation == revision { reader?.mediaProgress(.idle) } }
             do {
                 let manifest = try await discover(mail, mode: mode)
+                guard generation == revision else { return }
+                if !manifest.imageIDs.isEmpty { reader?.mediaProgress(.determinate(completed: 0, total: manifest.imageIDs.count)) }
                 var files: [String: URL] = [:]
                 var failures = 0
-                for id in manifest.imageIDs {
+                for (index, id) in manifest.imageIDs.enumerated() {
                     try Task.checkCancellation()
                     do {
                         let file: MediaFile = try await core.request(["command": CoreCommand.mediaFile.rawValue, "id": mail.id, "asset": id, "preview": PreviewSize.reader.rawValue], mode: mode, queue: .media)
@@ -31,6 +36,7 @@ final class MessageMedia {
                     catch { failures += 1 }
                     guard generation == revision else { return }
                     reader?.mediaStatus("Loaded \(files.count) of \(manifest.imageIDs.count) images…")
+                    reader?.mediaProgress(.determinate(completed: index + 1, total: manifest.imageIDs.count))
                 }
                 try Task.checkCancellation()
                 guard generation == revision else { return }
@@ -51,8 +57,10 @@ final class MessageMedia {
         cancel()
         let revision = generation
         reader?.mediaStatus("Discovering attachments…")
+        reader?.mediaProgress(.indeterminate)
         task = Task { [weak self] in
             guard let self else { return }
+            defer { if generation == revision { reader?.mediaProgress(.idle) } }
             do {
                 let manifest = try await discover(mail, mode: mode)
                 try Task.checkCancellation()
@@ -69,8 +77,10 @@ final class MessageMedia {
         cancel()
         let revision = generation
         reader?.mediaStatus("Downloading preview…")
+        reader?.mediaProgress(.indeterminate)
         task = Task { [weak self] in
             guard let self else { return }
+            defer { if generation == revision { reader?.mediaProgress(.idle) } }
             do {
                 let file: MediaFile = try await core.request(["command": CoreCommand.mediaFile.rawValue, "id": mail.id, "asset": asset.id, "preview": PreviewSize.thumbnail.rawValue], mode: mode, queue: .media)
                 let image = try await core.mediaThumbnail(file)
@@ -96,8 +106,10 @@ final class MessageMedia {
         cancel()
         let revision = generation
         reader?.mediaStatus("Preparing native preview…")
+        reader?.mediaProgress(.indeterminate)
         task = Task { [weak self] in
             guard let self else { return }
+            defer { if generation == revision { reader?.mediaProgress(.idle) } }
             do {
                 let file: MediaFile = try await core.request(["command": CoreCommand.mediaFile.rawValue, "id": mail.id, "asset": asset.id, "preview": PreviewSize.document.rawValue], mode: mode, queue: .media)
                 try Task.checkCancellation()

@@ -2,6 +2,75 @@ import XCTest
 @testable import ClassicKit
 
 final class ClassicKitTests: XCTestCase {
+    func testThemeContrast() async {
+        await MainActor.run {
+            let saved = ClassicTheme.appearance
+            defer { ClassicTheme.configure(saved) }
+            for appearance in ClassicTheme.Appearance.allCases {
+                ClassicTheme.configure(appearance)
+                XCTAssertGreaterThanOrEqual(contrast(ClassicTheme.ink, ClassicTheme.face), 7)
+                XCTAssertGreaterThanOrEqual(contrast(.white, ClassicTheme.selection), 4.5)
+                XCTAssertGreaterThanOrEqual(contrast(ClassicTheme.muted, ClassicTheme.face), 4.5)
+                XCTAssertNotEqual(ClassicTheme.todaySurface, ClassicTheme.selectedSurface)
+            }
+        }
+    }
+    private func contrast(_ first: NSColor, _ second: NSColor) -> Double {
+        func luminance(_ color: NSColor) -> Double {
+            let color = color.usingColorSpace(.sRGB)!
+            let channels = [color.redComponent, color.greenComponent, color.blueComponent].map { value -> Double in
+                let value = Double(value)
+                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+        }
+        let a = luminance(first); let b = luminance(second)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    func testActionOverflow() async {
+        await MainActor.run {
+            _ = NSApplication.shared
+            let bar = ClassicActionBar()
+            let primary = ClassicButton("Reply")
+            let secondary = ClassicButton("Mark read")
+            var clicks = 0
+            secondary.onPress = { clicks += 1 }
+            bar.addItem(primary, width: 100)
+            bar.addItem(secondary, width: 110, priority: .secondary)
+            for width: CGFloat in [180, 400, 180] {
+                bar.frame = NSRect(x: 0, y: 0, width: width, height: bar.fittingHeight(width)); bar.layout()
+                let visible = bar.subviews.filter { !$0.isHidden }
+                XCTAssertTrue(visible.allSatisfy { bar.bounds.contains($0.frame) })
+                for (index, view) in visible.enumerated() {
+                    XCTAssertTrue(visible.dropFirst(index + 1).allSatisfy { !view.frame.intersects($0.frame) })
+                }
+                XCTAssertEqual(secondary.isHidden, width < 220)
+            }
+            secondary.title = "Mark unread"; secondary.isEnabled = false
+            let disabled = bar.overflowMenu().items.first!
+            XCTAssertEqual(disabled.title, "Mark unread"); XCTAssertFalse(disabled.isEnabled)
+            secondary.isEnabled = true
+            let item = bar.overflowMenu().items.first!
+            XCTAssertTrue(NSApp.sendAction(item.action!, to: item.target, from: item))
+            XCTAssertEqual(clicks, 1)
+        }
+    }
+
+    func testProgressBounds() async {
+        await MainActor.run {
+            let progress = ClassicProgress(frame: NSRect(x: 0, y: 0, width: 130, height: 16))
+            progress.state = .determinate(completed: 20, total: 10)
+            XCTAssertEqual(progress.accessibilityValue() as? String, "10 of 10")
+            progress.state = .determinate(completed: -1, total: 10)
+            XCTAssertEqual(progress.accessibilityValue() as? String, "0 of 10")
+            progress.state = .indeterminate
+            XCTAssertEqual(progress.accessibilityValue() as? String, "Working")
+            progress.state = .idle
+            XCTAssertEqual(progress.accessibilityValue() as? String, "Idle")
+        }
+    }
+
     func testCalendarRanges() async {
         await MainActor.run {
             let calendar = Calendar(identifier: .iso8601)

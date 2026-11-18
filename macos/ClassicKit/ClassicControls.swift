@@ -32,6 +32,7 @@ public final class ClassicCheckbox: NSButton {
 }
 
 public final class ClassicButton: NSButton {
+    public override var title: String { didSet { setAccessibilityLabel(title); needsDisplay = true } }
     public enum Style { case normal, toolbar, toggle, title, menu }
     public var onPress: (() -> Void)?
     public var icon: ClassicIcon?

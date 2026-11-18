@@ -20,13 +20,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var mailTask: Task<Void, Never>?
     private let messageMenu = NSMenu(title: "Message")
     private let mailButton = ClassicButton("Mail", icon: .mail, style: .toolbar)
-    private let newButton = ClassicButton("New mail", icon: .draft, style: .toolbar)
-    private let replyButton = ClassicButton("Reply", icon: .mail, style: .toolbar)
-    private let replyAllButton = ClassicButton("Reply all", icon: .mail, style: .toolbar)
-    private let forwardButton = ClassicButton("Forward", icon: .sent, style: .toolbar)
-    private let trashButton = ClassicButton("Trash", icon: .trash, style: .toolbar)
-    private let archiveButton = ClassicButton("Archive", icon: .folder, style: .toolbar)
-    private let moveButton = ClassicButton("Move…", icon: .folder, style: .toolbar)
+    private let newButton = ClassicButton("New mail", icon: .draft)
+    private let replyButton = ClassicButton("Reply", icon: .mail)
+    private let replyAllButton = ClassicButton("Reply all", icon: .mail)
+    private let forwardButton = ClassicButton("Forward", icon: .sent)
+    private let trashButton = ClassicButton("Trash", icon: .trash)
+    private let archiveButton = ClassicButton("Archive", icon: .folder)
+    private let moveButton = ClassicButton("Move…", icon: .folder)
     private let readButton = ClassicButton("Mark read")
     private let flagButton = ClassicButton("Flag / star")
     private let pinButton = ClassicButton("Pin")
@@ -50,6 +50,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private enum LayoutSave { case save, transient }
     private let splitButton = ClassicButton("Side by side", style: .toggle)
     private var layoutItems: [ReadingLayout: NSMenuItem] = [:]
+    private var pendingAppearance = ClassicTheme.appearance
     private var current: Mail?
     private enum ListPhase { case ready, loading }
     private var listPhase: ListPhase = .ready
@@ -60,6 +61,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var networkAvailable = true
     private var networkReady = false
     private var readingTask: Task<Void, Never>?
+    private enum BodyPhase { case ready, loading }
+    private var bodyPhase: BodyPhase = .ready
     private var rowViewsMade = 0
     private static let rowReuseID = NSUserInterfaceItemIdentifier("mail-row")
     private static let pageSize = 250
@@ -128,6 +131,19 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             self.media.open(asset, mail: mail, mode: self.mailbox)
         }
         layout.reader.onMediaReset = { [weak self] in self?.media.cancel() }
+        layout.reader.onCancelLoad = { [weak self] in
+            guard let self else { return }
+            media.cancel()
+            if bodyPhase == .loading {
+                bodyRevision += 1; readingTask?.cancel(); bodyPhase = .ready
+                layout.reader.showUnavailable("Loading cancelled. Cached mail remains available.")
+                updateMailButtons()
+            } else { layout.reader.mediaStatus("Loading cancelled.") }
+        }
+        layout.reader.onRetryLoad = { [weak self] in
+            guard let self, let selected = selectedMail else { return }
+            readMessage(selected)
+        }
         layout.reader.onImageState = { [weak self] permission in
             guard let self else { return }
             self.layout.header.images = permission
@@ -135,6 +151,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
         layout.search.delegate = self
         coordinator.onChange = { [weak self] reply in self?.syncChanged(reply) }
+        coordinator.onStatus = { [weak self] status in
+            guard let self else { return }
+            layout.syncProgress.state = status == .checking ? .indeterminate : .idle
+            layout.syncProgress.isHidden = status != .checking
+            layout.syncProgress.toolTip = status == .checking ? "Checking mail and calendars. The remaining total is unknown." : "Sync waiting, paused or offline. Cached content remains available."
+            syncButton.isEnabled = status != .checking
+            syncButton.title = status == .checking ? "Syncing…" : "Sync"
+        }
         coordinator.onConnection = { [weak self] connectivity in
             guard let self, self.mailbox == .live else { return }
             let regained = !self.networkAvailable && connectivity == .online
@@ -226,19 +250,25 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         syncButton.onPress = { [weak self] in self?.syncMail() }
         accountsButton.onPress = { [weak self] in self?.connectAccount() }
         bell.onPress = { [weak self] in self?.noticeService().show() }
-        for (index, button) in [mailButton, calendarButton, newButton, replyButton, replyAllButton, forwardButton, archiveButton, trashButton, moveButton, syncButton, accountsButton, bell].enumerated() {
-            button.frame = NSRect(x: 6 + index * 77, y: 3, width: 75, height: 55); layout.toolbar.addSubview(button)
+        for button in [mailButton, calendarButton, syncButton, accountsButton, bell] {
+            layout.toolbar.addItem(button, width: 75, height: 55)
         }
+        layout.toolbar.addItem(draftsButton, width: 145)
+        layout.toolbar.addItem(splitButton, width: 110)
+        layout.filter.addSubview(newButton)
+        newButton.frame = NSRect(x: 130, y: 4, width: 95, height: 32)
         textButton.onPress = { [weak self] in self?.setReader(.text) }; htmlButton.onPress = { [weak self] in self?.setReader(.html) }
         splitButton.toolTip = "Switch the reading pane between below and right"
         splitButton.onPress = { [weak self] in guard let self else { return }; setReadingLayout(readingLayout == .below ? .right : .below) }
         readButton.onPress = { [weak self] in self?.toggleRead() }; flagButton.onPress = { [weak self] in self?.toggleFlag() }; pinButton.onPress = { [weak self] in self?.togglePin() }
         draftsButton.onPress = { [weak self] in self?.showMailWorkspace() }
-        var x: CGFloat = 8
-        for (button, width) in [(textButton, 106.0), (htmlButton, 86.0), (splitButton, 110.0), (readButton, 110.0), (flagButton, 100.0), (pinButton, 70.0), (draftsButton, 145.0)] {
-            button.frame = NSRect(x: x, y: 63, width: width, height: 26); x += width + 7; layout.toolbar.addSubview(button)
+        for (button, width) in [(replyButton, 78.0), (replyAllButton, 90.0), (forwardButton, 92.0), (archiveButton, 90.0), (trashButton, 80.0)] {
+            layout.messageActions.addItem(button, width: width)
         }
-        cancelLogin.frame = NSRect(x: 855, y: 63, width: 175, height: 26); cancelLogin.isHidden = true
+        for (button, width) in [(moveButton, 90.0), (readButton, 110.0), (flagButton, 100.0), (pinButton, 70.0), (textButton, 106.0), (htmlButton, 86.0)] {
+            layout.messageActions.addItem(button, width: width, priority: .secondary)
+        }
+        cancelLogin.frame = NSRect(x: 810, y: 6, width: 175, height: 26); cancelLogin.isHidden = true
         cancelLogin.onPress = { [weak self] in self?.connectTask?.cancel(); self?.cancelLogin.isEnabled = false; self?.layout.statusText.stringValue = "Cancelling sign-in…" }
         layout.toolbar.addSubview(cancelLogin)
         textButton.state = .on
@@ -360,13 +390,16 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let active = section == .mail && mailbox == .live && phase == .ready && listPhase == .ready && mailTask == nil
         let selected = selectedMail
         let provider = accounts.contains { $0.id == selected?.accountId && $0.provider != .local }
-        newButton.isEnabled = active && accounts.contains { $0.provider != .local }
+        newButton.isEnabled = section == .mail && mailbox == .live && accounts.contains { $0.provider != .local }
+        newButton.isHidden = section != .mail
         for button in [replyButton, replyAllButton, forwardButton, trashButton, archiveButton, moveButton, readButton, flagButton, pinButton] { button.isEnabled = active && selected != nil && provider }
         pinButton.isEnabled = active && selected != nil
         readButton.title = selected?.unread == true ? "Mark read" : "Mark unread"
         flagButton.title = selected?.starred == true ? "Unflag" : "Flag / star"
         pinButton.title = selected?.pinned == true ? "Unpin" : "Pin"
         draftsButton.isEnabled = mailbox == .live
+        textButton.isEnabled = section == .mail && selected != nil && listPhase == .ready && bodyPhase == .ready
+        htmlButton.isEnabled = textButton.isEnabled
         mailButton.state = section == .mail ? .on : .off; calendarButton.state = section == .calendar ? .on : .off
         for button in [mailButton, calendarButton, readButton, flagButton, pinButton] { button.needsDisplay = true }
     }
@@ -572,7 +605,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateMailButtons()
         guard section == .mail else { return }
-        guard messages.indices.contains(table.selectedRow) else { return }
+        guard messages.indices.contains(table.selectedRow) else {
+            current = nil; layout.header.display(nil); layout.reader.showNotice("Select a message to read it.")
+            return
+        }
         readMessage(messages[table.selectedRow])
     }
 
@@ -581,7 +617,12 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         bodyRevision += 1
         let revision = bodyRevision
         let mode = mailbox
+        bodyPhase = .loading; updateMailButtons()
+        current = summary
+        layout.header.display(summary)
+        layout.reader.showNotice("Loading message…")
         readingTask = Task {
+            defer { if revision == bodyRevision { bodyPhase = .ready; updateMailButtons() } }
             do {
                 var mail: Mail = try await core.request(["command": CoreCommand.message.rawValue, "id": summary.id, "mode": BodyFetch.cached.rawValue], mode: mode)
                 guard revision == bodyRevision else { return }
@@ -592,9 +633,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                     }
                     current = summary
                     layout.header.display(summary)
-                    guard networkReady else { layout.reader.showNotice("This body has not been downloaded yet."); return }
+                    guard networkReady else { layout.reader.showUnavailable("This body has not been downloaded yet."); return }
                     guard networkAvailable else { throw MailError(message: "Offline. Open this message while online to cache its body.") }
-                    layout.reader.showNotice("Downloading message body…")
+                    layout.reader.showLoading("Downloading message body…")
                     mail = try await core.request(["command": CoreCommand.message.rawValue, "id": summary.id, "mode": BodyFetch.fetch.rawValue], mode: mode, queue: .network)
                 }
                 guard revision == bodyRevision else { return }
@@ -605,7 +646,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 guard revision == bodyRevision else { return }
                 current = summary
                 layout.header.display(summary)
-                layout.reader.showNotice("This body is not cached.\n\n\(error.localizedDescription)")
+                layout.reader.showUnavailable("This body is not cached.\n\n\(error.localizedDescription)")
             }
         }
     }
@@ -633,6 +674,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         htmlButton.state = mode == .html ? .on : .off
         layout.header.mode = mode
         layout.statusReader.stringValue = mode == .text ? "PLAIN TEXT" : "HTML · REMOTE OFF"
+        guard bodyPhase == .ready else { return }
         if let current { layout.reader.display(current, mode: mode) }
     }
 
@@ -868,6 +910,12 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             item.target = self
             layoutItems[value] = item
         }
+        let appearance = NSMenu(title: "Appearance")
+        addItem(appearance, "Classic", #selector(classicAppearance), "")
+        addItem(appearance, "Pink", #selector(pinkAppearance), "")
+        appearance.addItem(.separator())
+        appearance.addItem(withTitle: "Applies after restarting Square Mail", action: nil, keyEquivalent: "")
+        view.addItem(withTitle: "Appearance", action: nil, keyEquivalent: "").submenu = appearance
         let tools = NSMenu(title: "Tools")
         addItem(tools, "Sync mail and calendars", #selector(syncMail), "r")
         addItem(tools, "Notifications…", #selector(showNotices), "")
@@ -919,6 +967,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if item.action == #selector(togglePin) { item.title = selectedMail?.pinned == true ? "Unpin on this Mac" : "Pin on this Mac" }
             return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && mailTask == nil
 
+        case #selector(classicAppearance): item.state = pendingAppearance == .classic ? .on : .off
+        case #selector(pinkAppearance): item.state = pendingAppearance == .pink ? .on : .off
         case #selector(showText): item.state = section == .mail && readerMode == .text ? .on : .off
         case #selector(showHTML): item.state = section == .mail && readerMode == .html ? .on : .off
         case #selector(showCalendar): item.state = section == .calendar ? .on : .off
@@ -936,6 +986,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func showCalendarChanges() { setSection(.calendar); showPending() }
 
     @objc private func focusSearch() { layout.window?.makeFirstResponder(layout.search) }
+    @objc private func classicAppearance() { chooseAppearance(.classic) }
+    @objc private func pinkAppearance() { chooseAppearance(.pink) }
+    private func chooseAppearance(_ appearance: ClassicTheme.Appearance) {
+        pendingAppearance = appearance
+        if !WindowPresentation.isBackground { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
+        layout.statusText.stringValue = appearance == ClassicTheme.appearance ? "Appearance is already active." : "Appearance saved. Restart Square Mail to apply."
+    }
     @objc private func showText() { setSection(.mail); setReader(.text) }
     @objc private func showHTML() { setSection(.mail); setReader(.html) }
     @objc private func showCalendar() { setSection(.calendar) }
@@ -954,7 +1011,6 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         textButton.isEnabled = next == .mail
         htmlButton.isEnabled = next == .mail
         splitButton.isEnabled = next == .mail
-        syncButton.isEnabled = true
         if next == .calendar {
             calendarIdleTask?.cancel()
             calendarIdleTask = nil
@@ -1163,6 +1219,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func checkMailActions() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
         await finishSelection(); try await layout.reader.verifySpacing()
+        try verifyActionPlacement()
+        guard let summary = selectedMail else { throw MailError(message: "Reader action fixture lost selection") }
+        readMessage(summary); layout.reader.onCancelLoad?()
+        await readingTask?.value
+        guard bodyPhase == .ready, current?.id == summary.id else { throw MailError(message: "Cancelled body load changed selection or stayed busy") }
+        layout.reader.onRetryLoad?(); await finishSelection()
+        guard current?.text != nil else { throw MailError(message: "Reader Retry did not restore the cached body") }
         readButton.performClick(nil); await mailTask?.value
         guard selectedMail?.unread == false, readButton.title == "Mark unread" else { throw MailError(message: "Read action did not update the native list") }
         flagButton.performClick(nil); await mailTask?.value
@@ -1188,7 +1251,16 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let offset = Calendar.current.component(.weekday, from: Date()) == 1 ? -1 : 1
         calendarView?.selectDate(Calendar.current.date(byAdding: .day, value: offset, to: Date())!)
         try calendarView?.verifyClock()
+        coordinator.onStatus?(.checking)
+        guard !syncButton.isEnabled, layout.syncProgress.state == .indeterminate else { throw MailError(message: "Sync activity did not disable duplicate work") }
         mailButton.performClick(nil)
+        guard !syncButton.isEnabled else { throw MailError(message: "Navigation re-enabled an active sync button") }
+        coordinator.onStatus?(.offline)
+        guard syncButton.isEnabled, layout.syncProgress.state == .idle else { throw MailError(message: "Offline sync retained its busy state") }
+        let appearance = pendingAppearance
+        chooseAppearance(appearance == .classic ? .pink : .classic)
+        guard pendingAppearance != appearance, ClassicTheme.appearance == appearance else { throw MailError(message: "Appearance choice did not remain pending until restart") }
+        chooseAppearance(appearance)
         await loadList(); await finishSelection()
         layout.folderLabel.stringValue = folder.title; sidebar.select(folder)
         try WindowPresentation.snapshot(layout, name: "mail-actions")
@@ -1553,6 +1625,26 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 "html_renderer_created": layout.reader.hasHTMLRenderer]
     }
 
+    private func verifyActionPlacement() throws {
+        layout.layoutSubtreeIfNeeded()
+        let actions = [replyButton, replyAllButton, forwardButton, archiveButton, trashButton, moveButton, readButton, flagButton, pinButton, textButton, htmlButton]
+        guard actions.allSatisfy({ $0.superview === layout.messageActions }), layout.messageActions.superview === layout.readerPane,
+              [mailButton, calendarButton, syncButton, draftsButton, splitButton].allSatisfy({ $0.superview === layout.toolbar }) else { throw MailError(message: "Message and global actions have mixed ownership") }
+        for bar in [layout.messageActions, layout.toolbar] {
+            let visible = bar.subviews.filter { !$0.isHidden }
+            guard visible.allSatisfy({ bar.bounds.contains($0.frame) }) else { throw MailError(message: "Toolbar action escaped its pane") }
+            for (index, view) in visible.enumerated() {
+                guard visible.dropFirst(index + 1).allSatisfy({ !view.frame.intersects($0.frame) }) else { throw MailError(message: "Toolbar buttons overlap") }
+            }
+        }
+        guard layout.header.frame.minY >= layout.messageActions.frame.maxY,
+              layout.reader.frame.minY >= layout.header.frame.maxY else { throw MailError(message: "Message controls overlap headers or content") }
+        let overflow = layout.messageActions.overflowMenu()
+        if readButton.isHidden {
+            guard let item = overflow.items.first(where: { $0.title == readButton.title }), item.isEnabled == readButton.isEnabled else { throw MailError(message: "Overflow lost the current message state") }
+        }
+    }
+
     private func checkReadingLayouts() async throws {
         let original = readingLayout
         let divider = layout.split.isVertical ? layout.listPane.frame.width : layout.listPane.frame.height
@@ -1584,6 +1676,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 for position: CGFloat in value == .below ? [180, 480, 250] : [300, 480, 350] {
                     layout.split.setPosition(position, ofDividerAt: 0)
                     layout.layoutSubtreeIfNeeded()
+                    try verifyActionPlacement()
                     guard abs(layout.listScroll.frame.maxY - (layout.listPane.bounds.height - 2)) < 1,
                           abs(layout.reader.frame.maxY - (layout.readerPane.bounds.height - 2)) < 1,
                           abs(layout.listScroll.frame.width - (layout.listPane.bounds.width - 4)) < 1,
@@ -1597,6 +1690,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func selfTest() async throws -> [String: Any] {
         guard messages.count == 40 else { throw MailError(message: "Demo inbox did not load") }
+        try await layout.reader.verifyLoading()
         try await layout.reader.verifyLinks()
         await layout.reader.finishText()
         try await checkReadingLayouts()

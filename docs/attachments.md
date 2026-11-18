@@ -2,6 +2,8 @@
 
 Remote content stays blocked by default. In HTML mode, Load images fetches supported image references for this message. Hide images clears access. Moving to another message or restarting resets approval, even when files remain cached. Scripts, forms, frames, fonts and direct WebKit web requests remain blocked. Explicit link clicks still open the system browser.
 
+Discovery and single-file fetches use indeterminate progress. Once image totals are known, progress counts completed attempts against that fixed list. Failed items count as completed attempts and are reported separately. Cancel stops later work and rejects stale results; an in-flight blocking request can continue until its deadline. Busy Load images/Attachments buttons disable and recover after completion/error/cancellation.
+
 The app discovers fresh HTML through the provider when an older sanitized cache has no image references. Gmail, Outlook and imported MIME attachments have separate account/message/asset IDs. CID references can use known inline attachments. HTML images are replaced with opaque, per-message local resource URLs. WebKit receives normalized PNGs only. Fixed table widths/heights and cell spacing are overridden to reduce newsletter gaps when content is blocked; original newsletter styling is not preserved.
 
 Newly sanitized blocked HTML keeps a small Image blocked marker, with no image URL or sender-specified geometry. Older caches that already removed image tags cannot reconstruct their positions. Plain-text gaps can instead come from invisible preheader padding; Compact spacing handles that separately.

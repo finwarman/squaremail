@@ -42,6 +42,11 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     private let imagesButton = ClassicButton("Load images")
     private let attachmentsButton = ClassicButton("Attachments")
     private let mediaLabel = NSTextField(labelWithString: "Remote images blocked")
+    private let progress = ClassicProgress()
+    private let cancelLoad = ClassicButton("Cancel")
+    private let retryLoad = ClassicButton("Retry")
+    var onCancelLoad: (() -> Void)?
+    var onRetryLoad: (() -> Void)?
     private let attachments = AttachmentPanel()
     private let imageHandler = ImageSchemeHandler()
     private var imageHTML: String?
@@ -101,7 +106,10 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         scroll.documentView = text
         addSubview(scroll)
         addSubview(mediaBar)
-        for view in [imagesButton, attachmentsButton, mediaLabel, spacingButton, linksButton] { mediaBar.addSubview(view) }
+        for view in [imagesButton, attachmentsButton, mediaLabel, spacingButton, linksButton, progress, cancelLoad, retryLoad] { mediaBar.addSubview(view) }
+        cancelLoad.isHidden = true; retryLoad.isHidden = true
+        cancelLoad.onPress = { [weak self] in self?.onCancelLoad?() }
+        retryLoad.onPress = { [weak self] in self?.onRetryLoad?() }
         mediaLabel.font = ClassicTheme.font(10)
         mediaLabel.textColor = ClassicTheme.muted
         imagesButton.toolTip = "Load up to 12 images for this message. Remote servers may learn that you opened it."
@@ -147,15 +155,21 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     override func layout() {
         super.layout()
         let narrow = bounds.width < 650
-        let barHeight: CGFloat = message == nil ? 0 : (narrow ? 84 : 34)
+        let loading = progress.state != .idle
+        let barHeight: CGFloat = message == nil && !loading && retryLoad.isHidden ? 0 : (narrow ? 84 : 34) + (loading ? 16 : 0)
         let attachmentHeight: CGFloat = attachments.isHidden ? 0 : min(150, max(0, bounds.height - barHeight) / 2)
-        mediaBar.isHidden = message == nil
+        mediaBar.isHidden = barHeight == 0
         mediaBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         imagesButton.frame = NSRect(x: 7, y: 5, width: 102, height: 24)
         attachmentsButton.frame = NSRect(x: 116, y: 5, width: 100, height: 24)
         spacingButton.frame = NSRect(x: narrow ? 7 : bounds.width - 270, y: narrow ? 33 : 5, width: 132, height: 24)
         linksButton.frame = NSRect(x: narrow ? 146 : bounds.width - 132, y: narrow ? 33 : 5, width: 124, height: 24)
-        mediaLabel.frame = NSRect(x: narrow ? 7 : 226, y: narrow ? 62 : 8, width: max(0, bounds.width - (narrow ? 14 : 505)), height: 18)
+        let labelStart: CGFloat = loading || !retryLoad.isHidden ? 304 : 226
+        mediaLabel.frame = NSRect(x: narrow ? 7 : labelStart, y: narrow ? 62 : 8, width: max(0, bounds.width - (narrow ? 14 : labelStart + 279)), height: 18)
+        cancelLoad.frame = NSRect(x: 223, y: 5, width: 70, height: 24)
+        retryLoad.frame = cancelLoad.frame
+        progress.isHidden = !loading
+        progress.frame = NSRect(x: 7, y: narrow ? 84 : 34, width: max(0, bounds.width - 14), height: 12)
         let content = NSRect(x: 0, y: attachmentHeight, width: bounds.width, height: max(0, bounds.height - barHeight - attachmentHeight))
         scroll.frame = content
         web?.frame = content
@@ -167,13 +181,15 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         if message?.id != mail.id { resetMedia() }
         if mode == .text { onMediaReset?() }
         message = mail
+        retryLoad.isHidden = true
         self.mode = mode
         onImageState?(imagePermission)
         linksButton.isEnabled = mode == .text
         linksButton.state = linkStyle == .readable ? .on : .off
         spacingButton.isEnabled = mode == .text
         spacingButton.state = spacing == .compact ? .on : .off
-        imagesButton.isEnabled = mode == .html
+        imagesButton.isEnabled = mode == .html && progress.state == .idle
+        attachmentsButton.isEnabled = progress.state == .idle
         needsLayout = true
         if mode == .text {
             queueHTMLRelease()
@@ -220,6 +236,8 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     func showNotice(_ notice: String) {
         resetMedia()
         message = nil
+        retryLoad.isHidden = true
+        for button in [imagesButton, attachmentsButton, spacingButton, linksButton] { button.isEnabled = false }
         web?.isHidden = true
         scroll.isHidden = false
         showText(notice)
@@ -238,6 +256,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         imageHTML = nil
         _ = imageHandler.replace([:])
         imagePermission = .blocked
+        mediaProgress(.idle)
         imagesButton.title = "Load images"
         imagesButton.setAccessibilityLabel(imagesButton.title)
         onImageState?(.blocked)
@@ -247,6 +266,20 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     }
 
     func mediaStatus(_ value: String) { mediaLabel.stringValue = value; mediaLabel.toolTip = value }
+    func mediaProgress(_ state: ClassicProgress.State) {
+        progress.state = state
+        cancelLoad.isHidden = state == .idle
+        imagesButton.isEnabled = state == .idle && message != nil && mode == .html
+        attachmentsButton.isEnabled = state == .idle && message != nil
+        needsLayout = true
+    }
+    func showLoading(_ value: String) {
+        showNotice(value); mediaStatus(value); mediaProgress(.indeterminate)
+    }
+    func showUnavailable(_ value: String) {
+        showNotice(value); mediaStatus("Message unavailable. Retry when online.")
+        retryLoad.isHidden = false; needsLayout = true
+    }
 
     func showImages(_ html: String, files: [String: URL]) {
         guard mode == .html else { return }
@@ -425,6 +458,27 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
 }
 
 extension ReaderView {
+    func verifyLoading() async throws {
+        let saved = message
+        let cancel = onCancelLoad; let retry = onRetryLoad
+        defer { onCancelLoad = cancel; onRetryLoad = retry; if let saved { display(saved, mode: .text) } }
+        var cancelled = 0; var retried = 0
+        onCancelLoad = { cancelled += 1 }; onRetryLoad = { retried += 1 }
+        showLoading("Downloading sample message…")
+        guard progress.state == .indeterminate, !cancelLoad.isHidden, !imagesButton.isEnabled, !attachmentsButton.isEnabled else { throw MailError(message: "Loading controls have stale enabled states") }
+        cancelLoad.performClick(nil)
+        guard cancelled == 1 else { throw MailError(message: "Cancel loading did not dispatch") }
+        showUnavailable("Sample unavailable")
+        guard progress.state == .idle, cancelLoad.isHidden, !retryLoad.isHidden else { throw MailError(message: "Failed loading retained progress or lost Retry") }
+        retryLoad.performClick(nil)
+        guard retried == 1 else { throw MailError(message: "Retry loading did not dispatch") }
+        mediaProgress(.determinate(completed: 1, total: 3))
+        guard progress.accessibilityValue() as? String == "1 of 3" else { throw MailError(message: "Known image progress changed its total") }
+        showNotice("Done")
+        guard progress.state == .idle, retryLoad.isHidden, cancelLoad.isHidden else { throw MailError(message: "Progress survived selection reset") }
+        await finishText()
+    }
+
     func verifyLinks() async throws {
         let saved = message
         let callback = onLink

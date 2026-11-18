@@ -40,6 +40,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func launch() throws {
         let arguments = ProcessInfo.processInfo.arguments
+        let appearance = arguments.contains("--theme-pink") ? ClassicTheme.Appearance.pink : (WindowPresentation.isBackground ? .classic : (ClassicTheme.Appearance(rawValue: UserDefaults.standard.string(forKey: "appearance") ?? "") ?? .classic))
+        ClassicTheme.configure(appearance)
         var stages: [String: Double] = [:]
         func stamp(_ stage: LaunchStage) {
             stages[stage.rawValue] = (ProcessInfo.processInfo.systemUptime - launchTime) * 1000
