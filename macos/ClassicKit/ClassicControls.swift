@@ -119,7 +119,7 @@ public final class ClassicRow: NSTableRowView {
     }
 
     private func updateCells() {
-        for case let cell as ClassicTableCell in subviews {
+        for case let cell as NSTableCellView in subviews {
             cell.backgroundStyle = interiorBackgroundStyle
         }
     }

@@ -6,6 +6,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private let core: MailCore
     private let layout: MailLayout
     private let table = NSTableView()
+    private var tableHeader: NSTableHeaderView?
     private let sidebar = Sidebar()
     private var messages: [Mail] = []
     private var accounts: [Account] = []
@@ -21,6 +22,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var account: String?
     private var mailbox: MailboxMode = .demo
     private var readerMode: ReaderMode = .text
+    private var readingLayout: ReadingLayout = .below
+    private static let layoutKey = "readingLayout"
+    private enum LayoutSave { case save, transient }
+    private let splitButton = ClassicButton("Side by side", style: .toggle)
+    private var layoutItems: [ReadingLayout: NSMenuItem] = [:]
     private var current: Mail?
     private var listRevision = 0
     private var bodyRevision = 0
@@ -58,10 +64,17 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.layout = layout
         self.coordinator = SyncCoordinator(core: core)
         super.init()
+        let arguments = ProcessInfo.processInfo.arguments
+        if Self.offlineArgs.isDisjoint(with: arguments), let value = UserDefaults.standard.string(forKey: Self.layoutKey) {
+            readingLayout = ReadingLayout(rawValue: value) ?? .below
+        }
+        if arguments.contains("--side-by-side") { readingLayout = .right }
+        layout.setReadingLayout(readingLayout)
         buildSidebar()
         buildToolbar()
         buildTable()
         buildMenus()
+        updateLayoutButtons()
         layout.search.delegate = self
         coordinator.onChange = { [weak self] reply in self?.syncChanged(reply) }
         coordinator.onConnection = { [weak self] connectivity in
@@ -154,7 +167,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         calendarButton.frame = NSRect(x: 635, y: 3, width: 80, height: 55)
         calendarButton.onPress = { [weak self] in self?.toggleCalendar() }
         layout.toolbar.addSubview(calendarButton)
-        cancelLogin.frame = NSRect(x: 740, y: 17, width: 115, height: 28)
+        splitButton.frame = NSRect(x: 735, y: 17, width: 110, height: 28)
+        splitButton.toolTip = "Switch between a reading pane below the list or on its right"
+        splitButton.onPress = { [weak self] in
+            guard let self else { return }
+            self.setReadingLayout(self.readingLayout == .below ? .right : .below)
+        }
+        layout.toolbar.addSubview(splitButton)
+        cancelLogin.frame = NSRect(x: 860, y: 17, width: 115, height: 28)
         cancelLogin.isHidden = true
         cancelLogin.onPress = { [weak self] in
             self?.connectTask?.cancel()
@@ -173,22 +193,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         layout.listPane.addSubview(newer)
     }
 
+    private enum MailColumn: String {
+        case status, sender, subject, date, account, summary
+    }
+
     private func buildTable() {
-        let columns: [(String, String, CGFloat)] = [
-            ("status", "", 30), ("sender", "From", 195), ("subject", "Subject", 480),
-            ("date", "Received", 145), ("account", "Account", 160)
-        ]
-        for (id, title, width) in columns {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
-            column.title = title
-            column.width = width
-            column.minWidth = id == "status" ? 30 : 80
-            column.headerCell = ClassicHeaderCell(textCell: title)
-            table.addTableColumn(column)
-        }
-        table.rowHeight = 28
+        tableHeader = table.headerView
         table.intercellSpacing = NSSize(width: 1, height: 0)
-        table.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
         table.gridColor = ClassicTheme.color(0xE5E3DD)
         table.usesAlternatingRowBackgroundColors = false
         table.backgroundColor = .white
@@ -201,6 +212,49 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.delegate = self
         table.setAccessibilityLabel("Messages")
         layout.listScroll.documentView = table
+        configureColumns()
+    }
+
+    private func configureColumns() {
+        for column in table.tableColumns { table.removeTableColumn(column) }
+        let columns: [(MailColumn, String, CGFloat)] = readingLayout == .right
+            ? [(.summary, "", max(300, layout.listScroll.contentSize.width))]
+            : [(.status, "", 30), (.sender, "From", 195), (.subject, "Subject", 480),
+               (.date, "Received", 145), (.account, "Account", 160)]
+        for (id, title, width) in columns {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id.rawValue))
+            column.title = title
+            column.width = width
+            column.minWidth = id == .status ? 30 : (id == .summary ? 100 : 80)
+            column.headerCell = ClassicHeaderCell(textCell: title)
+            table.addTableColumn(column)
+        }
+        table.rowHeight = readingLayout == .right ? 70 : 28
+        table.headerView = readingLayout == .right ? nil : tableHeader
+        table.gridStyleMask = readingLayout == .right ? [.solidHorizontalGridLineMask] : [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
+        layout.listScroll.hasHorizontalScroller = readingLayout == .below
+        table.sizeLastColumnToFit()
+    }
+
+    private func setReadingLayout(_ value: ReadingLayout, save: LayoutSave = .save) {
+        guard value != readingLayout else { return }
+        let selected = table.selectedRow
+        readingLayout = value
+        if save == .save { UserDefaults.standard.set(value.rawValue, forKey: Self.layoutKey) }
+        layout.setReadingLayout(value)
+        configureColumns()
+        table.reloadData()
+        if messages.indices.contains(selected) {
+            table.selectRowIndexes(IndexSet(integer: selected), byExtendingSelection: false)
+            table.scrollRowToVisible(selected)
+        }
+        updateLayoutButtons()
+    }
+
+    private func updateLayoutButtons() {
+        splitButton.state = readingLayout == .right ? .on : .off
+        splitButton.needsDisplay = true
+        for (value, item) in layoutItems { item.state = value == readingLayout ? .on : .off }
     }
 
     private func loadAccounts() async throws {
@@ -304,16 +358,22 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard messages.indices.contains(row), let column = tableColumn else { return nil }
         let id = column.identifier
+        let mail = messages[row]
+        if id.rawValue == MailColumn.summary.rawValue {
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? MessageSummaryCell) ?? MessageSummaryCell()
+            cell.identifier = id
+            cell.configure(mail, date: dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval(mail.timestamp))))
+            return cell
+        }
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? ClassicTableCell) ?? ClassicTableCell()
         cell.identifier = id
-        let mail = messages[row]
         let weight: ClassicTheme.Weight = mail.unread ? .bold : .regular
-        switch id.rawValue {
-        case "status": cell.configure("", icon: mail.starred ? .star : (mail.unread ? .mail : nil))
-        case "sender": cell.configure(mail.sender.isEmpty ? mail.senderAddress : mail.sender, weight: weight)
-        case "subject": cell.configure(mail.subject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
-        case "date": cell.configure(dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval(mail.timestamp))))
-        case "account": cell.configure(accounts.first(where: { $0.id == mail.accountId })?.email ?? "")
+        switch MailColumn(rawValue: id.rawValue) {
+        case .status: cell.configure("", icon: mail.starred ? .star : (mail.unread ? .mail : nil))
+        case .sender: cell.configure(mail.sender.isEmpty ? mail.senderAddress : mail.sender, weight: weight)
+        case .subject: cell.configure(mail.subject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
+        case .date: cell.configure(dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval(mail.timestamp))))
+        case .account: cell.configure(accounts.first(where: { $0.id == mail.accountId })?.email ?? "")
         default: break
         }
         return cell
@@ -581,6 +641,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         addItem(view, "HTML, remote content blocked", #selector(showHTML), "2")
         addItem(view, "Calendar", #selector(showCalendar), "3")
         addItem(view, "Mail", #selector(showMail), "4")
+        view.addItem(.separator())
+        for (value, title, action) in [(ReadingLayout.below, "Reading pane below", #selector(paneBelow)),
+                                        (.right, "Reading pane on right", #selector(paneRight))] {
+            let item = view.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            layoutItems[value] = item
+        }
         let tools = NSMenu(title: "Tools")
         addItem(tools, "Sync current folder", #selector(syncMail), "r")
         let help = NSMenu(title: "Help")
@@ -614,6 +681,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func showCalendar() { setSection(.calendar) }
     @objc private func showMail() { setSection(.mail) }
     @objc private func toggleCalendar() { setSection(section == .mail ? .calendar : .mail) }
+    @objc private func paneBelow() { setReadingLayout(.below) }
+    @objc private func paneRight() { setReadingLayout(.right) }
 
     private func setSection(_ next: Section) {
         guard next != section else { return }
@@ -622,6 +691,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         textButton.isEnabled = next == .mail
         importButton.isEnabled = next == .mail
         htmlButton.isEnabled = next == .mail
+        splitButton.isEnabled = next == .mail
         syncButton.isEnabled = true
         if next == .calendar {
             listRevision += 1
@@ -927,8 +997,51 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 "html_renderer_created": layout.reader.hasHTMLRenderer]
     }
 
+    private func checkReadingLayouts() async throws {
+        let original = readingLayout
+        let divider = layout.split.isVertical ? layout.listPane.frame.width : layout.listPane.frame.height
+        let selection = current?.id
+        let size = layout.window!.contentView!.bounds.size
+        defer {
+            layout.window?.setContentSize(size)
+            layout.layoutSubtreeIfNeeded()
+            setReadingLayout(original, save: .transient)
+            layout.split.setPosition(divider, ofDividerAt: 0)
+        }
+        for value in [ReadingLayout.right, .below, .right, .below] {
+            setReadingLayout(value, save: .transient)
+            await finishSelection()
+            guard current?.id == selection, table.numberOfRows == messages.count, table.selectedRow >= 0 else {
+                throw MailError(message: "Reading layout changed the selected message or page")
+            }
+            if value == .right {
+                guard let cell = table.view(atColumn: 0, row: table.selectedRow, makeIfNecessary: true) as? MessageSummaryCell,
+                      let mail = current else { throw MailError(message: "Compact message row is missing") }
+                let labels = cell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
+                guard labels.contains(mail.subject), labels.contains(mail.preview) else {
+                    throw MailError(message: "Compact row lost its subject or preview")
+                }
+            }
+            for size in [NSSize(width: 1060, height: 730), NSSize(width: 1400, height: 920)] {
+                layout.window?.setContentSize(size)
+                layout.layoutSubtreeIfNeeded()
+                for position: CGFloat in value == .below ? [180, 480, 250] : [300, 480, 350] {
+                    layout.split.setPosition(position, ofDividerAt: 0)
+                    layout.layoutSubtreeIfNeeded()
+                    guard abs(layout.listScroll.frame.maxY - (layout.listPane.bounds.height - 2)) < 1,
+                          abs(layout.reader.frame.maxY - (layout.readerPane.bounds.height - 2)) < 1,
+                          abs(layout.listScroll.frame.width - (layout.listPane.bounds.width - 4)) < 1,
+                          abs(layout.reader.frame.width - (layout.readerPane.bounds.width - 4)) < 1 else {
+                        throw MailError(message: "Divider left stale mail or reader viewport bounds")
+                    }
+                }
+            }
+        }
+    }
+
     func selfTest() async throws -> [String: Any] {
         guard messages.count == 40 else { throw MailError(message: "Demo inbox did not load") }
+        try await checkReadingLayouts()
         let initial = messages[0]
         let body: Mail = try await core.request(["command": CoreCommand.message.rawValue, "id": initial.id, "mode": BodyFetch.cached.rawValue], mode: .demo)
         guard body.text?.contains("quiet inbox") == true else { throw MailError(message: "Body round trip failed") }
@@ -965,6 +1078,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         return ["native_search": true, "body_roundtrip": true, "passive_html": true,
                 "latest_selection": true, "html_release_and_reopen": true,
                 "bounded_row_views": true,
+                "reading_layouts": true,
                 "main_thread_io": false, "mailbox_rows": messages.count]
     }
 }

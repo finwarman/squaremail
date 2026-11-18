@@ -19,6 +19,7 @@ enum Folder: String, CaseIterable {
 }
 
 enum ReaderMode { case text, html }
+enum ReadingLayout: String { case below, right }
 enum MailboxMode { case demo, live }
 enum WorkQueue { case local, network, sync, login }
 

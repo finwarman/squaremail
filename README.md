@@ -23,6 +23,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Import `.eml`, including MIME text/HTML alternatives and encoded headers.
 - Persistent SQLite WAL cache with FTS5 prefix search.
 - Native reusable rows with bounded pages and a draggable reading-pane divider.
+- Side by side toolbar toggle and View menu choices for a reading pane below or on the right. The choice survives restart; the right-pane list shows sender, date, subject and preview.
 - Older/Newer paging retains at most 250 message headers.
 - Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
 - Read-only Gmail and Microsoft Graph adapters, browser OAuth with PKCE and state validation, Keychain tokens and refresh.

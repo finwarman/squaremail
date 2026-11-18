@@ -28,6 +28,7 @@
 | INV-SYNC-disconnect | Disconnected accounts cannot commit provider pages; retained caches remain readable. | SQLite disconnect/snapshot test |
 | INV-CALENDAR-floating-dates | All-day dates survive time-zone and DST conversion. | Google/Graph date fixtures |
 | INV-CALENDAR-window-cache | Calendar source caches retain at most six month windows. | window eviction test |
+| INV-MAIL-reading-layout | Divider and window resizing fill both viewports; changing orientation preserves the selected message and bounded page. | native reader resize/layout probe |
 | INV-MAIL-copy-text | The native plain reader preserves displayed/copy text and scrolls long bodies. | private-pasteboard native account probe |
 
 The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Provider access is read-only.

@@ -1,7 +1,7 @@
 import AppKit
 import ClassicKit
 
-final class MailLayout: NSView {
+final class MailLayout: NSView, NSSplitViewDelegate {
     let titleBar = ClassicTitleBar()
     let menus = NSView()
     let toolbar = ClassicPanel()
@@ -38,6 +38,7 @@ final class MailLayout: NSView {
         filter.edge = .flat
         split.isVertical = false
         split.dividerStyle = .thick
+        split.delegate = self
         split.addArrangedSubview(listPane)
         split.addArrangedSubview(readerPane)
         listPane.edge = .sunken
@@ -98,15 +99,40 @@ final class MailLayout: NSView {
         searchBorder.frame = NSRect(x: max(245, filter.bounds.width - 365), y: 5, width: 355, height: 28)
         search.frame = searchBorder.bounds.insetBy(dx: 8, dy: 5)
         split.frame = NSRect(x: left, y: 170, width: width - left - 4, height: height - 198)
-        listCaption.frame = NSRect(x: 10, y: 7, width: listPane.bounds.width - 20, height: 17)
-        listScroll.frame = NSRect(x: 2, y: 29, width: listPane.bounds.width - 4, height: max(0, listPane.bounds.height - 31))
-        header.frame = NSRect(x: 2, y: 2, width: readerPane.bounds.width - 4, height: 108)
-        reader.frame = NSRect(x: 2, y: 110, width: readerPane.bounds.width - 4, height: max(0, readerPane.bounds.height - 112))
+        layoutPanes()
         status.frame = NSRect(x: 4, y: height - 25, width: width - 8, height: 21)
         statusText.frame = NSRect(x: 8, y: 3, width: width - 360, height: 16)
         statusMode.frame = NSRect(x: width - 342, y: 3, width: 170, height: 16)
         statusReader.frame = NSRect(x: width - 164, y: 3, width: 148, height: 16)
         needsDisplay = true
+    }
+
+    func setReadingLayout(_ value: ReadingLayout) {
+        split.isVertical = value == .right
+        split.adjustSubviews()
+        let length = split.isVertical ? split.bounds.width : split.bounds.height
+        split.setPosition(floor(length * 0.4), ofDividerAt: 0)
+        layoutPanes()
+    }
+
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        // Divider dragging resizes child panes without laying out their parent.
+        layoutPanes()
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        max(proposedMinimumPosition, splitView.isVertical ? 300 : 160)
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        min(proposedMaximumPosition, splitView.isVertical ? splitView.bounds.width - 340 : splitView.bounds.height - 200)
+    }
+
+    private func layoutPanes() {
+        listCaption.frame = NSRect(x: 10, y: 7, width: max(0, listPane.bounds.width - 165), height: 17)
+        listScroll.frame = NSRect(x: 2, y: 29, width: max(0, listPane.bounds.width - 4), height: max(0, listPane.bounds.height - 31))
+        header.frame = NSRect(x: 2, y: 2, width: max(0, readerPane.bounds.width - 4), height: 108)
+        reader.frame = NSRect(x: 2, y: 110, width: max(0, readerPane.bounds.width - 4), height: max(0, readerPane.bounds.height - 112))
     }
 }
 
