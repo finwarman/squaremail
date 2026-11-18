@@ -2,7 +2,7 @@ import AppKit
 import ClassicKit
 
 @MainActor
-final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation {
+final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let core: MailCore
     private let layout: MailLayout
     private let table = NSTableView()
@@ -14,6 +14,22 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var remoteFolder: MailFolder?
     private let coordinator: SyncCoordinator
     private var notifications: NotificationService?
+    private var composer: MailComposer?
+    private var workspace: MailWorkspacePanel?
+    private var mailTask: Task<Void, Never>?
+    private let messageMenu = NSMenu(title: "Message")
+    private let mailButton = ClassicButton("Mail", icon: .mail, style: .toolbar)
+    private let newButton = ClassicButton("New mail", icon: .draft, style: .toolbar)
+    private let replyButton = ClassicButton("Reply", icon: .mail, style: .toolbar)
+    private let replyAllButton = ClassicButton("Reply all", icon: .mail, style: .toolbar)
+    private let forwardButton = ClassicButton("Forward", icon: .sent, style: .toolbar)
+    private let trashButton = ClassicButton("Trash", icon: .trash, style: .toolbar)
+    private let archiveButton = ClassicButton("Archive", icon: .folder, style: .toolbar)
+    private let moveButton = ClassicButton("Move…", icon: .folder, style: .toolbar)
+    private let readButton = ClassicButton("Mark read")
+    private let flagButton = ClassicButton("Flag / star")
+    private let pinButton = ClassicButton("Pin")
+    private let draftsButton = ClassicButton("Drafts / outbox…")
     private var editor: CalendarEditor?
     private var pendingEdits: PendingEdits?
     private let bell = ClassicButton("Alerts", icon: .bell, style: .toolbar)
@@ -34,6 +50,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private let splitButton = ClassicButton("Side by side", style: .toggle)
     private var layoutItems: [ReadingLayout: NSMenuItem] = [:]
     private var current: Mail?
+    private enum ListPhase { case ready, loading }
+    private var listPhase: ListPhase = .ready
     private var listRevision = 0
     private var bodyRevision = 0
     private var searchTask: Task<Void, Never>?
@@ -62,8 +80,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private static let calendarIdleDelay: Duration = .seconds(5)
     private var mailSearch = ""
     private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
-    private let importButton = ClassicButton("Import .eml", icon: .folder, style: .toolbar)
-    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states"]
+    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions"]
     private let textButton = ClassicButton("Text only", icon: .text, style: .toggle)
     private let htmlButton = ClassicButton("HTML", icon: .html, style: .toggle)
     private let more = ClassicButton("Older")
@@ -149,6 +166,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
     func stop() {
         noticeTask?.cancel(); noticeTask = nil
+        mailTask?.cancel(); composer?.close(); workspace?.close(); calendarView?.setClock(.stopped)
         notifications?.stop(); editor?.close(); pendingEdits?.close(); pendingEdits = nil
         calendarIdleTask?.cancel()
         idleCalendar = nil
@@ -194,53 +212,161 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func buildToolbar() {
         let accountsButton = ClassicButton("Accounts", icon: .account, style: .toolbar)
-        let previous = ClassicButton("Previous", icon: .mail, style: .toolbar)
-        let next = ClassicButton("Next", icon: .mail, style: .toolbar)
-        importButton.onPress = { [weak self] in self?.importMail() }
+        mailButton.onPress = { [weak self] in self?.showMail() }
+        calendarButton.onPress = { [weak self] in self?.showCalendar() }
+        newButton.onPress = { [weak self] in self?.newMail() }
+        replyButton.onPress = { [weak self] in self?.replyMail() }
+        replyAllButton.onPress = { [weak self] in self?.replyAllMail() }
+        forwardButton.onPress = { [weak self] in self?.forwardMail() }
+        archiveButton.onPress = { [weak self] in self?.archiveMail() }
+        trashButton.onPress = { [weak self] in self?.trashMail() }
+        moveButton.onPress = { [weak self] in self?.moveMail() }
         syncButton.onPress = { [weak self] in self?.syncMail() }
         accountsButton.onPress = { [weak self] in self?.connectAccount() }
-        previous.onPress = { [weak self] in self?.moveSelection(-1) }
-        next.onPress = { [weak self] in self?.moveSelection(1) }
-        for (index, button) in [importButton, syncButton, accountsButton, previous, next].enumerated() {
-            button.frame = NSRect(x: 6 + index * 78, y: 3, width: 76, height: 55)
-            layout.toolbar.addSubview(button)
-        }
-        textButton.frame = NSRect(x: 416, y: 17, width: 106, height: 28)
-        htmlButton.frame = NSRect(x: 527, y: 17, width: 86, height: 28)
-        textButton.onPress = { [weak self] in self?.setReader(.text) }
-        htmlButton.onPress = { [weak self] in self?.setReader(.html) }
-        layout.toolbar.addSubview(textButton)
-        layout.toolbar.addSubview(htmlButton)
-        calendarButton.frame = NSRect(x: 635, y: 3, width: 80, height: 55)
-        calendarButton.onPress = { [weak self] in self?.toggleCalendar() }
-        layout.toolbar.addSubview(calendarButton)
-        splitButton.frame = NSRect(x: 735, y: 17, width: 110, height: 28)
-        splitButton.toolTip = "Switch between a reading pane below the list or on its right"
-        splitButton.onPress = { [weak self] in
-            guard let self else { return }
-            self.setReadingLayout(self.readingLayout == .below ? .right : .below)
-        }
-        layout.toolbar.addSubview(splitButton)
-        bell.frame = NSRect(x: 855, y: 3, width: 90, height: 55)
         bell.onPress = { [weak self] in self?.noticeService().show() }
-        layout.toolbar.addSubview(bell)
-        cancelLogin.frame = NSRect(x: 950, y: 17, width: 90, height: 28)
-        cancelLogin.isHidden = true
-        cancelLogin.onPress = { [weak self] in
-            self?.connectTask?.cancel()
-            self?.cancelLogin.isEnabled = false
-            self?.layout.statusText.stringValue = "Cancelling sign-in…"
+        for (index, button) in [mailButton, calendarButton, newButton, replyButton, replyAllButton, forwardButton, archiveButton, trashButton, moveButton, syncButton, accountsButton, bell].enumerated() {
+            button.frame = NSRect(x: 6 + index * 77, y: 3, width: 75, height: 55); layout.toolbar.addSubview(button)
         }
+        textButton.onPress = { [weak self] in self?.setReader(.text) }; htmlButton.onPress = { [weak self] in self?.setReader(.html) }
+        splitButton.toolTip = "Switch the reading pane between below and right"
+        splitButton.onPress = { [weak self] in guard let self else { return }; setReadingLayout(readingLayout == .below ? .right : .below) }
+        readButton.onPress = { [weak self] in self?.toggleRead() }; flagButton.onPress = { [weak self] in self?.toggleFlag() }; pinButton.onPress = { [weak self] in self?.togglePin() }
+        draftsButton.onPress = { [weak self] in self?.showMailWorkspace() }
+        var x: CGFloat = 8
+        for (button, width) in [(textButton, 106.0), (htmlButton, 86.0), (splitButton, 110.0), (readButton, 110.0), (flagButton, 100.0), (pinButton, 70.0), (draftsButton, 145.0)] {
+            button.frame = NSRect(x: x, y: 63, width: width, height: 26); x += width + 7; layout.toolbar.addSubview(button)
+        }
+        cancelLogin.frame = NSRect(x: 855, y: 63, width: 175, height: 26); cancelLogin.isHidden = true
+        cancelLogin.onPress = { [weak self] in self?.connectTask?.cancel(); self?.cancelLogin.isEnabled = false; self?.layout.statusText.stringValue = "Cancelling sign-in…" }
         layout.toolbar.addSubview(cancelLogin)
         textButton.state = .on
-        more.frame = NSRect(x: layout.listPane.bounds.width - 76, y: 4, width: 67, height: 22)
-        more.autoresizingMask = [.minXMargin]
-        more.onPress = { [weak self] in Task { await self?.loadList(page: .older) } }
-        layout.listPane.addSubview(more)
-        newer.frame = NSRect(x: layout.listPane.bounds.width - 148, y: 4, width: 67, height: 22)
-        newer.autoresizingMask = [.minXMargin]
-        newer.onPress = { [weak self] in Task { await self?.loadList(page: .newer) } }
-        layout.listPane.addSubview(newer)
+        for (index, button) in [more, newer].enumerated() {
+            button.frame = NSRect(x: layout.listPane.bounds.width - 76 - CGFloat(index * 72), y: 4, width: 67, height: 22)
+            button.autoresizingMask = [.minXMargin]; layout.listPane.addSubview(button)
+        }
+        more.onPress = { [weak self] in Task { await self?.loadList(page: .older) } }; newer.onPress = { [weak self] in Task { await self?.loadList(page: .newer) } }
+        updateMailButtons()
+    }
+
+    private var selectedMail: Mail? { messages.indices.contains(table.selectedRow) ? messages[table.selectedRow] : nil }
+    private func composeMail(_ kind: ComposeKind) {
+        guard mailbox == .live, section == .mail else { return }
+        let selected = selectedMail
+        let providers = accounts.filter { $0.provider != .local }
+        let preferred = providers.first { $0.id == account }?.id ?? providers.first { $0.id == selected?.accountId }?.id ?? providers.first?.id
+        let id = kind == .new ? preferred : selected?.accountId
+        guard let id else { layout.statusText.stringValue = "Choose an account/message first."; return }
+        let composer = mailComposer()
+        composer.open(kind, account: id, original: kind == .new ? nil : selected?.id, mode: networkAvailable && networkReady ? .fetch : .cached, accounts: accounts)
+    }
+    private func mailComposer() -> MailComposer {
+        if let composer { return composer }
+        let value = MailComposer(core: core)
+        value.onSaved = { [weak self] in self?.workspace?.refresh() }
+        value.onQueued = { [weak self] in self?.workspace?.refresh(); self?.coordinator.kick() }
+        value.onStatus = { [weak self] value in self?.layout.statusText.stringValue = value }
+        composer = value; return value
+    }
+    @objc private func newMail() { composeMail(.new) }
+    @objc private func replyMail() { composeMail(.reply) }
+    @objc private func replyAllMail() { composeMail(.replyAll) }
+    @objc private func forwardMail() { composeMail(.forward) }
+    @objc private func trashMail() { changeMail(["kind": MailActionKind.trash.rawValue]) }
+    @objc private func archiveMail() { changeMail(["kind": MailActionKind.archive.rawValue]) }
+    @objc private func toggleRead() { guard let value = selectedMail else { return }; changeMail(["kind": MailActionKind.read.rawValue, "unread": !value.unread]) }
+    @objc private func toggleFlag() { guard let value = selectedMail else { return }; changeMail(["kind": MailActionKind.flag.rawValue, "flagged": !value.starred]) }
+    @objc private func togglePin() {
+        guard let value = selectedMail else { return }
+        runMailCommand(["command": CoreCommand.pinMail.rawValue, "id": value.id, "pinned": value.pinned != true], message: "Pin updated on this Mac.")
+    }
+    private func changeMail(_ action: [String: Any]) {
+        guard let value = selectedMail, mailbox == .live else { return }
+        runMailCommand(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], message: "Change queued. Drafts / outbox shows sync and consent status.")
+    }
+    private func runMailCommand(_ command: [String: Any], message: String) {
+        guard mailTask == nil, section == .mail else { return }
+        let mode = mailbox
+        updateMailButtons(.busy)
+        mailTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mailTask = nil; updateMailButtons() }
+            do {
+                let _: EmptyReply = try await core.request(command, mode: mode)
+                await refreshList(); workspace?.refresh(); coordinator.kick()
+                layout.statusText.stringValue = message
+            } catch { showError(error) }
+        }
+    }
+    @objc private func moveMail() {
+        guard mailTask == nil, let value = selectedMail, mailbox == .live else { return }
+        let source = remoteFolder?.id
+        updateMailButtons(.busy)
+        mailTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mailTask = nil; updateMailButtons() }
+            do {
+                let folders: [MailFolder] = try await core.request(["command": CoreCommand.moveFolders.rawValue, "account": value.accountId], mode: .live)
+                let targets = folders
+                guard !targets.isEmpty else { throw MailError(message: "Sync this account's folders first.") }
+                let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 27))
+                for folder in targets { picker.addItem(withTitle: folder.name) }
+                let alert = NSAlert(); alert.messageText = "Move this message"; alert.informativeText = "Choose a folder in the same account. Gmail keeps unrelated labels."
+                alert.accessoryView = picker; alert.addButton(withTitle: "Move"); alert.addButton(withTitle: "Cancel")
+                guard WindowPresentation.runAlert(alert) == .alertFirstButtonReturn, targets.indices.contains(picker.indexOfSelectedItem) else { return }
+                let target = targets[picker.indexOfSelectedItem]
+                let action: [String: Any] = target.system == Folder.trash.rawValue ? ["kind": MailActionKind.trash.rawValue] : ["kind": MailActionKind.move.rawValue, "destination": target.id, "source": source as Any? ?? NSNull()]
+                let _: EmptyReply = try await core.request(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], mode: .live)
+                await refreshList(); coordinator.kick(); workspace?.refresh()
+                layout.statusText.stringValue = "Move queued. Cached mail remains available offline."
+            } catch { showError(error) }
+        }
+    }
+    @objc private func showMailWorkspace() {
+        if workspace == nil {
+            let value = MailWorkspacePanel(core: core)
+            value.onOpen = { [weak self] id in guard let self else { return }; mailComposer().openDraft(id, accounts: accounts) }
+            value.onChange = { [weak self] in self?.coordinator.kick(); Task { await self?.refreshList() } }
+            value.onConsent = { [weak self] id, access in self?.mailConsent(id, access: access) }
+            workspace = value
+        }
+        workspace?.open(accounts: accounts)
+    }
+    private func mailConsent(_ id: String, access: MailAccess) {
+        guard connectTask == nil else { workspace?.showStatus("Another sign-in is pending. Use Cancel sign-in to stop it."); return }
+        workspace?.setAuthorizing(.busy); cancelLogin.isHidden = false
+        layout.statusText.stringValue = "Waiting for separate mail consent in your browser."
+        connectTask = Task { [weak self] in
+            guard let self else { return }
+            defer { connectTask = nil; cancelLogin.isHidden = true; cancelLogin.isEnabled = true; workspace?.setAuthorizing(.ready) }
+            do {
+                let _: EmptyReply = try await core.request(["command": CoreCommand.mailConsent.rawValue, "account": id, "access": access.rawValue], mode: .live, queue: .login)
+                try await loadAccounts(); startSync(); coordinator.requestRefresh(); workspace?.refresh()
+                layout.statusText.stringValue = "Mail consent saved. Queued work will resume."
+            } catch { workspace?.showStatus(error.localizedDescription); layout.statusText.stringValue = error.localizedDescription }
+        }
+    }
+    private enum MailButtonPhase { case ready, busy }
+    private func updateMailButtons(_ phase: MailButtonPhase = .ready) {
+        let active = section == .mail && mailbox == .live && phase == .ready && listPhase == .ready && mailTask == nil
+        let selected = selectedMail
+        let provider = accounts.contains { $0.id == selected?.accountId && $0.provider != .local }
+        newButton.isEnabled = active && accounts.contains { $0.provider != .local }
+        for button in [replyButton, replyAllButton, forwardButton, trashButton, archiveButton, moveButton, readButton, flagButton, pinButton] { button.isEnabled = active && selected != nil && provider }
+        pinButton.isEnabled = active && selected != nil
+        readButton.title = selected?.unread == true ? "Mark read" : "Mark unread"
+        flagButton.title = selected?.starred == true ? "Unflag" : "Flag / star"
+        pinButton.title = selected?.pinned == true ? "Unpin" : "Pin"
+        draftsButton.isEnabled = mailbox == .live
+        mailButton.state = section == .mail ? .on : .off; calendarButton.state = section == .calendar ? .on : .off
+        for button in [mailButton, calendarButton, readButton, flagButton, pinButton] { button.needsDisplay = true }
+    }
+    private func addMailActions(_ menu: NSMenu) {
+        for (title, action) in [("Reply", #selector(replyMail)), ("Reply all", #selector(replyAllMail)), ("Forward", #selector(forwardMail)), ("Move…", #selector(moveMail)), ("Archive", #selector(archiveMail)), ("Move to Trash", #selector(trashMail)), ("Mark read", #selector(toggleRead)), ("Flag / star", #selector(toggleFlag)), ("Pin on this Mac", #selector(togglePin))] { addItem(menu, title, action, "") }
+    }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === messageMenu else { return }
+        if messages.indices.contains(table.clickedRow) { table.selectRowIndexes(IndexSet(integer: table.clickedRow), byExtendingSelection: false) }
+        for item in menu.items { item.isEnabled = validateMenuItem(item) }
     }
 
     private enum MailColumn: String {
@@ -260,6 +386,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.allowsEmptySelection = true
         table.dataSource = self
         table.delegate = self
+        messageMenu.delegate = self; addMailActions(messageMenu); table.menu = messageMenu
         table.setAccessibilityLabel("Messages")
         layout.listScroll.documentView = table
         configureColumns()
@@ -352,6 +479,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private func loadList(page direction: ListPage = .start) async {
         listRevision += 1
         let revision = listRevision
+        listPhase = .loading; updateMailButtons()
+        defer { if revision == listRevision { listPhase = .ready; updateMailButtons() } }
         let selected = current?.id
         let offset: Int
         switch direction {
@@ -373,6 +502,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             messages = page
             pageOffset = offset
             table.reloadData()
+            updateMailButtons()
             more.isEnabled = page.count == Self.pageSize
             newer.isEnabled = pageOffset > 0
             layout.listCaption.stringValue = "\(folderTitle.uppercased())  ·  \(messages.isEmpty ? "0" : "\(offset + 1)-\(offset + messages.count)") SHOWN"
@@ -421,7 +551,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         switch MailColumn(rawValue: id.rawValue) {
         case .status: cell.configure("", icon: mail.starred ? .star : (mail.unread ? .mail : nil))
         case .sender: cell.configure(mail.sender.isEmpty ? mail.senderAddress : mail.sender, weight: weight)
-        case .subject: cell.configure(mail.subject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
+        case .subject: cell.configure((mail.pinned == true ? "Pinned · " : "") + mail.subject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
         case .date: cell.configure(dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval(mail.timestamp))))
         case .account: cell.configure(accounts.first(where: { $0.id == mail.accountId })?.email ?? "")
         default: break
@@ -430,6 +560,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        updateMailButtons()
         guard section == .mail else { return }
         guard messages.indices.contains(table.selectedRow) else { return }
         readMessage(messages[table.selectedRow])
@@ -564,6 +695,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layout.statusText.stringValue = email + ": " + error
             return
         }
+        workspace?.refresh()
         notifications?.refresh()
         if reply.kind == .catalog { pendingCatalog = true }
         guard refreshTask == nil else { return }
@@ -592,6 +724,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             } else if !rows.isEmpty { table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
             else { current = nil; layout.header.display(nil); layout.reader.showNotice("No cached messages in this view.") }
+            updateMailButtons()
             layout.statusText.stringValue = "Cache updated · " + String(rows.count) + " messages shown"
         } catch is CancellationError {} catch { layout.statusText.stringValue = error.localizedDescription }
     }
@@ -647,22 +780,25 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     private func disconnectAccount(_ id: String) {
+        confirmQuit { [weak self] result in
+            guard result == .closed else { return }
+            self?.chooseDisconnect(id)
+        }
+    }
+    private func chooseDisconnect(_ id: String) {
         let alert = NSAlert()
         alert.messageText = "Disconnect this account?"
-        alert.informativeText = "Remove saved tokens. Keep downloaded mail and calendar data for offline reading, or remove this account's local cache. Provider data is unchanged."
+        alert.informativeText = "Remove saved tokens. Keep downloaded mail and calendar data for offline reading, or remove this account's local cache. Removing the local cache also deletes saved mail/calendar drafts and queued/outbox work for this account. Review Drafts / outbox first. Provider data is unchanged; an in-flight request may already have been accepted."
         alert.addButton(withTitle: "Keep offline cache")
         alert.addButton(withTitle: "Remove local cache")
         alert.addButton(withTitle: "Cancel")
         let reply = WindowPresentation.runAlert(alert)
         guard reply == .alertFirstButtonReturn || reply == .alertSecondButtonReturn else { return }
-        guard let editor else { finishDisconnect(id, reply: reply); return }
-        editor.requestClose { [weak self] outcome in
-            guard outcome == .closed else { return }
-            self?.finishDisconnect(id, reply: reply)
-        }
+        finishDisconnect(id, reply: reply)
     }
 
     private func finishDisconnect(_ id: String, reply: NSApplication.ModalResponse) {
+        mailTask?.cancel(); workspace?.close()
         noticeTask?.cancel()
         media.cancel()
         editor?.close(); pendingEdits?.close()
@@ -700,6 +836,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         main.addItem(withTitle: "Square Mail", action: nil, keyEquivalent: "").submenu = app
 
         let file = NSMenu(title: "File")
+        addItem(file, "New mail…", #selector(newMail), "n")
+        addItem(file, "Mail drafts / outbox…", #selector(showMailWorkspace), "")
         addItem(file, "Import .eml…", #selector(importMail), "o")
         addItem(file, "Connect account…", #selector(connectAccount), ",")
         addItem(file, "Switch demo / my mailbox", #selector(toggleDemo), "d")
@@ -723,25 +861,27 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let tools = NSMenu(title: "Tools")
         addItem(tools, "Sync mail and calendars", #selector(syncMail), "r")
         addItem(tools, "Notifications…", #selector(showNotices), "")
-        addItem(file, "New calendar event…", #selector(newCalendarEvent), "n")
+        addItem(file, "New calendar event…", #selector(newCalendarEvent), "")
         addItem(file, "Calendar drafts / pending…", #selector(showCalendarChanges), "")
+        let messageActions = NSMenu(title: "Message"); addMailActions(messageActions)
         let help = NSMenu(title: "Help")
         addItem(help, "About this preview", #selector(showAbout), "")
-        for menu in [file, edit, view, tools, help] {
+        for menu in [file, edit, view, messageActions, tools, help] {
             main.addItem(withTitle: menu.title, action: nil, keyEquivalent: "").submenu = menu
         }
         for item in app.items where item.action == #selector(showAbout) { item.target = self }
         NSApp.mainMenu = main
         var x: CGFloat = 0
-        for menu in [file, edit, view, tools, help] {
+        for menu in [file, edit, view, messageActions, tools, help] {
             let button = ClassicButton(menu.title, style: .menu)
-            button.frame = NSRect(x: x, y: 0, width: 48, height: 24)
+            let width = max(48, CGFloat(menu.title.count * 7 + 18))
+            button.frame = NSRect(x: x, y: 0, width: width, height: 24)
             button.onPress = { [weak button] in
                 guard let button else { return }
                 menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
             }
             layout.menus.addSubview(button)
-            x += 48
+            x += width
         }
     }
 
@@ -750,13 +890,25 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         item.target = self
     }
 
-    var needsQuitConfirm: Bool { editor?.requiresClosePrompt == true }
+    var needsQuitConfirm: Bool { editor?.requiresClosePrompt == true || composer?.needsClosePrompt == true }
     func confirmQuit(_ reply: @escaping (CalendarEditor.CloseOutcome) -> Void) {
-        guard let editor else { reply(.closed); return }
-        editor.requestClose(reply)
+        let finish: () -> Void = { [weak self] in
+            guard let editor = self?.editor else { reply(.closed); return }
+            editor.requestClose(reply)
+        }
+        guard let composer else { finish(); return }
+        composer.requestClose { result in if result == .closed { finish() } else { reply(.cancelled) } }
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
+        case #selector(newMail): return mailbox == .live && section == .mail && accounts.contains { $0.provider != .local }
+        case #selector(showMailWorkspace): return mailbox == .live
+        case #selector(replyMail), #selector(replyAllMail), #selector(forwardMail), #selector(trashMail), #selector(archiveMail), #selector(moveMail), #selector(toggleRead), #selector(toggleFlag), #selector(togglePin):
+            if item.action == #selector(toggleRead) { item.title = selectedMail?.unread == true ? "Mark as read" : "Mark as unread" }
+            if item.action == #selector(toggleFlag) { item.title = selectedMail?.starred == true ? "Unflag / unstar" : "Flag / star" }
+            if item.action == #selector(togglePin) { item.title = selectedMail?.pinned == true ? "Unpin on this Mac" : "Pin on this Mac" }
+            return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && mailTask == nil
+
         case #selector(showText): item.state = section == .mail && readerMode == .text ? .on : .off
         case #selector(showHTML): item.state = section == .mail && readerMode == .html ? .on : .off
         case #selector(showCalendar): item.state = section == .calendar ? .on : .off
@@ -787,8 +939,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard next != section else { return }
         searchTask?.cancel()
         section = next
+        updateMailButtons()
+        calendarView?.setClock(.stopped)
         textButton.isEnabled = next == .mail
-        importButton.isEnabled = next == .mail
         htmlButton.isEnabled = next == .mail
         splitButton.isEnabled = next == .mail
         syncButton.isEnabled = true
@@ -813,6 +966,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             side.autoresizingMask = [.width, .height]
             view.onNew = { [weak self] date in self?.openEditor(nil, date: date) }
             view.onEdit = { [weak self] key in self?.openEditor(key, date: Date()) }
+            view.onClockTick = { [weak side] in side?.redrawToday() }
             view.onPending = { [weak self] in self?.showPending() }
             side.onDate = { [weak view] date in view?.selectDate(date) }
             side.onFeeds = { [weak view] feeds in view?.setFeeds(feeds) }
@@ -829,9 +983,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layout.addSubview(view)
             layout.sidebar.addSubview(side)
             calendarView = view
+            view.setClock(.running)
             calendarSidebar = side
-            calendarButton.title = "Mail"
-            calendarButton.icon = .mail
             layout.folderLabel.stringValue = "Calendar"
             layout.titleBar.title = "Square Mail - Calendar"
             layout.search.stringValue = calendarState.query
@@ -855,8 +1008,6 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             }
             layout.split.isHidden = false
             sidebar.isHidden = false
-            calendarButton.title = "Calendar"
-            calendarButton.icon = .calendar
             layout.folderLabel.stringValue = folderTitle
             layout.titleBar.title = "Square Mail - \(folderTitle)"
             layout.search.stringValue = mailSearch
@@ -997,6 +1148,42 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             calendarSidebar?.showSources(sources, accounts: accounts, hidden: view.state.hiddenSources)
             await registerCalendar()
         } catch is CancellationError {} catch { layout.statusText.stringValue = error.localizedDescription }
+    }
+
+    func checkMailActions() async throws {
+        guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
+        await finishSelection(); try layout.reader.verifySpacing()
+        readButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.unread == false, readButton.title == "Mark unread" else { throw MailError(message: "Read action did not update the native list") }
+        flagButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.starred == true, flagButton.title == "Unflag" else { throw MailError(message: "Flag action did not update the native list") }
+        pinButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.pinned == true, pinButton.title == "Unpin" else { throw MailError(message: "Local pin did not update the native list") }
+        menuNeedsUpdate(messageMenu)
+        guard let archive = messageMenu.items.first(where: { $0.action == #selector(archiveMail) }), validateMenuItem(archive), NSApp.sendAction(#selector(archiveMail), to: archive.target, from: archive) else { throw MailError(message: "Context menu did not dispatch Archive") }
+        await mailTask?.value
+        guard messages.isEmpty else { throw MailError(message: "Archive did not remove the Inbox row") }
+        folder = .archive; await loadList(); trashButton.performClick(nil); await mailTask?.value
+        folder = .trash; await loadList()
+        guard selectedMail?.id == original else { throw MailError(message: "Delete did not move the message to Trash") }
+        trashButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.id == original else { throw MailError(message: "Delete from Trash removed the message permanently") }
+        let batch: MailWorkspace = try await core.request(["command": CoreCommand.mailWorkspace.rawValue], mode: .live)
+        guard batch.work.count == 3, batch.work.allSatisfy({ $0.kind == .action && $0.state == .pending }) else { throw MailError(message: "Offline read/flag/placement changes were not coalesced") }
+        let prompts = ScriptedEditorPrompts(); let composer = MailComposer(core: core, prompts: prompts)
+        try await composer.verifyControls(prompts, accounts: accounts, original: original)
+        let workspace = MailWorkspacePanel(core: core); try await workspace.verifyControls(accounts: accounts)
+        calendarButton.performClick(nil)
+        guard section == .calendar, mailButton.frame.minX < calendarButton.frame.minX else { throw MailError(message: "Left navigation did not enter Calendar") }
+        let offset = Calendar.current.component(.weekday, from: Date()) == 1 ? -1 : 1
+        calendarView?.selectDate(Calendar.current.date(byAdding: .day, value: offset, to: Date())!)
+        try calendarView?.verifyClock()
+        mailButton.performClick(nil)
+        await loadList(); await finishSelection()
+        layout.folderLabel.stringValue = folder.title; sidebar.select(folder)
+        try WindowPresentation.snapshot(layout, name: "mail-actions")
+        guard section == .mail, mailButton.state == .on, calendarButton.state == .off, !NSApp.isActive, layout.window?.isVisible != true else { throw MailError(message: "Mail navigation or background isolation failed") }
+        print("MAIL ACTIONS verified native toolbar/context dispatch, read/flag/pin, offline archive/trash, compose autosave/close, reply-all/forward, outbox cancellation and spacing preservation. No provider writes, sends or consent requests.")
     }
 
     func checkControls() async throws {
@@ -1261,7 +1448,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Square Mail 0.1"
-        alert.informativeText = "Native AppKit reader. Rust mail core.\n\nA mail reader with offline caches, automatic sync and separately authorised calendar edits. Remote images stay blocked until requested. Image/PDF/DOCX/XLSX previews download on request. The bell has bounded history. macOS alerts are opt-in. Mail sending is not implemented.\n\nVisual references: Visual Basic and classic Outlook. No reference-project assets are bundled."
+        alert.informativeText = "Square Mail private preview.\n\nOffline mail caches, local drafts, reviewed queued sends and separately authorised mail/calendar changes. Remote images stay blocked until requested. Image/PDF/DOCX/XLSX previews download on request. The bell has bounded history. macOS alerts are opt-in. Plain-text forwarding omits attachments. Delete moves to Trash. Live write/delivery qualification remains pending.\n\nVisual references: Visual Basic and classic Outlook. No reference-project assets are bundled."
         WindowPresentation.runAlert(alert)
     }
 

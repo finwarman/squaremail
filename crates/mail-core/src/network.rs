@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub(crate) mod fixture;
 use crate::Result;
 use reqwest::blocking::{Client, RequestBuilder};
 use serde_json::Value;
@@ -93,7 +95,11 @@ impl<'a> Context<'a> {
             return Err("Provider response exceeded the size limit".into());
         }
         Ok(Reply {
-            value: serde_json::from_slice(&raw)?,
+            value: if raw.is_empty() {
+                Value::Null
+            } else {
+                serde_json::from_slice(&raw)?
+            },
             etag,
         })
     }

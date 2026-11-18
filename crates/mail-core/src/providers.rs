@@ -1,3 +1,4 @@
+pub(crate) mod writes;
 use crate::network::{self, Context};
 use crate::{Result, mime, model::*, oauth, store::Store};
 use base64::{
@@ -177,6 +178,8 @@ fn gmail_message(value: &Value, account: &Account) -> Result<Message> {
     let from = header("From");
     let (sender, address) = split_address(&from);
     Ok(Message {
+        pinned: false,
+        reply: Some(writes::gmail_headers(value)?),
         id: mime::message_id(&account.id, remote),
         account_id: account.id.clone(),
         remote_id: remote.into(),
@@ -204,6 +207,11 @@ fn outlook_message(value: &Value, account: &Account) -> Result<Message> {
         .ok_or("Provider returned a message without an ID")?;
     let from = &value["from"]["emailAddress"];
     Ok(Message {
+        pinned: false,
+        reply: value["internetMessageId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|_| writes::graph_headers(value)),
         id: mime::message_id(&account.id, remote),
         account_id: account.id.clone(),
         remote_id: remote.into(),

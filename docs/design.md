@@ -1,0 +1,11 @@
+# ClassicKit design direction
+
+The base is Visual Basic 6 and Windows 95/2000/XP-era desktop software: square geometry, compact native menus/tables, visible bevels, inset fields, grey control faces, navy selections, blue title gradients and original pixel icons. Logical points remain integral and draw at the display backing scale. Tahoma is used only when installed, with native fallbacks. Focus, scrolling, text editing and keyboard interaction remain AppKit-owned.
+
+References: [Visual Basic archive](https://visualbasic.world/), [Double Dragon Outlook Bar](https://github.com/Planet-Source-Code/vlad-vissoultchev-double-dragon-outlook-bar-control-photoshop-style-color-picker-now-witho__1-36529), [inventory application](https://github.com/Planet-Source-Code/philip-v-naparan-a-complete-inventory-and-account-receivable-system-updated__1-62781). Reference code, icons and Windows fonts are not bundled.
+
+An optional pink theme is planned from Fin's18November Word screenshot: pale pink work surfaces, deeper pink title/toolbar hierarchy, hot-pink accent and inset tracks, glossy bevels and small heart-like title decoration. It retains the base layout and interaction. The checkerboard in the reference is image transparency, not a proposed document background. Document content keeps its own colours. The supplied reference is saved in the durable project design folder outside Git.
+
+The intended design uses semantic tokens for face, raised/inset edges, title start/end, ink/muted ink, selection, focus, today, selected day, warnings and disabled controls. Theme choice changes drawing tokens, not mail or storage logic. Classic remains the default. Pink cannot be the only indicator of selection or hierarchy. Selection, today, focus, unread/flag/pin and disabled states need distinguishable borders/icons and contrast in both themes.
+
+ClassicKit stays independent of mail and Rust. Prefer shared vector/layer drawing and cached small original assets; avoid panel bitmaps, a browser theme engine, animation loops or per-row theme objects. A future WordCraft fork can reuse the token specification and asset geometry through its own native renderer. No WordCraft code or cache is changed in this task. Theme implementation and visual/accessibility qualification are separate from the current mail-actions milestone.

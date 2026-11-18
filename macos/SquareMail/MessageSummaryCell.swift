@@ -27,7 +27,7 @@ final class MessageSummaryCell: NSTableCellView {
     func configure(_ mail: Mail, date value: String) {
         sender.stringValue = mail.sender.isEmpty ? mail.senderAddress : mail.sender
         sender.font = ClassicTheme.font(11, weight: mail.unread ? .bold : .regular)
-        subject.stringValue = mail.subject
+        subject.stringValue = (mail.pinned == true ? "Pinned · " : "") + mail.subject
         subject.font = ClassicTheme.font(12, weight: mail.unread ? .bold : .regular)
         preview.stringValue = mail.preview
         date.stringValue = value

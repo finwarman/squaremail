@@ -59,6 +59,11 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let detail = NSTextField(labelWithString: "Select an event for details.")
     private let agenda = NSTableView()
     private let agendaScroll = NSScrollView()
+    var onClockTick: (() -> Void)?
+    enum ClockActivity { case running, stopped }
+    private var clockTask: Task<Void, Never>?
+    private let clock = NSTextField(labelWithString: "")
+    private let clockFormat: DateFormatter = { let value = DateFormatter(); value.dateFormat = "EEE d MMM yyyy · HH:mm z"; return value }()
     private let today = ClassicButton("Today")
     private let previous = ClassicButton("<")
     private let next = ClassicButton(">")
@@ -95,7 +100,9 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         timeFormat.dateFormat = "HH:mm"
         grid.date = state.date
         grid.period = state.period
-        for view in [grid, caption, dayCaption, detail, agendaScroll, today, previous, next, newEvent, editEvent, pending] { addSubview(view) }
+        for view in [grid, caption, dayCaption, detail, agendaScroll, today, previous, next, newEvent, editEvent, pending, clock] { addSubview(view) }
+        clock.font = ClassicTheme.font(10); clock.textColor = ClassicTheme.muted; clock.alignment = .right
+        tickClock()
         caption.font = ClassicTheme.font(17, weight: .bold)
         dayCaption.font = ClassicTheme.font(12, weight: .bold)
         detail.font = ClassicTheme.font(11)
@@ -144,9 +151,32 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             button.frame = NSRect(x: bounds.width - 320 + CGFloat(index) * 105, y: bounds.height - agendaHeight + 2, width: 100, height: 27)
         }
         agendaScroll.frame = NSRect(x: 4, y: bounds.height - agendaHeight + 32, width: bounds.width - 8, height: 115)
-        detail.frame = NSRect(x: 12, y: bounds.height - 23, width: bounds.width - 24, height: 18)
+        detail.frame = NSRect(x: 12, y: bounds.height - 23, width: max(0, bounds.width - 305), height: 18)
+        clock.frame = NSRect(x: bounds.width - 285, y: bounds.height - 23, width: 273, height: 18)
         needsDisplay = true
     }
+
+    func setClock(_ activity: ClockActivity) {
+        clockTask?.cancel(); clockTask = nil
+        guard activity == .running else { return }
+        tickClock()
+        clockTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let delay = 60 - Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                self?.tickClock()
+            }
+        }
+    }
+    func verifyClock() throws {
+        let selected = grid.date
+        setClock(.running); let old = clockTask; setClock(.running)
+        guard old?.isCancelled == true, clockTask != nil, !clock.stringValue.isEmpty, grid.date == selected else { throw MailError(message: "Calendar clock duplicated work or changed the selected day") }
+        setPeriod(.week); try WindowPresentation.snapshot(self, name: "calendar-week")
+        setPeriod(.month); try WindowPresentation.snapshot(self, name: "calendar-month")
+    }
+    private func tickClock() { clock.stringValue = clockFormat.string(from: Date()); grid.needsDisplay = true; onClockTick?() }
+    deinit { clockTask?.cancel() }
 
     func selectDate(_ date: Date) {
         grid.date = date
@@ -330,6 +360,7 @@ final class CalendarSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
     private let sourceTable = NSTableView()
     private var sources: [(CalendarSource, String)] = []
     private var hiddenSources: Set<String> = []
+    func redrawToday() { mini.needsDisplay = true }
     private let mini = ClassicCalendar(density: .compact)
     private let month = NSTextField(labelWithString: "")
     private let back = ClassicButton("Back to mail", icon: .mail)

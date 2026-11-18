@@ -1,3 +1,5 @@
+mod mail;
+pub(crate) use mail::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -55,6 +57,10 @@ pub(crate) struct Account {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Message {
+    #[serde(default)]
+    pub(crate) pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reply: Option<ReplyHeaders>,
     pub(crate) id: String,
     pub(crate) account_id: String,
     pub(crate) remote_id: String,
@@ -81,6 +87,48 @@ pub(crate) enum BodyMode {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum Command {
+    MailConsent {
+        account: String,
+        access: MailAccess,
+    },
+    MoveFolders {
+        account: String,
+    },
+    QueueMail {
+        operation: String,
+        id: String,
+        action: MailAction,
+    },
+    PinMail {
+        id: String,
+        pinned: bool,
+    },
+    Compose {
+        account: String,
+        original: Option<String>,
+        kind: ComposeKind,
+        mode: BodyMode,
+    },
+    SaveMailDraft {
+        draft: MailDraft,
+    },
+    MailDraft {
+        id: String,
+    },
+    MailWorkspace,
+    DeleteMailDraft {
+        id: String,
+        revision: i64,
+    },
+    SendMail {
+        id: String,
+        revision: i64,
+    },
+    MailWork {
+        id: String,
+        kind: MailWorkKind,
+        choice: MailWorkChoice,
+    },
     Accounts,
     ClientConfig {
         provider: Provider,

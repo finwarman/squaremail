@@ -29,6 +29,9 @@ enum HTMLPolicy {
 }
 
 final class ReaderView: NSView, WKNavigationDelegate {
+    private enum Spacing: String { case original, compact }
+    private let spacingButton = ClassicButton("Compact spacing", style: .toggle)
+    private var spacing: Spacing = WindowPresentation.isBackground ? .original : (Spacing(rawValue: UserDefaults.standard.string(forKey: "readerSpacing") ?? "") ?? .original)
     private let mediaBar = ClassicPanel()
     private let imagesButton = ClassicButton("Load images")
     private let attachmentsButton = ClassicButton("Attachments")
@@ -90,7 +93,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
         scroll.documentView = text
         addSubview(scroll)
         addSubview(mediaBar)
-        for view in [imagesButton, attachmentsButton, mediaLabel] { mediaBar.addSubview(view) }
+        for view in [imagesButton, attachmentsButton, mediaLabel, spacingButton] { mediaBar.addSubview(view) }
         mediaLabel.font = ClassicTheme.font(10)
         mediaLabel.textColor = ClassicTheme.muted
         imagesButton.toolTip = "Load up to 12 images for this message. Remote servers may learn that you opened it."
@@ -103,6 +106,13 @@ final class ReaderView: NSView, WKNavigationDelegate {
             guard let self, let message = self.message else { return }
             if !self.attachments.isHidden { self.attachments.isHidden = true; self.needsLayout = true; return }
             self.onAttachments?(message)
+        }
+        spacingButton.toolTip = "Plain text: reduce repeated blank lines while keeping indentation, bullets and quote separators. Stored mail is unchanged."
+        spacingButton.onPress = { [weak self] in
+            guard let self, let message else { return }
+            spacing = spacing == .original ? .compact : .original
+            if !WindowPresentation.isBackground { UserDefaults.standard.set(spacing.rawValue, forKey: "readerSpacing") }
+            rendered = ""; display(message, mode: mode)
         }
         attachments.isHidden = true
         attachments.onPreview = { [weak self] asset in
@@ -121,13 +131,15 @@ final class ReaderView: NSView, WKNavigationDelegate {
 
     override func layout() {
         super.layout()
-        let barHeight: CGFloat = message == nil ? 0 : 34
+        let narrow = bounds.width < 560
+        let barHeight: CGFloat = message == nil ? 0 : (narrow ? 62 : 34)
         let attachmentHeight: CGFloat = attachments.isHidden ? 0 : min(150, max(0, bounds.height - barHeight) / 2)
         mediaBar.isHidden = message == nil
         mediaBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         imagesButton.frame = NSRect(x: 7, y: 5, width: 102, height: 24)
         attachmentsButton.frame = NSRect(x: 116, y: 5, width: 100, height: 24)
-        mediaLabel.frame = NSRect(x: 226, y: 8, width: max(0, bounds.width - 232), height: 18)
+        spacingButton.frame = NSRect(x: narrow ? 7 : bounds.width - 140, y: narrow ? 33 : 5, width: 132, height: 24)
+        mediaLabel.frame = NSRect(x: narrow ? 148 : 226, y: narrow ? 36 : 8, width: max(0, bounds.width - (narrow ? 154 : 375)), height: 18)
         let content = NSRect(x: 0, y: attachmentHeight, width: bounds.width, height: max(0, bounds.height - barHeight - attachmentHeight))
         scroll.frame = content
         web?.frame = content
@@ -141,13 +153,15 @@ final class ReaderView: NSView, WKNavigationDelegate {
         message = mail
         self.mode = mode
         onImageState?(imagePermission)
+        spacingButton.isEnabled = mode == .text
+        spacingButton.state = spacing == .compact ? .on : .off
         imagesButton.isEnabled = mode == .html
         needsLayout = true
         if mode == .text {
             queueHTMLRelease()
             web?.isHidden = true
             scroll.isHidden = false
-            showText(mail.text ?? "This message is not cached. Sync and open it while online.")
+            showText(spacing == .compact ? CompactText.render(mail.text ?? "This message is not cached. Sync and open it while online.") : (mail.text ?? "This message is not cached. Sync and open it while online."))
             return
         }
         guard let html = mail.html, !html.isEmpty else {
@@ -363,5 +377,18 @@ final class ReaderView: NSView, WKNavigationDelegate {
             return
         }
         decisionHandler(url.absoluteString == "about:blank" ? .allow : .cancel)
+    }
+}
+
+extension ReaderView {
+    func verifySpacing() throws {
+        let sample = "\n \nIntro\n\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------\n\n"
+        let expected = "Intro\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------"
+        guard CompactText.render(sample) == expected else { throw MailError(message: "Compact spacing damaged hierarchy or separators") }
+        guard let original = message?.text, mode == .text else { throw MailError(message: "Spacing control needs a plain-text fixture") }
+        spacingButton.performClick(nil)
+        guard text.string == CompactText.render(original), spacingButton.state == .on, message?.text == original else { throw MailError(message: "Compact spacing changed stored mail") }
+        spacingButton.performClick(nil)
+        guard text.string == original, spacingButton.state == .off else { throw MailError(message: "Original spacing did not restore") }
     }
 }

@@ -148,6 +148,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 catch { fputs("MEDIA FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
             }
             if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
+            if arguments.contains("--check-mail-actions") {
+                do { try await controller.checkMailActions(); NSApp.terminate(nil) }
+                catch { fputs("MAIL ACTIONS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-control-states") {
                 do {
                     try await controller.checkControls()

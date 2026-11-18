@@ -32,7 +32,7 @@ struct Account: Decodable {
 
 struct Mail: Decodable, Equatable {
     private enum CodingKeys: String, CodingKey {
-        case id
+        case id, pinned
         case accountId = "account_id"
         case remoteId = "remote_id"
         case sender
@@ -49,6 +49,7 @@ struct Mail: Decodable, Equatable {
     }
 
     let id: String
+    let pinned: Bool?
     let accountId: String
     let remoteId: String
     let sender: String
@@ -176,6 +177,17 @@ struct SyncStatus: Decodable {
 enum SyncKind: String, Decodable { case catalog, mail, calendar; case recentMail = "recent_mail" }
 
 enum CoreCommand: String {
+    case compose
+    case moveFolders = "move_folders"
+    case queueMail = "queue_mail"
+    case pinMail = "pin_mail"
+    case saveMailDraft = "save_mail_draft"
+    case mailDraft = "mail_draft"
+    case mailWorkspace = "mail_workspace"
+    case deleteMailDraft = "delete_mail_draft"
+    case sendMail = "send_mail"
+    case mailWork = "mail_work"
+    case mailConsent = "mail_consent"
     case accounts, calendars, configure, connect, disconnect, events, folders, list, message
     case importMail = "import"
     case calendarWindows = "calendar_windows"

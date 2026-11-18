@@ -58,6 +58,10 @@ struct Credentials {
     expires_at: u64,
     #[serde(default)]
     calendar_write: bool,
+    #[serde(default)]
+    mail_write: bool,
+    #[serde(default)]
+    mail_send: bool,
 }
 
 fn endpoints(provider: Provider) -> Result<(&'static str, &'static str, &'static str)> {
@@ -73,6 +77,57 @@ fn endpoints(provider: Provider) -> Result<(&'static str, &'static str, &'static
             "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read https://graph.microsoft.com/Calendars.Read",
         )),
         Provider::Local => Err("Local mail does not use OAuth".into()),
+    }
+}
+
+struct GrantedAccess {
+    read: bool,
+    calendar_write: bool,
+    mail_write: bool,
+    mail_send: bool,
+}
+impl GrantedAccess {
+    fn parse(provider: Provider, scope: &str) -> Self {
+        let has = |name: &str| {
+            scope
+                .split_whitespace()
+                .any(|s| s.eq_ignore_ascii_case(name))
+        };
+        match provider {
+            Provider::Gmail => {
+                let mail_write = has("https://www.googleapis.com/auth/gmail.modify");
+                let calendar_write = has("https://www.googleapis.com/auth/calendar.events");
+                Self {
+                    read: (mail_write || has("https://www.googleapis.com/auth/gmail.readonly"))
+                        && (calendar_write
+                            || has("https://www.googleapis.com/auth/calendar.events.readonly"))
+                        && has("https://www.googleapis.com/auth/calendar.calendarlist.readonly"),
+                    calendar_write,
+                    mail_write,
+                    mail_send: mail_write,
+                }
+            }
+            Provider::Outlook => {
+                let graph =
+                    |name: &str| has(name) || has(&format!("https://graph.microsoft.com/{name}"));
+                let mail_write = graph("Mail.ReadWrite");
+                let calendar_write = graph("Calendars.ReadWrite");
+                Self {
+                    read: (mail_write || graph("Mail.Read"))
+                        && (calendar_write || graph("Calendars.Read"))
+                        && graph("User.Read"),
+                    calendar_write,
+                    mail_write,
+                    mail_send: graph("Mail.Send"),
+                }
+            }
+            Provider::Local => Self {
+                read: false,
+                calendar_write: false,
+                mail_write: false,
+                mail_send: false,
+            },
+        }
     }
 }
 
@@ -95,6 +150,8 @@ pub(crate) fn connect(
 enum Permission {
     Read,
     CalendarWrite,
+    MailWrite,
+    MailSend,
 }
 pub(crate) fn calendar_consent(account: &Account, context: &Context<'_>) -> Result<()> {
     connect_mode(
@@ -117,6 +174,39 @@ pub(crate) fn calendar_writable(account: &Account) -> Result<bool> {
         .map_err(|_| "Connect this account first")?;
     let credentials: Credentials = serde_json::from_slice(&raw)?;
     Ok(credentials.calendar_write)
+}
+pub(crate) fn mail_allowed(account: &Account, access: MailAccess) -> Result<bool> {
+    let raw = get_generic_password(KEYCHAIN_SERVICE, &account.id)
+        .map_err(|_| "Connect this account first")?;
+    let credentials: Credentials = serde_json::from_slice(&raw)?;
+    Ok(match access {
+        MailAccess::Changes => credentials.mail_write,
+        MailAccess::Send => credentials.mail_write && credentials.mail_send,
+    })
+}
+pub(crate) fn mail_consent(
+    account: &Account,
+    access: MailAccess,
+    context: &Context<'_>,
+) -> Result<()> {
+    connect_mode(
+        account.provider,
+        "",
+        None,
+        match access {
+            MailAccess::Changes => Permission::MailWrite,
+            MailAccess::Send => Permission::MailSend,
+        },
+        Some(&account.id),
+        context,
+    )?;
+    if !mail_allowed(account, access)? {
+        return Err(
+            "Requested mail permission was not granted. Existing reading access remains available."
+                .into(),
+        );
+    }
+    Ok(())
 }
 fn connect_mode(
     provider: Provider,
@@ -141,19 +231,49 @@ fn connect_mode(
             .filter(|v| v.client_id == client_id)
             .and_then(|v| v.client_secret.as_deref())
     });
-    let (authorize, token_endpoint, read_scopes) = endpoints(provider)?;
-    let scopes = if matches!(permission, Permission::CalendarWrite) {
-        match provider {
-            Provider::Gmail => {
-                "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+    let previous = expected
+        .and_then(|id| get_generic_password(KEYCHAIN_SERVICE, id).ok())
+        .and_then(|v| serde_json::from_slice::<Credentials>(&v).ok());
+    let calendar_write = matches!(permission, Permission::CalendarWrite)
+        || previous.as_ref().is_some_and(|c| c.calendar_write);
+    let mail_write = matches!(permission, Permission::MailWrite | Permission::MailSend)
+        || previous.as_ref().is_some_and(|c| c.mail_write);
+    let mail_send = matches!(permission, Permission::MailSend)
+        || previous.as_ref().is_some_and(|c| c.mail_send);
+    let (authorize, token_endpoint, _) = endpoints(provider)?;
+    let scopes = match provider {
+        Provider::Gmail => format!(
+            "https://www.googleapis.com/auth/{} https://www.googleapis.com/auth/{} https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+            if mail_write {
+                "gmail.modify"
+            } else {
+                "gmail.readonly"
+            },
+            if calendar_write {
+                "calendar.events"
+            } else {
+                "calendar.events.readonly"
             }
-            Provider::Outlook => {
-                "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read https://graph.microsoft.com/Calendars.ReadWrite"
+        ),
+        Provider::Outlook => format!(
+            "offline_access https://graph.microsoft.com/{} https://graph.microsoft.com/User.Read https://graph.microsoft.com/{}{}",
+            if mail_write {
+                "Mail.ReadWrite"
+            } else {
+                "Mail.Read"
+            },
+            if calendar_write {
+                "Calendars.ReadWrite"
+            } else {
+                "Calendars.Read"
+            },
+            if mail_send {
+                " https://graph.microsoft.com/Mail.Send"
+            } else {
+                ""
             }
-            Provider::Local => return Err("Local calendars have no provider consent".into()),
-        }
-    } else {
-        read_scopes
+        ),
+        Provider::Local => return Err("Local accounts have no provider consent".into()),
     };
     let listener = TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
@@ -171,7 +291,7 @@ fn connect_mode(
         ("client_id", client_id),
         ("redirect_uri", &redirect),
         ("response_type", "code"),
-        ("scope", scopes),
+        ("scope", scopes.as_str()),
         ("state", &state),
         ("code_challenge", &challenge),
         ("code_challenge_method", "S256"),
@@ -215,20 +335,34 @@ fn connect_mode(
     if expected.is_some_and(|id| id != account.id) {
         return Err("A different account was chosen. Existing credentials were kept.".into());
     }
-    let granted = tokens.scope.as_deref().unwrap_or(scopes);
-    let calendar_write = granted.split_whitespace().any(|s| {
-        s == "https://www.googleapis.com/auth/calendar.events"
-            || s.eq_ignore_ascii_case("Calendars.ReadWrite")
-            || s.eq_ignore_ascii_case("https://graph.microsoft.com/Calendars.ReadWrite")
+    let granted = tokens.scope.as_deref().unwrap_or(&scopes);
+    let granted_access = GrantedAccess::parse(provider, granted);
+    if expected.is_some()
+        && (!granted_access.read
+            || (calendar_write && !granted_access.calendar_write)
+            || (mail_write && !granted_access.mail_write)
+            || (mail_send && !granted_access.mail_send))
+    {
+        return Err(
+            "Requested permissions were not fully granted. Existing sign-in was kept.".into(),
+        );
+    }
+    let refresh_token = tokens.refresh_token.or_else(|| {
+        previous
+            .as_ref()
+            .filter(|c| c.client_id == client_id)
+            .and_then(|c| c.refresh_token.clone())
     });
     let credentials = Credentials {
         provider,
         client_id: client_id.into(),
         client_secret: client_secret.map(String::from),
         access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
+        refresh_token,
         expires_at: now() + tokens.expires_in.unwrap_or(3600),
-        calendar_write,
+        calendar_write: granted_access.calendar_write,
+        mail_write: mail_write && granted_access.mail_write,
+        mail_send: mail_send && granted_access.mail_send,
     };
     let lock = account_lock(&account.id)?;
     let _guard = lock.lock().map_err(|_| "Credential lock failed")?;
@@ -522,4 +656,32 @@ pub(crate) fn verify_refresh(account: &Account, context: &Context<'_>) -> Result
         return Err("Refreshed identity did not match the account".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod mail_permission_tests {
+    use super::*;
+    #[test]
+    fn incremental_read_access() {
+        let read = GrantedAccess::parse(
+            Provider::Outlook,
+            "Mail.Read User.Read Calendars.Read offline_access",
+        );
+        assert!(read.read);
+        assert!(!read.mail_write);
+        assert!(!read.mail_send);
+        let writes = GrantedAccess::parse(
+            Provider::Outlook,
+            "https://graph.microsoft.com/Mail.ReadWrite User.Read Calendars.ReadWrite",
+        );
+        assert!(writes.read && writes.mail_write && writes.calendar_write);
+        assert!(!writes.mail_send);
+        let partial = GrantedAccess::parse(Provider::Outlook, "Mail.Send User.Read");
+        assert!(!partial.read);
+        let google = GrantedAccess::parse(
+            Provider::Gmail,
+            "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+        );
+        assert!(google.read && google.mail_write && google.mail_send && google.calendar_write);
+    }
 }

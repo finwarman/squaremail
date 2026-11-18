@@ -1,5 +1,6 @@
 mod calendar;
 mod demo;
+mod mailops;
 mod media;
 mod mime;
 mod model;
@@ -22,6 +23,47 @@ const MAX_MAIL_BYTES: u64 = 25 * 1024 * 1024;
 fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
     let store = Store::open(&request.database)?;
     match request.command {
+        Command::MoveFolders { account } => Ok(serde_json::to_value(mailops::move_folders(
+            &store, &account,
+        )?)?),
+        Command::QueueMail {
+            operation,
+            id,
+            action,
+        } => mailops::queue(&store, &operation, &id, action),
+        Command::PinMail { id, pinned } => {
+            store.pin_mail(&id, pinned.into())?;
+            Ok(json!({}))
+        }
+        Command::Compose {
+            account,
+            original,
+            kind,
+            mode,
+        } => mailops::compose(&store, &account, original.as_deref(), kind, mode, context),
+        Command::SaveMailDraft { draft } => mailops::save_draft(&store, &draft),
+        Command::MailDraft { id } => Ok(serde_json::to_value(store.mail_draft(&id)?)?),
+        Command::MailWorkspace => store.mail_workspace(),
+        Command::DeleteMailDraft { id, revision } => {
+            store.delete_mail_draft(&id, revision)?;
+            Ok(json!({}))
+        }
+        Command::SendMail { id, revision } => mailops::queue_send(&store, &id, revision),
+        Command::MailWork { id, kind, choice } => {
+            store.mail_work_choice(&id, kind, choice)?;
+            Ok(json!({}))
+        }
+        Command::MailConsent { account, access } => {
+            let account = store
+                .accounts()?
+                .into_iter()
+                .find(|a| a.id == account)
+                .ok_or("Account not found")?;
+            oauth::mail_consent(&account, access, context)?;
+            store.resume_mail_work(&account.id)?;
+            store.resume_account(&account)?;
+            Ok(json!({}))
+        }
         Command::ClientConfig { provider } => Ok(oauth::client_config(provider)),
         Command::Configure {
             provider,
@@ -92,10 +134,14 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             Ok(json!({}))
         }
         Command::SyncNext => {
-            // Alternate writes with sync pages, so queued edits cannot starve mail freshness.
-            static WRITES: std::sync::atomic::AtomicBool =
-                std::sync::atomic::AtomicBool::new(false);
-            if !WRITES.fetch_xor(true, std::sync::atomic::Ordering::Relaxed)
+            static TURN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let turn = TURN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 3;
+            if turn == 0
+                && let Some(reply) = mailops::sync_work(&store, context)?
+            {
+                return Ok(reply);
+            }
+            if turn == 1
                 && let Some(reply) = calendar::sync_write(&store, context)?
             {
                 return Ok(reply);
@@ -258,7 +304,7 @@ pub unsafe extern "C" fn squaremail_call_cancelable(
         let request: Request = serde_json::from_str(input)?;
         let seconds = if matches!(
             request.command,
-            Command::Connect { .. } | Command::CalendarConsent { .. }
+            Command::Connect { .. } | Command::CalendarConsent { .. } | Command::MailConsent { .. }
         ) {
             210
         } else {

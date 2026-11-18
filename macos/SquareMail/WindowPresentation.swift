@@ -14,6 +14,16 @@ enum WindowPresentation {
         return panel.runModal()
     }
     static var isBackground: Bool { ProcessInfo.processInfo.arguments.contains("--background-ui") }
+    static func snapshot(_ view: NSView, name: String) throws {
+        let args = ProcessInfo.processInfo.arguments
+        guard isBackground, let index = args.firstIndex(of: "--mail-evidence-dir"), args.indices.contains(index + 1) else { return }
+        let directory = URL(fileURLWithPath: args[index + 1]); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        view.layoutSubtreeIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw MailError(message: "Native snapshot allocation failed") }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { throw MailError(message: "Native snapshot encoding failed") }
+        try data.write(to: directory.appendingPathComponent(name + ".png"), options: .atomic)
+    }
     static func show(_ window: NSWindow) {
         window.contentView?.layoutSubtreeIfNeeded()
         if isBackground { window.ignoresMouseEvents = true; window.orderOut(nil); return }

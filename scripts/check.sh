@@ -17,3 +17,5 @@ trap 'rm -rf "$test_dir"' EXIT
 ./scripts/check-calendar-actions.sh
 
 ./scripts/check-controls.sh
+
+./scripts/check-mail-actions.sh

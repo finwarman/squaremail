@@ -139,3 +139,11 @@ python3 scripts/profile.py --app ".build/Square Mail.app/Contents/MacOS/SquareMa
 ```
 
 Add `--visible-only`, `--stress`, `--html` or `--html-idle` for the other workloads. `--heap` saves a heap summary. Use `SQUAREMAIL_PROFILE_COUNT=512` while seeding and run the app with `--check-paging` to verify bounded Older/Newer navigation. The probes prohibit uncached provider body fetching. The compact evidence is [2026-11-17.json](benchmarks/2026-11-17.json); raw traces and preserved baseline bundles stay in the local recovery folder.
+
+## Offline mail actions and compose
+
+The mail-action cache projection commits before provider work. Lists retain their250-row bound; local pins have date/account indexes. Draft/outbox lists load summaries. Only one compose body is held by the UI, with version-based dirty tracking and one debounced autosave task. The existing scheduler handles bounded actions/sends without per-message workers. Calendar time updates use one minute-boundary task while Calendar is active.
+
+The18November release core benchmark with100,000 generated messages measured inbox p95 0.316ms and selective search0.126ms. Multi-account scoped/unified inbox p95 was0.569/0.379ms; selective queries0.136/0.105ms. Broad queries ranged16.6-70.8ms. The synthetic SQLite file was63,516,672bytes, including reply headers and pin indexes. Measurements exclude bridge/UI/network work and are not a cross-client comparison.
+
+Full hidden functional checks passed, with synthetic provider HTTP for reversible actions, reply threading, Graph202 acceptance and ambiguous-send stopping. No final visible startup/draw/whole-process-family memory or long-run power qualification was run. Earlier memory profiles do not cover this feature. See [compact evidence](benchmarks/2026-11-18-mail-actions.json), [mail limits](mail-actions.md) and [hidden test boundaries](ui-testing.md).

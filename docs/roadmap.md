@@ -14,9 +14,8 @@ Before a private daily-driver release:
 - Qualify implemented account disconnect, Keychain deletion and optional local-cache removal with live reconnects.
 - Qualify borderless window resizing, VoiceOver, keyboard-only use, multiple displays and non-Retina scaling.
 - Profile startup, list/search latency and whole-process-tree memory with a large mailbox. Compare against a named client on the same machine and workload.
-- Add local draft composition, then separately design OAuth write scopes, sending, idempotency and an outbox. Mail remains read-only; calendar writes have separate consent.
-- Add toolbar/right-click move, archive, read/unread and trash operations. Permanent deletion needs a separate confirmation. Preserve Gmail label semantics and Outlook folder semantics in the offline queue.
-- Add reply/reply-all, CC/BCC and forward with bounded local mail drafts. Calendar drafts do not provide mail composition.
+- Qualify implemented mail actions, read/flag/pin, plain-text reply/reply-all/forward, local drafts/outbox, separate write/send consent and uncertain-send recovery against live providers. No real send was performed during agent qualification. Add attachments, rich text, aliases, cross-device draft sync and bulk selection later.
+- Permanent deletion remains unimplemented. Keep default Delete mapped to Trash. A future permanent-delete action needs separate design and confirmation.
 - Design provider rules and local sweeps separately. Provider rules have different capabilities; local rules run only while Square Mail is syncing.
 - Configure signing, hardened runtime, notarization, update delivery, crash handling and an Intel build if needed.
 
@@ -25,3 +24,5 @@ Before opening the source:
 - Keep `finwarman/squaremail` private until Fin explicitly requests public release.
 - Review dependencies and licenses. Keep Windows fonts, reference-project assets, real mail, local OAuth configuration and performance inputs out of Git.
 - Document contribution rules, supported platforms, security reporting and a reproducible build.
+
+Theme design is tracked separately. Classic remains default; an optional pink hierarchy theme and later WordCraft renderer reuse are described in [design direction](design.md). No WordCraft source or build cache changes.

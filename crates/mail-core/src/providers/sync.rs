@@ -376,7 +376,7 @@ fn gmail_mail(store: &Store, account: &Account, job: &SyncJob, remote: &Remote<'
     let mut removed = Vec::new();
     for id in ids {
         let path = format!(
-            "/messages/{}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To",
+            "/messages/{}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Reply-To&metadataHeaders=Message-ID&metadataHeaders=References",
             encoded(&id)
         );
         match remote.get(&remote.gmail, &path, None) {
@@ -450,7 +450,7 @@ fn graph_recent(
     job: &SyncJob,
     remote: &Remote<'_>,
 ) -> Result<()> {
-    let value=remote.get(&remote.graph,"/messages?$top=100&$orderby=receivedDateTime%20desc&$select=id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview,parentFolderId",None)?.value;
+    let value=remote.get(&remote.graph,"/messages?$top=100&$orderby=receivedDateTime%20desc&$select=id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview,ccRecipients,replyTo,internetMessageId,internetMessageHeaders,parentFolderId",None)?.value;
     let mut changes = Vec::new();
     for item in array(&value, "value")? {
         let parent = text(item, "parentFolderId").ok_or("Message folder missing")?;
@@ -463,7 +463,7 @@ fn graph_recent(
 fn graph_mail(store: &Store, account: &Account, job: &SyncJob, remote: &Remote<'_>) -> Result<()> {
     let scanning = job.state["cursor"].is_null();
     let path=text(&job.state,"next").or_else(||text(&job.state,"cursor")).map(String::from)
-        .unwrap_or_else(||format!("/mailFolders/{}/messages/delta?$top=100&$orderby=receivedDateTime%20desc&$select=id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview",encoded(&job.resource)));
+        .unwrap_or_else(||format!("/mailFolders/{}/messages/delta?$top=100&$orderby=receivedDateTime%20desc&$select=id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview,ccRecipients,replyTo,internetMessageId,internetMessageHeaders",encoded(&job.resource)));
     let value = match remote.get(&remote.graph, &path, None) {
         Ok(reply) => reply.value,
         Err(e) if network::is_status(e.as_ref(), 410) => return store.reset_job(job),

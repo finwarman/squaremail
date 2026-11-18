@@ -353,6 +353,7 @@ impl Store {
                     params![job.account_id, job.resource, message.remote_id],
                 )?;
             }
+            self.rebase_mail(&message.id)?;
             super::notices::observe_mail(
                 &tx,
                 message,
@@ -364,6 +365,12 @@ impl Store {
             )?;
         }
         for remote in removed {
+            if self.keep_mail(&job.account_id, remote)? {
+                if job.resource.is_empty() {
+                    self.missing_mail(&job.account_id, remote)?;
+                }
+                continue;
+            }
             if job.resource.is_empty() {
                 tx.execute(
                     "DELETE FROM messages WHERE account_id=?1 AND remote_id=?2",
@@ -377,7 +384,8 @@ impl Store {
         }
         if state["scan_done"].as_bool() == Some(true) {
             if job.resource.is_empty() {
-                tx.execute("DELETE FROM messages WHERE account_id=?1 AND NOT EXISTS(SELECT 1 FROM sync_seen s WHERE s.account_id=?1 AND s.resource='' AND s.remote_id=messages.remote_id)",[&job.account_id])?;
+                tx.execute("INSERT OR IGNORE INTO mail_tombstones SELECT id FROM messages WHERE account_id=?1 AND EXISTS(SELECT 1 FROM mail_actions a WHERE a.message_id=messages.id AND a.state<>'done') AND NOT EXISTS(SELECT 1 FROM sync_seen s WHERE s.account_id=?1 AND s.resource='' AND s.remote_id=messages.remote_id)",[&job.account_id])?;
+                tx.execute("DELETE FROM messages WHERE account_id=?1 AND NOT EXISTS(SELECT 1 FROM mail_actions a WHERE a.message_id=messages.id AND a.state<>'done') AND NOT EXISTS(SELECT 1 FROM sync_seen s WHERE s.account_id=?1 AND s.resource='' AND s.remote_id=messages.remote_id)",[&job.account_id])?;
             } else {
                 tx.execute("DELETE FROM mail_membership WHERE account_id=?1 AND folder_id=?2 AND NOT EXISTS(SELECT 1 FROM sync_seen s WHERE s.account_id=?1 AND s.resource=?2 AND s.remote_id=mail_membership.remote_id)",params![job.account_id,job.resource])?;
                 tx.execute("DELETE FROM folders WHERE folder IN(SELECT system FROM mail_folders WHERE account_id=?1 AND id=?2) AND message_id IN(SELECT m.id FROM messages m WHERE m.account_id=?1 AND NOT EXISTS(SELECT 1 FROM mail_membership f WHERE f.account_id=?1 AND f.remote_id=m.remote_id AND f.folder_id=?2))",params![job.account_id,job.resource])?;
@@ -387,6 +395,7 @@ impl Store {
                 params![job.account_id, job.resource],
             )?;
         }
+        self.project_mail(&job.account_id)?;
         self.finish_job(job, state, delay)?;
         tx.commit()?;
         Ok(())
@@ -847,6 +856,8 @@ mod qualification {
                 let body =
                     (i >= 9900).then(|| format!("Offline message for {key}. ") + &"x".repeat(8192));
                 let message = Message {
+                    pinned: false,
+                    reply: None,
                     id,
                     account_id: key.into(),
                     remote_id: i.to_string(),

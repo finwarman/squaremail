@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-18",
+  "machine": "Apple M5 Max,64GB,macOS26.6,arm64 release",
+  "core_100000": {
+    "common_search_p95_ms": 70.791291,
+    "list_p95_ms": 0.316459,
+    "messages": 100000,
+    "seed_ms": 14829.309167,
+    "selective_search_p95_ms": 0.126208,
+    "sqlite_bytes": 63516672
+  },
+  "multi_account_100000": {
+    "account_common": {
+      "p95_ms": 17.766709
+    },
+    "account_inbox": {
+      "p95_ms": 0.56875
+    },
+    "folder_common": {
+      "p95_ms": 16.599042
+    },
+    "scoped_selective": {
+      "p95_ms": 0.135625
+    },
+    "unified_common": {
+      "p95_ms": 57.814125000000004
+    },
+    "unified_inbox": {
+      "p95_ms": 0.379417
+    },
+    "unified_selective": {
+      "p95_ms": 0.104625
+    }
+  },
+  "qualification": "Full source/native checks, generated disconnected accounts and synthetic loopback HTTP only",
+  "limits": [
+    "Core timings exclude bridge decoding, AppKit draw/layout and provider latency. Other host applications were running.",
+    "Broad queries remain slower than selective search. These are not cross-client performance comparisons.",
+    "No final visible UI/startup/whole-process-family memory or long-run power profile. Hidden renders do not qualify OS focus, accessibility or physical frame presentation.",
+    "Gmail/Outlook.com/Microsoft365 mail write/send grants and live operations remain unqualified. No real email was sent and no account was mutated.",
+    "Local drafts are not cross-device; composition/forwarding are plain text and omit attachments. No permanent-delete endpoint."
+  ]
+}

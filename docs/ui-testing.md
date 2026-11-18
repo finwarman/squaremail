@@ -7,3 +7,5 @@
 These checks exercise application state and native action bindings. They do not qualify visible sheet placement, focus, keyboard navigation, accessibility or window-manager behavior. Earlier visual checks cover the editor and bell before the later draft/close changes.
 
 An isolated macOS VM with an in-guest test driver is the planned place for visible regression checks. No VM is configured. A host virtual monitor alone does not isolate keyboard focus. Performance baselines remain separate, scheduled on hardware with Fin. Routine probes must not take over the host desktop.
+
+`scripts/check-mail-actions.sh` uses disconnected generated mail. It dispatches toolbar/context actions, tests draft autosave/close/send-review cancellation and recovery, reply-all/forward fields, local pins, Trash behavior, reader spacing and clock replacement. It never grants consent or contacts a real provider. `--mail-evidence-dir /absolute/path` optionally saves offscreen synthetic native renders; these do not qualify interactive focus or OS sheets.

@@ -190,6 +190,10 @@ public final class ClassicCalendar: NSView {
             ClassicTheme.text(dayNumber, in: number, size: density == .compact ? 10 : 12,
                               color: today ? .white : (inMonth ? ClassicTheme.ink : ClassicTheme.muted),
                               weight: today ? .bold : .regular, alignment: density == .compact ? .center : .left)
+            if calendar.isDate(day, inSameDayAs: date) {
+                ClassicTheme.blue.setStroke()
+                let selection = NSBezierPath(rect: rect.insetBy(dx: 2, dy: 2)); selection.lineWidth = 2; selection.stroke()
+            }
             if density == .compact { continue }
             let marks = marksOn(day)
             let capacity = max(0, Int((rect.height - 27) / 19))
@@ -218,6 +222,11 @@ public final class ClassicCalendar: NSView {
             ClassicTheme.color(0xEFF5FF).setFill()
             NSRect(x: left + CGFloat(index) * width, y: top, width: width, height: max(0, bounds.height - top)).fill()
         }
+        let now = Date()
+        if let index = dates.firstIndex(where: { calendar.isDate($0, inSameDayAs: now) }) {
+            ClassicTheme.color(0xFFF0DA).setFill()
+            NSRect(x: left + CGFloat(index) * width, y: top + floor(clockHour(now)) * hourHeight, width: width, height: hourHeight).fill()
+        }
         for hour in 0..<24 {
             let y = top + CGFloat(hour) * hourHeight
             ClassicTheme.color(0xE5E3DD).setFill()
@@ -231,6 +240,10 @@ public final class ClassicCalendar: NSView {
             if calendar.isDateInToday(day) {
                 ClassicTheme.navy.setFill()
                 NSRect(x: x, y: 0, width: width, height: headingHeight).fill()
+            }
+            if calendar.isDate(day, inSameDayAs: date) {
+                ClassicTheme.blue.setFill()
+                NSRect(x: x + 1, y: headingHeight - 3, width: width - 2, height: 3).fill()
             }
             ClassicTheme.text(headerFormat.string(from: day), in: NSRect(x: x + 3, y: 6, width: width - 6, height: 18),
                               size: 12, color: calendar.isDateInToday(day) ? .white : ClassicTheme.ink, weight: .bold, alignment: .center)
@@ -255,6 +268,12 @@ public final class ClassicCalendar: NSView {
                                   width: laneWidth - 1, height: max(16, (end - start) * hourHeight - 1)).integral
                 drawMark(item, item.title, rect)
             }
+        }
+        if let index = dates.firstIndex(where: { calendar.isDate($0, inSameDayAs: now) }) {
+            let y = top + clockHour(now) * hourHeight
+            ClassicTheme.color(0xBD3345).setFill()
+            NSRect(x: left + CGFloat(index) * width, y: floor(y), width: width, height: 2).fill()
+            ClassicTheme.text(timeFormat.string(from: now), in: NSRect(x: 0, y: min(bounds.height - 15, max(top, y - 7)), width: left - 3, height: 15), size: 9, color: ClassicTheme.color(0xBD3345), weight: .bold, alignment: .right)
         }
     }
 

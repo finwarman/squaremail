@@ -1,6 +1,7 @@
 use crate::{Result, model::*};
 use rusqlite::{Connection, params};
 
+mod mail;
 mod media;
 mod notices;
 mod sync;
@@ -73,6 +74,12 @@ impl Store {
             connection.execute("CREATE INDEX IF NOT EXISTS event_versions ON calendar_events(account_id,calendar_id,id,version DESC)",[])?;
             connection.execute_batch("PRAGMA user_version=2; COMMIT;")?;
         }
+        if schema_version < 3 {
+            connection.execute_batch("BEGIN IMMEDIATE; ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+                CREATE INDEX messages_pins ON messages(pinned DESC,timestamp DESC,id);
+                CREATE INDEX messages_account_pins ON messages(account_id,pinned DESC,timestamp DESC,id);
+                PRAGMA user_version=3; COMMIT;")?;
+        }
         Ok(Self { connection })
     }
 
@@ -130,6 +137,12 @@ impl Store {
                 message.timestamp,message.unread,message.starred,message.has_attachments,
                 message.text,message.html],
         )?;
+        if let Some(headers) = &message.reply {
+            let data = serde_json::to_string(headers)?;
+            if data.len() <= REPLY_LIMIT {
+                connection.execute("INSERT INTO mail_headers VALUES(?1,?2) ON CONFLICT(message_id) DO UPDATE SET data=excluded.data",params![message.id,data])?;
+            }
+        }
         Ok(())
     }
 
@@ -184,9 +197,9 @@ impl Store {
         };
         let sql = format!(
             "SELECT m.id,m.account_id,m.remote_id,m.sender,m.sender_address,m.recipient,
-            m.subject,m.preview,m.timestamp,m.unread,m.starred,m.has_attachments,NULL,NULL
+            m.subject,m.preview,m.timestamp,m.unread,m.starred,m.has_attachments,NULL,NULL,m.pinned
             FROM messages m {join} WHERE {account_filter} AND {folder_filter}
-            {search} ORDER BY m.timestamp DESC,m.id LIMIT ?3 OFFSET ?4"
+            {search} ORDER BY m.pinned DESC,m.timestamp DESC,m.id LIMIT ?3 OFFSET ?4"
         );
         let mut statement = self.connection.prepare(&sql)?;
         statement.raw_bind_parameter(1, account)?;
@@ -204,7 +217,7 @@ impl Store {
 
     pub(crate) fn message(&self, id: &str) -> Result<Message> {
         Ok(self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,
-            subject,preview,timestamp,unread,starred,has_attachments,text,html FROM messages WHERE id=?1",
+            subject,preview,timestamp,unread,starred,has_attachments,text,html,pinned FROM messages WHERE id=?1",
             [id], Self::read_row)?)
     }
 
@@ -218,6 +231,8 @@ impl Store {
 
     fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         Ok(Message {
+            pinned: row.get(14)?,
+            reply: None,
             id: row.get(0)?,
             account_id: row.get(1)?,
             remote_id: row.get(2)?,

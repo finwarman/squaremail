@@ -91,14 +91,14 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         let height = bounds.height
         titleBar.frame = NSRect(x: 3, y: 3, width: width - 6, height: 32)
         menus.frame = NSRect(x: 5, y: 36, width: width - 10, height: 25)
-        toolbar.frame = NSRect(x: 4, y: 62, width: width - 8, height: 62)
+        toolbar.frame = NSRect(x: 4, y: 62, width: width - 8, height: 96)
         let left: CGFloat = 210
-        sidebar.frame = NSRect(x: 4, y: 128, width: left - 8, height: height - 156)
-        filter.frame = NSRect(x: left, y: 128, width: width - left - 4, height: 40)
+        sidebar.frame = NSRect(x: 4, y: 162, width: left - 8, height: height - 190)
+        filter.frame = NSRect(x: left, y: 162, width: width - left - 4, height: 40)
         folderLabel.frame = NSRect(x: 10, y: 9, width: 230, height: 22)
         searchBorder.frame = NSRect(x: max(245, filter.bounds.width - 365), y: 5, width: 355, height: 28)
         search.frame = searchBorder.bounds.insetBy(dx: 8, dy: 5)
-        split.frame = NSRect(x: left, y: 170, width: width - left - 4, height: height - 198)
+        split.frame = NSRect(x: left, y: 204, width: width - left - 4, height: height - 232)
         layoutPanes()
         status.frame = NSRect(x: 4, y: height - 25, width: width - 8, height: 21)
         statusText.frame = NSRect(x: 8, y: 3, width: width - 360, height: 16)

@@ -127,3 +127,28 @@ CREATE TABLE IF NOT EXISTS event_drafts (
     operation TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     data TEXT NOT NULL, saved INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mail_headers (
+    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mail_actions (
+    id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL, data TEXT NOT NULL, state TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0, due INTEGER NOT NULL DEFAULT 0,
+    error TEXT, created INTEGER NOT NULL, remote TEXT
+);
+CREATE INDEX IF NOT EXISTS mail_actions_due ON mail_actions(state,due);
+CREATE INDEX IF NOT EXISTS mail_actions_message ON mail_actions(message_id,state);
+CREATE TABLE IF NOT EXISTS mail_drafts (
+    id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    data TEXT NOT NULL, revision INTEGER NOT NULL, updated INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mail_outbox (
+    id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    data TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+    due INTEGER NOT NULL DEFAULT 0, error TEXT, created INTEGER NOT NULL, remote TEXT,
+    phase TEXT NOT NULL DEFAULT 'ready'
+);
+CREATE INDEX IF NOT EXISTS mail_outbox_due ON mail_outbox(state,due);
+CREATE TABLE IF NOT EXISTS mail_tombstones (
+    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE
+);
