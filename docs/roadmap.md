@@ -26,3 +26,5 @@ Before opening the source:
 - Document contribution rules, supported platforms, security reporting and a reproducible build.
 
 Theme design is tracked separately. Classic remains default; an optional pink hierarchy theme and later WordCraft renderer reuse are described in [design direction](design.md). No WordCraft source or build cache changes.
+
+Tracked next: signed versioned updates with rollback and draft-safe restart; reviewed unsubscribe using provider/list headers before website fallback; tabbed and pop-out Mail/Calendar with notes, date-linked tasks and optional kanban; classic segmented sync progress with indefinite unknown totals and determinate known totals. None is included in the reader-link milestone.

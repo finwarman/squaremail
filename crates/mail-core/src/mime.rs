@@ -4,10 +4,15 @@ use sha2::{Digest, Sha256};
 
 pub(crate) fn clean_html(html: &str) -> String {
     let mut builder = ammonia::Builder::default();
-    // Mail is a passive document. No images, CSS, forms or active content.
+    // Keep a compact image marker without its URL or sender-specified geometry.
     builder.rm_tags(&[
-        "img", "style", "form", "input", "button", "video", "audio", "source",
+        "style", "form", "input", "button", "video", "audio", "source",
     ]);
+    builder.rm_tag_attributes("img", &["src", "srcset", "width", "height", "alt"]);
+    builder.set_tag_attribute_value("img", "alt", "Image blocked");
+    for tag in ["table", "tr", "td", "th"] {
+        builder.rm_tag_attributes(tag, &["height", "width", "cellpadding", "cellspacing"]);
+    }
     builder.url_schemes(["https", "http", "mailto"].into_iter().collect());
     builder.clean(html).to_string()
 }
@@ -206,7 +211,6 @@ mod tests {
         let safe = clean_html(input);
         for forbidden in [
             "<script",
-            "<img",
             "<style",
             "<form",
             "<input",
@@ -217,5 +221,26 @@ mod tests {
             assert!(!safe.contains(forbidden), "{safe}");
         }
         assert!(safe.contains("<b>keep</b>"));
+        assert!(safe.contains("<img alt=\"Image blocked\">"));
+        assert!(!safe.contains("tracker.test"));
+    }
+
+    #[test]
+    fn blocked_images_have_no_geometry() {
+        let safe = clean_html(
+            "<table height='900'><tr><td width='500'><img src='cid:photo' srcset='https://tracker.test/a 2x' width='600' height='1200' alt='sender label' style='height:900px'></td></tr></table>",
+        );
+        assert!(safe.contains("<img alt=\"Image blocked\">"));
+        for forbidden in [
+            "src=",
+            "srcset",
+            "cid:",
+            "tracker.test",
+            "height",
+            "width",
+            "style=",
+        ] {
+            assert!(!safe.contains(forbidden), "{safe}");
+        }
     }
 }

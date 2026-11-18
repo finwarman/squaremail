@@ -4,6 +4,8 @@ Remote content stays blocked by default. In HTML mode, Load images fetches suppo
 
 The app discovers fresh HTML through the provider when an older sanitized cache has no image references. Gmail, Outlook and imported MIME attachments have separate account/message/asset IDs. CID references can use known inline attachments. HTML images are replaced with opaque, per-message local resource URLs. WebKit receives normalized PNGs only. Fixed table widths/heights and cell spacing are overridden to reduce newsletter gaps when content is blocked; original newsletter styling is not preserved.
 
+Newly sanitized blocked HTML keeps a small Image blocked marker, with no image URL or sender-specified geometry. Older caches that already removed image tags cannot reconstruct their positions. Plain-text gaps can instead come from invisible preheader padding; Compact spacing handles that separately.
+
 ## Bounds
 
 - At most 12 image references per message and 32 attachment metadata entries.

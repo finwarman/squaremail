@@ -1,0 +1,23 @@
+{
+  "date": "2026-11-18",
+  "workload": "Synthetic newsletter text with invisible padding and repeated labelled URLs",
+  "source_bytes": 334800,
+  "runs": 30,
+  "link_limit": 128,
+  "median_ms": 29.166042,
+  "p95_ms": 33.444583,
+  "includes": [
+    "actor dispatch",
+    "compact normalization",
+    "link detection",
+    "display document construction"
+  ],
+  "excludes": [
+    "AppKit layout",
+    "drawing",
+    "network",
+    "startup",
+    "whole-process memory"
+  ],
+  "limits": "Hidden functional probes passed. No current visible switching, power, long-run memory or leak qualification."
+}

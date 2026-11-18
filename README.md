@@ -28,6 +28,7 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Mail/Calendar navigation at the left, native toolbar/right-click mail actions, read/unread, stars/flags and indexed local pins. Delete moves to Trash; there is no permanent-delete command.
 - Native reply/reply-all/forward and To/CC/BCC composition, bounded local autosaving drafts and an offline outbox with explicit send review.
 - Optional plain-text compact spacing preserves quote nesting, bullets and separators. Calendar shows current date/time and a day/week time marker with separate today/selection highlights.
+- Readable plain-text links condense email/Markdown links and long URLs, with full hover targets and copy. Compact spacing also removes invisible newsletter padding. See [reader behavior](docs/reader-text.md).
 - Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
 - Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.

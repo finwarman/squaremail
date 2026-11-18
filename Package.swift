@@ -13,11 +13,12 @@ let package = Package(
         .executable(name: "SquareMail", targets: ["SquareMail"])
     ],
     targets: [
+        .target(name: "MessageText", path: "macos/MessageText"),
         .target(name: "ClassicKit", path: "macos/ClassicKit"),
         .systemLibrary(name: "MailBridge", path: "macos/MailBridge"),
         .executableTarget(
             name: "SquareMail",
-            dependencies: ["ClassicKit", "MailBridge"],
+            dependencies: ["ClassicKit", "MailBridge", "MessageText"],
             path: "macos/SquareMail",
             linkerSettings: [
                 .unsafeFlags(["-L", rustLibrary, "-Xlinker", "-dead_strip"]),
@@ -26,6 +27,7 @@ let package = Package(
                 .linkedFramework("SystemConfiguration")
             ]
         ),
+        .testTarget(name: "MessageTextTests", dependencies: ["MessageText"], path: "macos/MessageTextTests"),
         .testTarget(name: "ClassicKitTests", dependencies: ["ClassicKit"], path: "macos/Tests")
     ],
     swiftLanguageModes: [.v5]

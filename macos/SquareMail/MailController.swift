@@ -1,5 +1,6 @@
 import AppKit
 import ClassicKit
+import MessageText
 
 @MainActor
 final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation, NSMenuDelegate {
@@ -109,6 +110,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         buildTable()
         buildMenus()
         updateLayoutButtons()
+        layout.reader.onLink = { [weak self] url, mail in self?.openReaderLink(url, mail: mail) }
         layout.reader.onLoadImages = { [weak self] mail in
             guard let self else { return }
             self.media.loadImages(mail, mode: self.mailbox)
@@ -258,6 +260,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard let id else { layout.statusText.stringValue = "Choose an account/message first."; return }
         let composer = mailComposer()
         composer.open(kind, account: id, original: kind == .new ? nil : selected?.id, mode: networkAvailable && networkReady ? .fetch : .cached, accounts: accounts)
+    }
+    private func openReaderLink(_ url: URL, mail: Mail?) {
+        guard PlainRenderer.permits(url) else { return }
+        if url.scheme?.lowercased() != "mailto" { if !WindowPresentation.isBackground { NSWorkspace.shared.open(url) }; return }
+        guard let seed = MailLinkDraft(url: url) else { layout.statusText.stringValue = "This email link is invalid or exceeds its limit."; return }
+        let providers = accounts.filter { $0.provider != .local }
+        guard let account = providers.first(where: { $0.id == mail?.accountId }) ?? providers.first else { layout.statusText.stringValue = "Connect an account before composing an email link."; return }
+        mailComposer().open(.new, account: account.id, original: nil, mode: .cached, accounts: accounts, seed: seed)
     }
     private func mailComposer() -> MailComposer {
         if let composer { return composer }
@@ -1152,7 +1162,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func checkMailActions() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
-        await finishSelection(); try layout.reader.verifySpacing()
+        await finishSelection(); try await layout.reader.verifySpacing()
         readButton.performClick(nil); await mailTask?.value
         guard selectedMail?.unread == false, readButton.title == "Mark unread" else { throw MailError(message: "Read action did not update the native list") }
         flagButton.performClick(nil); await mailTask?.value
@@ -1455,6 +1465,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     // A native integration probe exercises the same controller and bridge as the UI.
     func finishSelection() async {
         await readingTask?.value
+        await layout.reader.finishText()
         layout.layoutSubtreeIfNeeded()
         layout.window?.displayIfNeeded()
         CATransaction.flush()
@@ -1586,6 +1597,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func selfTest() async throws -> [String: Any] {
         guard messages.count == 40 else { throw MailError(message: "Demo inbox did not load") }
+        try await layout.reader.verifyLinks()
+        await layout.reader.finishText()
         try await checkReadingLayouts()
         let initial = messages[0]
         let body: Mail = try await core.request(["command": CoreCommand.message.rawValue, "id": initial.id, "mode": BodyFetch.cached.rawValue], mode: .demo)

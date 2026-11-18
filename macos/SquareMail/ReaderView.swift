@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 import ClassicKit
+import MessageText
 
 enum HTMLPolicy {
     static let contentPolicy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src squaremail-image:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; media-src 'none'; font-src 'none'"
@@ -18,20 +19,25 @@ enum HTMLPolicy {
         a { color:#0a246a; } table { max-width:100%; border-spacing:0!important; }
         table,thead,tbody,tfoot,tr,td,th { height:auto!important; min-height:0!important; width:auto!important; }
         td,th { padding:0!important; } img { max-width:100%; height:auto; } pre { white-space:pre-wrap; }
+        img:not([src]) { display:inline-block; width:112px!important; height:20px!important; font:11px/20px Tahoma,Verdana,sans-serif; color:#666; background:#eee; vertical-align:middle; }
         hr { border:0; border-top:1px solid #d4d0c8; margin:18px 0; }
         </style></head><body>\(body)</body></html>
         """
     }
 
     static func permitsLink(_ url: URL) -> Bool {
-        url.scheme == "https" || url.scheme == "http"
+        PlainRenderer.permits(url)
     }
 }
 
-final class ReaderView: NSView, WKNavigationDelegate {
-    private enum Spacing: String { case original, compact }
+final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     private let spacingButton = ClassicButton("Compact spacing", style: .toggle)
-    private var spacing: Spacing = WindowPresentation.isBackground ? .original : (Spacing(rawValue: UserDefaults.standard.string(forKey: "readerSpacing") ?? "") ?? .original)
+    private var spacing: TextSpacing = WindowPresentation.isBackground ? .original : (TextSpacing(rawValue: UserDefaults.standard.string(forKey: "readerSpacing") ?? "") ?? .original)
+    private let linksButton = ClassicButton("Readable links", style: .toggle)
+    private var linkStyle: LinkStyle = WindowPresentation.isBackground ? .readable : (LinkStyle(rawValue: UserDefaults.standard.string(forKey: "readerLinks") ?? "") ?? .readable)
+    private var textTask: Task<Void, Never>?
+    private var textRevision = 0
+    var onLink: ((URL, Mail?) -> Void)?
     private let mediaBar = ClassicPanel()
     private let imagesButton = ClassicButton("Load images")
     private let attachmentsButton = ClassicButton("Attachments")
@@ -48,7 +54,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
     var onImageState: ((ImagePermission) -> Void)?
     private let scroll = NSScrollView()
     // TextKit 1 avoids full-paragraph GPU surfaces for long plain-text messages.
-    private let text = NSTextView(usingTextLayoutManager: false)
+    private let text = MailTextView(usingTextLayoutManager: false)
     private var web: WKWebView?
     private var rendered = ""
     private var mode: ReaderMode = .text
@@ -69,6 +75,8 @@ final class ReaderView: NSView, WKNavigationDelegate {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
         scroll.backgroundColor = .white
+        text.delegate = self
+        text.linkTextAttributes = [.foregroundColor: ClassicTheme.color(0x0000CC), .underlineStyle: NSUnderlineStyle.single.rawValue]
         text.isEditable = false
         text.isSelectable = true
         text.isRichText = false
@@ -93,7 +101,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
         scroll.documentView = text
         addSubview(scroll)
         addSubview(mediaBar)
-        for view in [imagesButton, attachmentsButton, mediaLabel, spacingButton] { mediaBar.addSubview(view) }
+        for view in [imagesButton, attachmentsButton, mediaLabel, spacingButton, linksButton] { mediaBar.addSubview(view) }
         mediaLabel.font = ClassicTheme.font(10)
         mediaLabel.textColor = ClassicTheme.muted
         imagesButton.toolTip = "Load up to 12 images for this message. Remote servers may learn that you opened it."
@@ -106,6 +114,13 @@ final class ReaderView: NSView, WKNavigationDelegate {
             guard let self, let message = self.message else { return }
             if !self.attachments.isHidden { self.attachments.isHidden = true; self.needsLayout = true; return }
             self.onAttachments?(message)
+        }
+        linksButton.toolTip = "Short labels with full destinations on hover. Copy retains full links. No hover requests."
+        linksButton.onPress = { [weak self] in
+            guard let self, let message else { return }
+            linkStyle = linkStyle == .original ? .readable : .original
+            if !WindowPresentation.isBackground { UserDefaults.standard.set(linkStyle.rawValue, forKey: "readerLinks") }
+            display(message, mode: mode)
         }
         spacingButton.toolTip = "Plain text: reduce repeated blank lines while keeping indentation, bullets and quote separators. Stored mail is unchanged."
         spacingButton.onPress = { [weak self] in
@@ -131,15 +146,16 @@ final class ReaderView: NSView, WKNavigationDelegate {
 
     override func layout() {
         super.layout()
-        let narrow = bounds.width < 560
-        let barHeight: CGFloat = message == nil ? 0 : (narrow ? 62 : 34)
+        let narrow = bounds.width < 650
+        let barHeight: CGFloat = message == nil ? 0 : (narrow ? 84 : 34)
         let attachmentHeight: CGFloat = attachments.isHidden ? 0 : min(150, max(0, bounds.height - barHeight) / 2)
         mediaBar.isHidden = message == nil
         mediaBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         imagesButton.frame = NSRect(x: 7, y: 5, width: 102, height: 24)
         attachmentsButton.frame = NSRect(x: 116, y: 5, width: 100, height: 24)
-        spacingButton.frame = NSRect(x: narrow ? 7 : bounds.width - 140, y: narrow ? 33 : 5, width: 132, height: 24)
-        mediaLabel.frame = NSRect(x: narrow ? 148 : 226, y: narrow ? 36 : 8, width: max(0, bounds.width - (narrow ? 154 : 375)), height: 18)
+        spacingButton.frame = NSRect(x: narrow ? 7 : bounds.width - 270, y: narrow ? 33 : 5, width: 132, height: 24)
+        linksButton.frame = NSRect(x: narrow ? 146 : bounds.width - 132, y: narrow ? 33 : 5, width: 124, height: 24)
+        mediaLabel.frame = NSRect(x: narrow ? 7 : 226, y: narrow ? 62 : 8, width: max(0, bounds.width - (narrow ? 14 : 505)), height: 18)
         let content = NSRect(x: 0, y: attachmentHeight, width: bounds.width, height: max(0, bounds.height - barHeight - attachmentHeight))
         scroll.frame = content
         web?.frame = content
@@ -153,6 +169,8 @@ final class ReaderView: NSView, WKNavigationDelegate {
         message = mail
         self.mode = mode
         onImageState?(imagePermission)
+        linksButton.isEnabled = mode == .text
+        linksButton.state = linkStyle == .readable ? .on : .off
         spacingButton.isEnabled = mode == .text
         spacingButton.state = spacing == .compact ? .on : .off
         imagesButton.isEnabled = mode == .html
@@ -161,7 +179,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
             queueHTMLRelease()
             web?.isHidden = true
             scroll.isHidden = false
-            showText(spacing == .compact ? CompactText.render(mail.text ?? "This message is not cached. Sync and open it while online.") : (mail.text ?? "This message is not cached. Sync and open it while online."))
+            showText(mail.text ?? "This message is not cached. Sync and open it while online.")
             return
         }
         guard let html = mail.html, !html.isEmpty else {
@@ -171,6 +189,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
             showText(mail.text ?? "This message has no cached HTML body.")
             return
         }
+        cancelText()
         scroll.isHidden = true
         idleTask?.cancel()
         if let web { web.isHidden = false; load(imageHTML ?? html); return }
@@ -299,7 +318,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
         }
     }
 
-    func pause() { onMediaReset?(); queueHTMLRelease() }
+    func pause() { cancelText(); onMediaReset?(); queueHTMLRelease() }
 
     func finishHTML() async throws {
         guard mode == .html, let navigation, finished !== navigation else { return }
@@ -328,14 +347,39 @@ final class ReaderView: NSView, WKNavigationDelegate {
     }
 
     private func showText(_ value: String) {
-        text.layoutManager?.allowsNonContiguousLayout = value.utf8.count > Self.textLayoutThreshold
-        text.string = value
-        text.setSelectedRange(NSRange(location: 0, length: 0))
-        text.scrollToBeginningOfDocument(nil)
+        cancelText(); let revision = textRevision
+        text.document = nil
+        text.string = ""; text.setSelectedRange(NSRange(location: 0, length: 0))
+        let spacing = message == nil ? TextSpacing.original : spacing
+        let links = message == nil ? LinkStyle.original : linkStyle
+        textTask = Task { [weak self] in
+            do {
+                let document = try await PlainRenderer.shared.render(value, spacing: spacing, links: links)
+                guard let self, !Task.isCancelled, textRevision == revision else { return }
+                let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = spacing == .compact ? 2 : 5
+                let body = NSMutableAttributedString(string: document.text, attributes: [.font: ClassicTheme.font(14), .foregroundColor: ClassicTheme.ink, .paragraphStyle: paragraph])
+                for link in document.links { body.addAttributes([.link: link.url, .toolTip: link.tooltip], range: link.range) }
+                text.layoutManager?.allowsNonContiguousLayout = document.text.utf8.count > Self.textLayoutThreshold
+                text.textStorage?.setAttributedString(body); text.document = document
+                text.scrollToBeginningOfDocument(nil)
+            } catch is CancellationError {} catch {
+                guard let self, textRevision == revision else { return }
+                text.string = value
+            }
+        }
+    }
+    private func cancelText() {
+        textRevision += 1
+        textTask?.cancel(); textTask = nil
+    }
+    func finishText() async { await textTask?.value }
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        guard let url = link as? URL, PlainRenderer.permits(url) else { return true }
+        onLink?(url, message); return true
     }
 
     func verifyText(_ expected: String) throws {
-        guard text.string == expected else { throw MailError(message: "Plain text content changed during display") }
+        guard text.document?.copyText(NSRange(location: 0, length: text.string.utf16.count)) == expected else { throw MailError(message: "Plain text content changed during display") }
         let selection = text.selectedRange()
         let responder = window?.firstResponder
         window?.makeFirstResponder(text)
@@ -372,7 +416,7 @@ final class ReaderView: NSView, WKNavigationDelegate {
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
         if navigationAction.navigationType == .linkActivated, HTMLPolicy.permitsLink(url) {
-            NSWorkspace.shared.open(url)
+            onLink?(url, message)
             decisionHandler(.cancel)
             return
         }
@@ -381,14 +425,56 @@ final class ReaderView: NSView, WKNavigationDelegate {
 }
 
 extension ReaderView {
-    func verifySpacing() throws {
+    func verifyLinks() async throws {
+        let saved = message
+        let callback = onLink
+        defer { onLink = callback; if let saved { display(saved, mode: .text) } }
+        let source = "😀 Survey<https://gbr01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.test%2Fsurvey&data=synthetic>\n[Details](https://example.test/details)"
+        let mail = Mail(id: "link-fixture", pinned: false, accountId: "demo", remoteId: "links", sender: "Sample", senderAddress: "sample@example.test", recipient: "reader@example.test", subject: "Link fixture", preview: "Sample", timestamp: 0, unread: false, starred: false, hasAttachments: false, text: source, html: "<p>Before the blocked image</p><img alt=\"Image blocked\"><p>After the blocked image</p>")
+        display(mail, mode: .text); await finishText()
+        guard let document = text.document, document.links.count == 2, let link = document.links.first,
+              text.textStorage?.attribute(.link, at: link.range.location, effectiveRange: nil) as? URL == link.url,
+              text.textStorage?.attribute(.toolTip, at: link.range.location, effectiveRange: nil) as? String == link.tooltip else { throw MailError(message: "Native readable link attributes missing") }
+        try verifyText(source)
+        var clicked: URL?
+        onLink = { url, _ in clicked = url }
+        _ = textView(text, clickedOnLink: link.url, at: link.range.location)
+        guard clicked == link.url else { throw MailError(message: "Native link callback changed target") }
+        linksButton.performClick(nil); await finishText()
+        guard text.string == source, text.document?.links.isEmpty == true else { throw MailError(message: "Original links toggle failed") }
+        linksButton.performClick(nil); await finishText()
+        guard text.document?.links.count == 2 else { throw MailError(message: "Readable links toggle failed") }
+        try WindowPresentation.snapshot(self, name: "reader-links")
+        display(mail, mode: .html); try await finishHTML()
+        try await snapshotHTML()
+        display(mail, mode: .text)
+        showText(String(repeating: source + "\n", count: 1000)); showText("Latest selection")
+        await finishText()
+        guard text.string == "Latest selection" else { throw MailError(message: "Stale formatting replaced reader selection") }
+    }
+
+    private func snapshotHTML() async throws {
+        let args = ProcessInfo.processInfo.arguments
+        guard WindowPresentation.isBackground, let index = args.firstIndex(of: "--mail-evidence-dir"), args.indices.contains(index + 1), let web else { return }
+        let image: NSImage = try await withCheckedThrowingContinuation { reply in
+            web.takeSnapshot(with: nil) { image, error in
+                if let image { reply.resume(returning: image) }
+                else { reply.resume(throwing: error ?? MailError(message: "HTML snapshot failed")) }
+            }
+        }
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { throw MailError(message: "HTML snapshot encoding failed") }
+        let path = URL(fileURLWithPath: args[index + 1]).appendingPathComponent("reader-image-marker.png")
+        try png.write(to: path)
+    }
+
+    func verifySpacing() async throws {
         let sample = "\n \nIntro\n\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------\n\n"
         let expected = "Intro\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------"
         guard CompactText.render(sample) == expected else { throw MailError(message: "Compact spacing damaged hierarchy or separators") }
         guard let original = message?.text, mode == .text else { throw MailError(message: "Spacing control needs a plain-text fixture") }
-        spacingButton.performClick(nil)
+        spacingButton.performClick(nil); await finishText()
         guard text.string == CompactText.render(original), spacingButton.state == .on, message?.text == original else { throw MailError(message: "Compact spacing changed stored mail") }
-        spacingButton.performClick(nil)
+        spacingButton.performClick(nil); await finishText()
         guard text.string == original, spacingButton.state == .off else { throw MailError(message: "Original spacing did not restore") }
     }
 }

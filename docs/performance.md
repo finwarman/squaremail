@@ -147,3 +147,9 @@ The mail-action cache projection commits before provider work. Lists retain thei
 The18November release core benchmark with100,000 generated messages measured inbox p95 0.316ms and selective search0.126ms. Multi-account scoped/unified inbox p95 was0.569/0.379ms; selective queries0.136/0.105ms. Broad queries ranged16.6-70.8ms. The synthetic SQLite file was63,516,672bytes, including reply headers and pin indexes. Measurements exclude bridge/UI/network work and are not a cross-client comparison.
 
 Full hidden functional checks passed, with synthetic provider HTTP for reversible actions, reply threading, Graph202 acceptance and ambiguous-send stopping. No final visible startup/draw/whole-process-family memory or long-run power qualification was run. Earlier memory profiles do not cover this feature. See [compact evidence](benchmarks/2026-11-18-mail-actions.json), [mail limits](mail-actions.md) and [hidden test boundaries](ui-testing.md).
+
+## Reader links, 18 November 2026
+
+The native text formatter runs on one actor and lazily reuses its detector. A generated334,800-byte newsletter took29.17ms median and33.44ms p95 across30 release runs. This includes normalization and document construction, excludes AppKit layout/draw/network, and is not an email-switch benchmark. Links cap at128 per body. No new memory, power or leak claim is made. [Compact evidence](benchmarks/2026-11-18-reader-links.json).
+
+Reproduce with `SQUAREMAIL_TEXT_PROFILE=1 swift test -c release --filter ReaderTextTests.testLargeBodyBounds`. The regular test checks bounds without a timing threshold.

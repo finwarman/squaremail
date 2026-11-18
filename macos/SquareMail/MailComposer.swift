@@ -1,5 +1,6 @@
 import AppKit
 import ClassicKit
+import MessageText
 
 @MainActor
 final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate {
@@ -66,7 +67,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         }
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { requestClose(); return false }
-    func open(_ kind: ComposeKind, account: String, original: String?, mode: BodyFetch, accounts: [Account]) {
+    func open(_ kind: ComposeKind, account: String, original: String?, mode: BodyFetch, accounts: [Account], seed: MailLinkDraft? = nil) {
         requestClose { [weak self] result in
             guard let self, result == .closed else { return }
             build(accounts); transition(.loading)
@@ -76,7 +77,10 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
                 do {
                     let reply: ComposeReply = try await core.request(["command": CoreCommand.compose.rawValue, "account": account, "original": original as Any? ?? NSNull(), "kind": kind.rawValue, "mode": mode.rawValue], mode: .live, queue: mode == .fetch ? .network : .local)
                     guard generation == revision, !Task.isCancelled else { return }
-                    fill(reply.draft)
+                    var draft = reply.draft
+                    if let seed { draft.to = seed.to; draft.cc = seed.cc; draft.subject = seed.subject; draft.text = seed.body }
+                    fill(draft)
+                    if seed != nil { scheduleSave() }
                     var message = "Drafts save on this Mac. Sending queues a reviewed snapshot."
                     if reply.needsHeaders && kind != .new { message += " Reply metadata is incomplete. Reopen while online before sending a reply." }
                     if reply.attachmentsOmitted { message += " Forward includes text only. Original attachments are omitted." }
