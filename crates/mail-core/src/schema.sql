@@ -84,3 +84,42 @@ CREATE TABLE IF NOT EXISTS message_media (
     message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     manifest TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS event_details (
+    account_id TEXT NOT NULL, calendar_id TEXT NOT NULL, id TEXT NOT NULL,
+    data TEXT NOT NULL, touched INTEGER NOT NULL,
+    PRIMARY KEY(account_id,calendar_id,id),
+    FOREIGN KEY(account_id,calendar_id) REFERENCES calendar_sources(account_id,id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS event_writes (
+    operation TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    calendar_id TEXT NOT NULL, data TEXT NOT NULL, state TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0, next_due INTEGER NOT NULL DEFAULT 0,
+    error TEXT, created INTEGER NOT NULL, result_id TEXT
+);
+CREATE INDEX IF NOT EXISTS event_writes_due ON event_writes(state,next_due);
+CREATE TABLE IF NOT EXISTS event_reminders (
+    account_id TEXT NOT NULL, calendar_id TEXT NOT NULL, window INTEGER NOT NULL, id TEXT NOT NULL,
+    due INTEGER NOT NULL,
+    PRIMARY KEY(account_id,calendar_id,window,id,due),
+    FOREIGN KEY(account_id,calendar_id,window,id) REFERENCES calendar_events(account_id,calendar_id,window,id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS event_reminders_due ON event_reminders(due);
+CREATE TABLE IF NOT EXISTS notice_settings (
+    account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    since INTEGER NOT NULL, mail INTEGER NOT NULL DEFAULT 1, calendar INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS notices (
+    id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, target TEXT NOT NULL, calendar_id TEXT,
+    title TEXT NOT NULL, detail TEXT NOT NULL, occurred INTEGER NOT NULL,
+    unread INTEGER NOT NULL DEFAULT 1, delivered INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS notices_date ON notices(occurred DESC);
+CREATE TABLE IF NOT EXISTS notice_seen (
+    id TEXT PRIMARY KEY, created INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notice_calendars (
+    account_id TEXT NOT NULL, calendar_id TEXT NOT NULL,
+    PRIMARY KEY(account_id,calendar_id),
+    FOREIGN KEY(account_id,calendar_id) REFERENCES calendar_sources(account_id,id) ON DELETE CASCADE
+);

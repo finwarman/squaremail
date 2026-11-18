@@ -34,6 +34,13 @@
 | INV-MEDIA-office | Office previews reject external relationships, XML document types, macros and excessive expansion. | XML contracts and native Office fixtures |
 | INV-MAIL-copy-text | The native plain reader preserves displayed/copy text and scrolls long bodies. | private-pasteboard native account probe |
 
-The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Provider access is read-only.
+| INV-CALENDAR-edit-metadata | An edit changes only selected fields, preserving attendee, recurrence, conferencing and unknown provider fields. | provider patch and native editor contracts |
+| INV-CALENDAR-edit-conflict | Changed revisions block writes; lost successful edits are acknowledged without repeating them. | synthetic conditional HTTP fixtures |
+| INV-CALENDAR-edit-queue | Pending edits, payloads, detail caches and completed receipts are bounded and survive restart. | real SQLite edit queue contracts |
+| INV-NOTICE-bounded | History and future OS reminder plans remain bounded. | SQLite/native notification probes |
+| INV-NOTICE-replay | Baselines suppress old mail; read/clear state and deduplication survive restart. | SQLite replay/native probes |
+| INV-NOTICE-permission | The bell works without permission; system permission is requested only on explicit enable. | native action boundary and offline probe |
+
+The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Mail access is read-only. Calendar writes require explicit consent and a user-queued edit.
 
 The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. A long-paragraph workload exposed large TextKit 2 graphics surfaces. The native text path preserves selection, copy and scrolling. Measurement details remain in `docs/performance.md`.

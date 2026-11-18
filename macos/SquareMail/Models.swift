@@ -21,7 +21,7 @@ enum Folder: String, CaseIterable {
 enum ReaderMode { case text, html }
 enum ReadingLayout: String { case below, right }
 enum MailboxMode { case demo, live }
-enum WorkQueue { case local, network, sync, login, media }
+enum WorkQueue { case local, network, sync, login, media, calendar, notifications }
 
 struct Account: Decodable {
     let id: String
@@ -185,6 +185,14 @@ enum CoreCommand: String {
     case refreshAccount = "refresh_account"
     case syncNext = "sync_next"
     case syncNow = "sync_now"
+    case notices
+    case noticeAction = "notice_action"
+    case noticeSetting = "notice_setting"
+    case eventDetail = "event_detail"
+    case queueEvent = "queue_event"
+    case eventWrites = "event_writes"
+    case discardEvent = "discard_event"
+    case calendarConsent = "calendar_consent"
     case media
     case mediaFile = "media_file"
 }

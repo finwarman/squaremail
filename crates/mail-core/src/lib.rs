@@ -1,8 +1,10 @@
+mod calendar;
 mod demo;
 mod media;
 mod mime;
 mod model;
 mod network;
+mod notices;
 mod oauth;
 mod providers;
 mod store;
@@ -89,7 +91,47 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             oauth::verify_refresh(&account, context)?;
             Ok(json!({}))
         }
-        Command::SyncNext => providers::sync_next(&store, context),
+        Command::SyncNext => {
+            // Alternate writes with sync pages, so queued edits cannot starve mail freshness.
+            static WRITES: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WRITES.fetch_xor(true, std::sync::atomic::Ordering::Relaxed)
+                && let Some(reply) = calendar::sync_write(&store, context)?
+            {
+                return Ok(reply);
+            }
+            providers::sync_next(&store, context)
+        }
+        Command::EventDetail { key, mode } => calendar::detail(&store, &key, mode, context),
+        Command::QueueEvent { change } => calendar::queue(&store, change),
+        Command::EventWrites => store.event_writes(),
+        Command::DiscardEvent { operation } => {
+            store.discard_event(&operation)?;
+            Ok(json!({}))
+        }
+        Command::CalendarConsent { account } => {
+            let account = store
+                .accounts()?
+                .into_iter()
+                .find(|a| a.id == account)
+                .ok_or("Account not found")?;
+            oauth::calendar_consent(&account, context)?;
+            store.resume_account(&account)?;
+            Ok(json!({}))
+        }
+        Command::Notices { delivery } => notices::poll(&store, delivery),
+        Command::NoticeAction { action, id } => {
+            store.notice_action(action, id.as_deref())?;
+            Ok(json!({}))
+        }
+        Command::NoticeSetting {
+            account,
+            channel,
+            toggle,
+        } => {
+            store.notice_setting(account.as_deref(), channel, toggle)?;
+            Ok(json!({}))
+        }
         Command::SyncNow => {
             store.sync_now()?;
             Ok(json!({}))
@@ -213,7 +255,10 @@ pub unsafe extern "C" fn squaremail_call_cancelable(
         }
         let input = unsafe { CStr::from_ptr(request) }.to_str()?;
         let request: Request = serde_json::from_str(input)?;
-        let seconds = if matches!(request.command, Command::Connect { .. }) {
+        let seconds = if matches!(
+            request.command,
+            Command::Connect { .. } | Command::CalendarConsent { .. }
+        ) {
             210
         } else {
             25

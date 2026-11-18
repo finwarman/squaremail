@@ -1,6 +1,6 @@
 # Calendar
 
-Calendar is a native, read-only month/week/day view backed by the account cache. Demo mode uses separate sample data. Google and personal Outlook live caches have been exercised; Microsoft 365 consent remains pending.
+Calendar is a native month/week/day view backed by the account cache. Demo mode uses separate sample data. Google and personal Outlook live caches have been exercised; Microsoft 365 consent remains pending.
 
 - Today, previous/next and mini-calendar navigation.
 - Per-account calendar source toggles, visible-event search and selected-day agenda.
@@ -15,12 +15,10 @@ Timed events use UTC instants. All-day events preserve calendar dates, including
 
 Current limits: at most 2,000 loaded events per visible range, 1,000 source records and 2,000 account folders. Source filtering/search currently applies to loaded visible events. Dense-calendar pagination and filtering before the limit remain unfinished. The fixed-height week/day grid shows 24 hours and the first all-day bar; the agenda includes all loaded events overlapping the selected day. Legacy custom Outlook time zones, dense schedules, recurring-series edits/deletions and VoiceOver still need live qualification.
 
-Editing, invitations, drag/resizing, remote writes, notifications, push subscriptions and sync after quitting are not implemented. Live polling targets about a minute after a resource round completes, with backoff and wake/reconnect catch-up. Initial backfill, provider limits, sleep and OS scheduling can delay that target.
+The editor supports personal-event creation and occurrence editing, with a bounded offline queue and separate write consent. A native bell and opt-in OS reminders are implemented. Invitations/attendee editing, series-wide edits, drag/resizing, push subscriptions and sync after quitting remain unfinished. Live polling targets about a minute after a resource round completes, with backoff and wake/reconnect catch-up. Initial backfill, provider limits, sleep and OS scheduling can delay that target.
 
 The disconnected synthetic native probe covers three account selections, nested folders, unified search, 30,000 cached headers, 12 calendar sources, a bounded dense-event load and repeated view release. See [performance](performance.md), [sync design](sync-design.md) and [account setup](accounts.md).
 
 Rapid toggles reuse one view pair for five seconds. Later reopenings restore the last bounded event snapshot before querying SQLite. Period changes do not wait for the network. Today has a navy date/header and a shaded week/day column. A new uncached date range still needs provider sync.
 
-Notifications are tracked separately in2103. Provider-aware creation/editing is planned in2108 with new write consent. The current model preserves title, times, location and source IDs, but does not yet retain the full organizer/attendee/conference metadata needed for editing.
-
-Provider-aware editing will use the [Google event resource](https://developers.google.com/workspace/calendar/api/v3/reference/events) and [Microsoft Graph event resource](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0). Display names and calendar labels should take precedence over generated resource addresses, while the original identifiers remain available for correct updates. Provider-only fields must survive edits. Invitation delivery needs explicit product design and user action.
+See [calendar editing](calendar-editing.md) for metadata preservation, write consent, conflicts and limits. See [notifications](notifications.md) for the bounded bell, baseline suppression and scheduled reminders. Live provider write and OS delivery qualification remain under2108/2103.

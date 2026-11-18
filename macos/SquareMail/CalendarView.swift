@@ -24,6 +24,7 @@ struct CalendarState {
 }
 
 private struct SampleEvent {
+    let key: EventKey?
     let mark: ClassicCalendarMark
     let feed: CalendarFeed?
     let sourceKey: String
@@ -37,6 +38,9 @@ private enum AgendaColumn: String {
 }
 
 final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+    var onNew: ((Date) -> Void)?
+    var onEdit: ((EventKey) -> Void)?
+    var onPending: (() -> Void)?
     var onDateChanged: ((Date) -> Void)?
     var range: (Date, Date) {
         let dates = grid.visibleDates
@@ -45,6 +49,9 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var state: CalendarState {
         CalendarState(date: grid.date, period: grid.period, feeds: feeds, query: query, hiddenSources: hiddenSources)
     }
+    private let newEvent = ClassicButton("New event")
+    private let editEvent = ClassicButton("Edit event")
+    private let pending = ClassicButton("Pending…")
     private let grid = ClassicCalendar()
     private let surface = ClassicSurface()
     private let caption = NSTextField(labelWithString: "")
@@ -88,7 +95,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         timeFormat.dateFormat = "HH:mm"
         grid.date = state.date
         grid.period = state.period
-        for view in [grid, caption, dayCaption, detail, agendaScroll, today, previous, next] { addSubview(view) }
+        for view in [grid, caption, dayCaption, detail, agendaScroll, today, previous, next, newEvent, editEvent, pending] { addSubview(view) }
         caption.font = ClassicTheme.font(17, weight: .bold)
         dayCaption.font = ClassicTheme.font(12, weight: .bold)
         detail.font = ClassicTheme.font(11)
@@ -108,6 +115,10 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             guard let self, let index = self.agendaItems.firstIndex(where: { $0.mark.id == id }) else { return }
             self.agenda.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         }
+        newEvent.onPress = { [weak self] in guard let self else { return }; onNew?(grid.date) }
+        editEvent.onPress = { [weak self] in self?.editSelected() }
+        pending.onPress = { [weak self] in self?.onPending?() }
+        newEvent.isEnabled = mode == .live; editEvent.isEnabled = false; pending.isEnabled = mode == .live
         buildAgenda()
         refresh()
     }
@@ -127,7 +138,10 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }
         let agendaHeight: CGFloat = 175
         grid.frame = NSRect(x: 3, y: 47, width: bounds.width - 6, height: max(160, bounds.height - 47 - agendaHeight))
-        dayCaption.frame = NSRect(x: 12, y: bounds.height - agendaHeight + 7, width: bounds.width - 24, height: 20)
+        dayCaption.frame = NSRect(x: 12, y: bounds.height - agendaHeight + 7, width: max(0, bounds.width - 345), height: 20)
+        for (index, button) in [newEvent, editEvent, pending].enumerated() {
+            button.frame = NSRect(x: bounds.width - 320 + CGFloat(index) * 105, y: bounds.height - agendaHeight + 2, width: 100, height: 27)
+        }
         agendaScroll.frame = NSRect(x: 4, y: bounds.height - agendaHeight + 32, width: bounds.width - 8, height: 115)
         detail.frame = NSRect(x: 12, y: bounds.height - 23, width: bounds.width - 24, height: 18)
         needsDisplay = true
@@ -161,7 +175,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             let end = event.endDay.flatMap(storageDayFormat.date(from:)) ?? Date(timeIntervalSince1970: TimeInterval(event.end))
             let mark = ClassicCalendarMark(id: key + ":" + event.id, title: event.title, start: start, end: end,
                                            color: source.color, span: event.allDay ? .allDay : .timed)
-            return SampleEvent(mark: mark, feed: nil, sourceKey: key, sourceName: source.name,
+            return SampleEvent(key: EventKey(account: event.accountId, calendar: event.calendarId, id: event.id), mark: mark, feed: nil, sourceKey: key, sourceName: source.name,
                                location: event.location, notes: source.name + (event.location.isEmpty ? "" : " · " + event.location))
         }
         refresh()
@@ -215,6 +229,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         agenda.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         agenda.dataSource = self
         agenda.delegate = self
+        agenda.target = self; agenda.doubleAction = #selector(editSelected)
         agenda.setAccessibilityLabel("Events on selected day")
         agendaScroll.documentView = agenda
         agendaScroll.hasVerticalScroller = true
@@ -245,8 +260,14 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        editEvent.isEnabled = mode == .live && agendaItems.indices.contains(agenda.selectedRow)
         guard agendaItems.indices.contains(agenda.selectedRow) else { return }
         detail.stringValue = agendaItems[agenda.selectedRow].notes
+    }
+
+    @objc private func editSelected() {
+        guard agendaItems.indices.contains(agenda.selectedRow), let key = agendaItems[agenda.selectedRow].key else { return }
+        onEdit?(key)
     }
 
     func selfTest() throws {
@@ -292,7 +313,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 : calendar.date(byAdding: .minute, value: minutes, to: start)!
             let mark = ClassicCalendarMark(id: "sample-event-\(index)", title: title, start: start, end: end,
                                            color: feed.color, span: minutes == Self.minutesInDay ? .allDay : .timed)
-            return SampleEvent(mark: mark, feed: feed, sourceKey: feed.rawValue, sourceName: feed.rawValue, location: location,
+            return SampleEvent(key: nil, mark: mark, feed: feed, sourceKey: feed.rawValue, sourceName: feed.rawValue, location: location,
                                notes: "Sample event from \(feed.rawValue). Live calendar connections and editing are not enabled.")
         }
     }

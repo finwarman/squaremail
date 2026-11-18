@@ -2,6 +2,7 @@ use crate::{Result, model::*};
 use rusqlite::{Connection, params};
 
 mod media;
+mod notices;
 mod sync;
 
 pub(crate) const PAGE_LIMIT: usize = 250;

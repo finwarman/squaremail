@@ -624,7 +624,15 @@ fn calendar_events(
             removed.push(string(item, "id"));
             continue;
         }
-        events.push(parse_event(account, &job.resource, item)?);
+        let mut event = parse_event(account, &job.resource, item)?;
+        event.reminder_times = crate::notices::reminder_times(
+            account,
+            &event,
+            item,
+            &reply.value["defaultReminders"],
+            reply.value["timeZone"].as_str().unwrap_or("UTC"),
+        );
+        events.push(event);
     }
     let next = next_value(
         &reply.value,
@@ -654,6 +662,22 @@ fn calendar_events(
         if done { POLL_SECONDS } else { 0 },
     )
 }
+pub(crate) fn edit_summary(
+    account: &Account,
+    key: &crate::calendar::EventKey,
+    raw: &Value,
+) -> Result<CalendarEvent> {
+    let mut event = parse_event(account, &key.calendar, raw)?;
+    event.reminder_times = crate::notices::reminder_times(
+        account,
+        &event,
+        raw,
+        &Value::Null,
+        raw["start"]["timeZone"].as_str().unwrap_or("UTC"),
+    );
+    Ok(event)
+}
+
 fn parse_event(account: &Account, calendar: &str, value: &Value) -> Result<CalendarEvent> {
     let google = account.provider == Provider::Gmail;
     let all_day = if google {
@@ -779,6 +803,7 @@ fn parse_event(account: &Account, calendar: &str, value: &Value) -> Result<Calen
     .map(|d| d.timestamp_millis())
     .unwrap_or(0);
     Ok(CalendarEvent {
+        reminder_times: Vec::new(),
         version,
         account_id: account.id.clone(),
         calendar_id: calendar.into(),

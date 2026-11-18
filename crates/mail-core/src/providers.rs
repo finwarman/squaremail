@@ -12,6 +12,7 @@ const GRAPH_ROOT: &str = "https://graph.microsoft.com/v1.0/me";
 mod media;
 mod sync;
 pub(crate) use media::{attachment_bytes, media_content};
+pub(crate) use sync::edit_summary;
 pub(crate) use sync::sync_next;
 
 pub(crate) fn body(

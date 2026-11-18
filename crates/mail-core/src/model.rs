@@ -106,6 +106,32 @@ pub(crate) enum Command {
     SyncNext,
     SyncNow,
     SyncStatus,
+    EventDetail {
+        key: crate::calendar::EventKey,
+        mode: BodyMode,
+    },
+    QueueEvent {
+        change: crate::calendar::EventChange,
+    },
+    EventWrites,
+    DiscardEvent {
+        operation: String,
+    },
+    CalendarConsent {
+        account: String,
+    },
+    Notices {
+        delivery: crate::notices::NoticeDelivery,
+    },
+    NoticeAction {
+        action: crate::notices::NoticeAction,
+        id: Option<String>,
+    },
+    NoticeSetting {
+        account: Option<String>,
+        channel: crate::notices::NoticeChannel,
+        toggle: crate::notices::Toggle,
+    },
     Calendars,
     Events {
         start: i64,
@@ -183,6 +209,8 @@ pub(crate) struct CalendarSource {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CalendarEvent {
+    #[serde(default)]
+    pub(crate) reminder_times: Vec<i64>,
     #[serde(default)]
     pub(crate) version: i64,
     pub(crate) account_id: String,

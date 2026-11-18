@@ -1,6 +1,8 @@
 use super::*;
 use serde_json::{Value, json};
 
+mod calendar;
+
 const EVENT_LIMIT: usize = 2000;
 const WINDOW_LIMIT: i64 = 6;
 
@@ -193,6 +195,7 @@ impl Store {
                 ],
                 |r| {
                     Ok(CalendarEvent {
+                        reminder_times: Vec::new(),
                         account_id: r.get(0)?,
                         calendar_id: r.get(1)?,
                         id: r.get(2)?,
@@ -281,6 +284,11 @@ impl Store {
             .into_iter()
             .any(|a| a.id == job.account_id && a.provider == Provider::Gmail);
         for (message, memberships) in changes {
+            let is_new = !tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE id=?1)",
+                [&message.id],
+                |r| r.get::<_, bool>(0),
+            )?;
             Self::upsert(&tx, message)?;
             if job.kind == JobKind::RecentMail {
                 let resources = if gmail {
@@ -345,6 +353,15 @@ impl Store {
                     params![job.account_id, job.resource, message.remote_id],
                 )?;
             }
+            super::notices::observe_mail(
+                &tx,
+                message,
+                if is_new {
+                    crate::notices::Arrival::New
+                } else {
+                    crate::notices::Arrival::Existing
+                },
+            )?;
         }
         for remote in removed {
             if job.resource.is_empty() {
@@ -405,12 +422,22 @@ impl Store {
         if !self.connected(&job.account_id)? {
             return Err("Account is disconnected".into());
         }
+        let baseline: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM notice_calendars WHERE account_id=?1 AND calendar_id=?2)",
+            params![job.account_id, job.resource],
+            |r| r.get(0),
+        )?;
+        let baseline = if baseline {
+            crate::notices::EventBaseline::Known
+        } else {
+            crate::notices::EventBaseline::Initial
+        };
         let snapshot = state["snapshot"].as_bool() == Some(true);
         for e in events {
             if snapshot {
                 tx.execute("INSERT INTO event_stage VALUES(?1,?2,?3,?4,?5) ON CONFLICT(account_id,calendar_id,window,id) DO UPDATE SET data=excluded.data", params![job.account_id,job.resource,job.window,e.id,serde_json::to_string(e)?])?;
             } else {
-                save_event(&tx, job.window, e)?;
+                cache_event(&tx, job.window, e, baseline)?;
             }
         }
         for id in removed {
@@ -426,10 +453,11 @@ impl Store {
             )?;
             let mut rows = stmt.query(params![job.account_id, job.resource, job.window])?;
             while let Some(row) = rows.next()? {
-                save_event(
+                cache_event(
                     &tx,
                     job.window,
                     &serde_json::from_str::<CalendarEvent>(&row.get::<_, String>(0)?)?,
+                    baseline,
                 )?;
             }
             drop(rows);
@@ -439,13 +467,51 @@ impl Store {
                 params![job.account_id, job.resource, job.window],
             )?;
         }
+        if state["next"].is_null() {
+            tx.execute(
+                "INSERT OR IGNORE INTO notice_calendars VALUES(?1,?2)",
+                params![job.account_id, job.resource],
+            )?;
+        }
         self.finish_job(job, state, delay)?;
         tx.commit()?;
         Ok(())
     }
 }
+fn cache_event(
+    tx: &Connection,
+    window: i64,
+    event: &CalendarEvent,
+    baseline: crate::notices::EventBaseline,
+) -> Result<()> {
+    let previous: Option<i64> = tx.query_row(
+        "SELECT MAX(version) FROM calendar_events WHERE account_id=?1 AND calendar_id=?2 AND id=?3",
+        params![event.account_id, event.calendar_id, event.id],
+        |r| r.get(0),
+    )?;
+    save_event(tx, window, event)?;
+    if previous.is_none_or(|v| event.version > v) {
+        super::notices::observe_event(tx, event, baseline)?;
+    }
+    Ok(())
+}
 fn save_event(tx: &Connection, window: i64, e: &CalendarEvent) -> Result<()> {
     tx.execute("INSERT INTO calendar_events(account_id,calendar_id,window,id,title,start,end,all_day,start_day,end_day,location,version) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(account_id,calendar_id,window,id) DO UPDATE SET title=excluded.title,start=excluded.start,end=excluded.end,all_day=excluded.all_day,start_day=excluded.start_day,end_day=excluded.end_day,location=excluded.location,version=excluded.version WHERE excluded.version>=calendar_events.version",params![e.account_id,e.calendar_id,window,e.id,e.title,e.start,e.end,e.all_day,e.start_day,e.end_day,e.location,e.version])?;
+    let newest: i64 = tx.query_row(
+        "SELECT MAX(version) FROM calendar_events WHERE account_id=?1 AND calendar_id=?2 AND id=?3",
+        params![e.account_id, e.calendar_id, e.id],
+        |r| r.get(0),
+    )?;
+    if e.version >= newest {
+        tx.execute(
+            "DELETE FROM event_reminders WHERE account_id=?1 AND calendar_id=?2 AND id=?3",
+            params![e.account_id, e.calendar_id, e.id],
+        )?;
+        for due in e.reminder_times.iter().take(5) {
+            tx.execute("INSERT OR IGNORE INTO event_reminders SELECT account_id,calendar_id,window,id,?4 FROM calendar_events WHERE account_id=?1 AND calendar_id=?2 AND id=?3",params![e.account_id,e.calendar_id,e.id,due])?;
+        }
+    }
+    tx.execute("INSERT OR IGNORE INTO event_reminders SELECT account_id,calendar_id,?4,id,due FROM event_reminders WHERE account_id=?1 AND calendar_id=?2 AND id=?3",params![e.account_id,e.calendar_id,e.id,window])?;
     // Overlapping month windows share the newest server version of an occurrence.
     tx.execute("WITH latest AS MATERIALIZED (SELECT title,start,end,all_day,start_day,end_day,location,version FROM calendar_events WHERE account_id=?1 AND calendar_id=?2 AND id=?3 ORDER BY version DESC LIMIT 1) UPDATE calendar_events SET (title,start,end,all_day,start_day,end_day,location,version)=(SELECT * FROM latest) WHERE account_id=?1 AND calendar_id=?2 AND id=?3",params![e.account_id,e.calendar_id,e.id])?;
     Ok(())
@@ -565,6 +631,7 @@ mod tests {
         let month = 1735689600;
         let j = job(&store, "a", JobKind::Calendar, "primary", month);
         let event = CalendarEvent {
+            reminder_times: Vec::new(),
             version: 0,
             account_id: "a".into(),
             calendar_id: "primary".into(),
@@ -816,6 +883,7 @@ mod qualification {
             }
             for i in 0..700 {
                 let event = CalendarEvent {
+                    reminder_times: Vec::new(),
                     version: 1,
                     account_id: key.into(),
                     calendar_id: format!("calendar-{}", i % 4),

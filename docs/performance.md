@@ -116,6 +116,16 @@ The current Rust-only 100,000-message probe measured inbox paging at 0.37 ms p95
 
 [Compact media/calendar evidence](benchmarks/2026-11-18-media-calendar.json) records the workload and limits. Add `--calendar` or `--media-fixture /absolute/path/to/generated.eml` to the profiling command. `scripts/media-fixture.py` creates the offline media input.
 
+## Calendar editing and bell history
+
+The editor and notification service are created on demand. Provider JSON remains on disk in a bounded detail cache; it is not loaded with every calendar row. The bell retains 50 entries, and one worker coalesces local polling. Edits have a separate serial network queue and bounded durable storage.
+
+An uncontended synthetic editor/bell snapshot measured 81.2 MiB across the app and one attributed helper, with no WebKit process. It predates the final notification navigation/policy fixes. It excludes live sync, desktop delivery and shared OS services outside that family. Diagnostic startup includes fixture validation and panel creation, so its startup fields are not normal launch timings. Native functional checks observed cached editor opening around 88–149 ms; those checks are not a p95 latency qualification.
+
+The release 100,000-message probe measured inbox paging at 0.26 ms p95, selective search at 0.13 ms and a broad match at 69.4 ms. Ten-account inbox pages measured 0.28/0.30 ms for account/unified queries. Broad unified search was 55.6 ms. The small cached-reader bridge probe measured 1.01 ms p95; its one warm in-process readiness sample was 464 ms. These are different workloads, not a before/after comparison.
+
+[Compact editing/notification evidence](benchmarks/2026-11-18-calendar-notifications.json) records the limits. `scripts/check-calendar-actions.sh` exercises cached editing, notification-to-mail navigation and bell read/clear state without consent, provider writes or OS alerts. `scripts/profile.py --calendar-actions` measures the generated action fixture. Foreground GUI qualification should move to an isolated macOS guest before routine use; a virtual monitor alone does not isolate host focus. Fin requested non-disruptive testing on 18 November.
+
 ## Reproduce
 
 `scripts/profile.py` launches uniquely identified disposable copies of the app, uses a supplied local cache, samples process-family footprint and terminates only its own app. Use generated data:

@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-18",
+  "machine": "Apple M5 Max, 64 GB, macOS 26.6, arm64 release, 1400x920 points at 2x",
+  "core_100000": {
+    "common_search_p95_ms": 69.36137500000001,
+    "list_p95_ms": 0.25629199999999996,
+    "messages": 100000,
+    "seed_ms": 10210.864083,
+    "selective_search_p95_ms": 0.128208,
+    "sqlite_bytes": 42049536
+  },
+  "multi_account_100000": {
+    "account_common": {
+      "p95_ms": 16.837917
+    },
+    "account_inbox": {
+      "p95_ms": 0.27849999999999997
+    },
+    "folder_common": {
+      "p95_ms": 12.93525
+    },
+    "scoped_selective": {
+      "p95_ms": 0.077416
+    },
+    "unified_common": {
+      "p95_ms": 55.607125
+    },
+    "unified_inbox": {
+      "p95_ms": 0.2985
+    },
+    "unified_selective": {
+      "p95_ms": 0.028584
+    }
+  },
+  "reader_bridge": {
+    "cached_body_bridge_p95_ms": 1.0080833453685045,
+    "html_renderer_created": false,
+    "in_process_inbox_ready_ms": 464.22558336053044,
+    "rows": 40
+  },
+  "active_editor_bell_family_mib": 81.17352294921875,
+  "app_owned_helpers": 1,
+  "webkit_helpers": 0,
+  "limits": [
+    "Synthetic fixtures, warm OS caches, other applications running.",
+    "The editor/bell memory snapshot predates final notification navigation/policy fixes. It excludes live sync and desktop delivery. Shared OS notification services can be outside the attributed family.",
+    "The editor diagnostic includes fixture validation and panel creation; its startup fields are not ordinary mail startup measurements.",
+    "Core query timings exclude bridge decoding, drawing and provider calls. Broad search misses the selective-query target.",
+    "Native functional checks observed cached editor opening around 88 to 149 ms; these are not a p95 latency qualification.",
+    "No finite run proves leak freedom. Live Google/Outlook.com/Microsoft365 writes and macOS notification delivery remain unqualified."
+  ]
+}

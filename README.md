@@ -26,23 +26,25 @@ The build creates a local ad-hoc-signed app. Xcode is not required to run the fi
 - Side by side toolbar toggle and View menu choices for a reading pane below or on the right. The choice survives restart; the right-pane list shows sender, date, subject and preview.
 - Older/Newer paging retains at most 250 message headers.
 - Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
-- Read-only Gmail and Microsoft Graph adapters, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
+- Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
 - Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
 - Passive HTML with scripts and direct web requests blocked. Load images opts in for the current message; Hide images or changing messages resets access.
 - Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
 - Five-second idle release of the HTML renderer after returning to text.
+- Native bell history with a 50-entry limit, per-account preferences and opt-in macOS alerts/reminders.
+- Provider-aware calendar creation/editing with separate write consent, bounded offline queue and conditional patches.
 - Lazy native calendar UI with today highlights, month/week/day, source filters, search and agenda. One warm view pair is kept for five seconds; a bounded event snapshot survives view release. Demo mode remains separate from provider data.
 
 See [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
 
-Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Read-only calendar caches and sync are wired up. Editing and notifications are not implemented. See [calendar UI](docs/calendar.md) and [media previews and limits](docs/attachments.md).
+Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Calendar caches, sync, editing and notifications are wired up. See [editing and write consent](docs/calendar-editing.md) and [notification behaviour](docs/notifications.md). See [calendar UI](docs/calendar.md) and [media previews and limits](docs/attachments.md).
 
 ![Square Mail calendar with sample events](docs/images/calendar.png)
 
 ## Limits
 
-This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads were exercised; Microsoft 365 consent and broader live qualification remain pending. It does not send mail, edit provider state or deliver notifications. Header backfill is gradual, and provider reconciliation is still being qualified. Search covers downloaded headers, previews and text, not uncached provider bodies. Calendar views cap loaded events at 2,000, and account folder/source lists have explicit bounds. Dense-calendar pagination remains unfinished. Remote images are blocked by default. Media previews cap downloads at 8 MiB and support limited formats. Office packages with external relationships, macros or embedded objects are blocked. HTML formatting is simplified. There is no claim of performance parity with any other client.
+This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads were exercised; Microsoft 365 consent and broader live qualification remain pending. It does not send mail. Calendar writes require separate consent; native alerts require macOS permission. New write/delivery paths have synthetic qualification; live provider and OS qualification remain pending. Header backfill is gradual, and provider reconciliation is still being qualified. Search covers downloaded headers, previews and text, not uncached provider bodies. Calendar views cap loaded events at 2,000, and account folder/source lists have explicit bounds. Dense-calendar pagination remains unfinished. Remote images are blocked by default. Media previews cap downloads at 8 MiB and support limited formats. Office packages with external relationships, macros or embedded objects are blocked. HTML formatting is simplified. There is no claim of performance parity with any other client.
 
 Mail is stored as plaintext in `~/Library/Application Support/Square Mail/`, with user-only filesystem permissions. Tokens are stored separately in macOS Keychain. No telemetry is configured.
 

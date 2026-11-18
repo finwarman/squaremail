@@ -13,3 +13,5 @@ trap 'rm -rf "$test_dir"' EXIT
 
 ./scripts/check-accounts.sh
 ./scripts/check-media.sh
+
+./scripts/check-calendar-actions.sh

@@ -133,6 +133,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 catch { fputs("MEDIA FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
             }
             if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
+            if arguments.contains("--check-calendar-actions") {
+                do {
+                    let mode: CalendarProbe = arguments.contains("--preview-calendar-actions") ? .preview : .validate
+                    try await controller.checkActions(mode)
+                    if mode == .validate { NSApp.terminate(nil) }
+                } catch { fputs("ACTIONS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-accounts") {
                 do { try await controller.checkAccounts(); print("Offline account switching, folders, unified search and calendar cache verified") }
                 catch { fputs("ACCOUNTS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
@@ -157,7 +164,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                         report["layers"] = LayerReport.collect(layout)
                     }
                     try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: path, options: .atomic)
-                    if arguments.contains("--perf-media") {
+                    if arguments.contains("--perf-actions") {
+                        report["calendar_actions"] = ["cached_editor": true, "bell_limit": 50, "provider_calls": false]
+                    } else if arguments.contains("--perf-media") {
                         report["media"] = ["local_images_and_pdf_thumbnail": true]
                     } else if arguments.contains("--perf-calendar") {
                         report["calendar"] = try await controller.measureCalendar()

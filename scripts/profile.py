@@ -23,6 +23,7 @@ parser.add_argument("--heap", action="store_true")
 parser.add_argument("--visible-only", action="store_true")
 parser.add_argument("--calendar", action="store_true")
 parser.add_argument("--media-fixture", type=pathlib.Path)
+parser.add_argument("--calendar-actions", action="store_true")
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 results = []
@@ -58,6 +59,8 @@ for run in range(args.runs):
     with log_path.open("w") as log:
         start = time.monotonic()
         flags = (["--perf-html"] if args.html else []) + (["--perf-html-idle"] if args.html_idle else []) + (["--perf-stress"] if args.stress else []) + (["--perf-visible-only"] if args.visible_only else []) + (["--perf-calendar"] if args.calendar else [])
+        if args.calendar_actions:
+            flags += ["--check-calendar-actions", "--preview-calendar-actions", "--perf-actions"]
         if args.media_fixture:
             flags += ["--check-media", str(args.media_fixture.resolve()), "--preview-media", "--perf-media"]
         process = subprocess.Popen(["/usr/bin/open", "-n", "-W", "--stdout", str(log_path), "--stderr", str(log_path),

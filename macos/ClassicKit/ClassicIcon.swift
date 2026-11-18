@@ -3,7 +3,7 @@ import AppKit
 private enum PixelFill { case outline, solid }
 
 public enum ClassicIcon {
-    case mail, inbox, sent, draft, trash, folder, search, sync, star, account, html, text, attach, settings, calendar
+    case mail, inbox, sent, draft, trash, folder, search, sync, star, account, html, text, attach, settings, calendar, bell
 
     public func draw(in rect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -77,6 +77,14 @@ public enum ClassicIcon {
             box(1, 2, 14, 12, 0x2B537A); box(2, 3, 12, 10, 0xE8F0F5)
             box(4, 5, 4, 4, 0xE7B47C); box(3, 9, 6, 3, 0x317AC0)
             box(10, 5, 3, 1, 0x777777); box(10, 8, 3, 1, 0x777777)
+        case .bell:
+            box(7, 1, 2, 2, 0x85650D)
+            box(5, 3, 6, 2, 0x85650D)
+            box(4, 5, 8, 6, 0x85650D)
+            box(5, 4, 6, 7, 0xFFD676)
+            box(3, 11, 10, 2, 0x85650D)
+            box(4, 11, 8, 1, 0xFFE99A)
+            box(7, 14, 2, 1, 0x85650D)
         case .calendar:
             box(1, 2, 14, 13, 0x404040); box(2, 3, 12, 11, 0xFFFFFF)
             box(2, 3, 12, 3, 0x0A246A)

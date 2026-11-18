@@ -45,6 +45,7 @@ struct TokenResponse {
     access_token: String,
     refresh_token: Option<String>,
     expires_in: Option<u64>,
+    scope: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -55,6 +56,8 @@ struct Credentials {
     access_token: String,
     refresh_token: Option<String>,
     expires_at: u64,
+    #[serde(default)]
+    calendar_write: bool,
 }
 
 fn endpoints(provider: Provider) -> Result<(&'static str, &'static str, &'static str)> {
@@ -79,6 +82,50 @@ pub(crate) fn connect(
     client_secret: Option<&str>,
     context: &Context<'_>,
 ) -> Result<Account> {
+    connect_mode(
+        provider,
+        client_id,
+        client_secret,
+        Permission::Read,
+        None,
+        context,
+    )
+}
+#[derive(Clone, Copy)]
+enum Permission {
+    Read,
+    CalendarWrite,
+}
+pub(crate) fn calendar_consent(account: &Account, context: &Context<'_>) -> Result<()> {
+    connect_mode(
+        account.provider,
+        "",
+        None,
+        Permission::CalendarWrite,
+        Some(&account.id),
+        context,
+    )?;
+    if !calendar_writable(account)? {
+        return Err(
+            "Calendar write permission was not granted. Read access remains available.".into(),
+        );
+    }
+    Ok(())
+}
+pub(crate) fn calendar_writable(account: &Account) -> Result<bool> {
+    let raw = get_generic_password(KEYCHAIN_SERVICE, &account.id)
+        .map_err(|_| "Connect this account first")?;
+    let credentials: Credentials = serde_json::from_slice(&raw)?;
+    Ok(credentials.calendar_write)
+}
+fn connect_mode(
+    provider: Provider,
+    client_id: &str,
+    client_secret: Option<&str>,
+    permission: Permission,
+    expected: Option<&str>,
+    context: &Context<'_>,
+) -> Result<Account> {
     let saved = load_client(provider).ok();
     let client_id = if client_id.trim().is_empty() {
         saved.as_ref().map(|v| v.client_id.as_str()).unwrap_or("")
@@ -94,7 +141,20 @@ pub(crate) fn connect(
             .filter(|v| v.client_id == client_id)
             .and_then(|v| v.client_secret.as_deref())
     });
-    let (authorize, token_endpoint, scopes) = endpoints(provider)?;
+    let (authorize, token_endpoint, read_scopes) = endpoints(provider)?;
+    let scopes = if matches!(permission, Permission::CalendarWrite) {
+        match provider {
+            Provider::Gmail => {
+                "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+            }
+            Provider::Outlook => {
+                "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read https://graph.microsoft.com/Calendars.ReadWrite"
+            }
+            Provider::Local => return Err("Local calendars have no provider consent".into()),
+        }
+    } else {
+        read_scopes
+    };
     let listener = TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
     let host = if provider == Provider::Outlook {
@@ -152,6 +212,15 @@ pub(crate) fn connect(
         email,
         provider,
     };
+    if expected.is_some_and(|id| id != account.id) {
+        return Err("A different account was chosen. Existing credentials were kept.".into());
+    }
+    let granted = tokens.scope.as_deref().unwrap_or(scopes);
+    let calendar_write = granted.split_whitespace().any(|s| {
+        s == "https://www.googleapis.com/auth/calendar.events"
+            || s.eq_ignore_ascii_case("Calendars.ReadWrite")
+            || s.eq_ignore_ascii_case("https://graph.microsoft.com/Calendars.ReadWrite")
+    });
     let credentials = Credentials {
         provider,
         client_id: client_id.into(),
@@ -159,6 +228,7 @@ pub(crate) fn connect(
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         expires_at: now() + tokens.expires_in.unwrap_or(3600),
+        calendar_write,
     };
     let lock = account_lock(&account.id)?;
     let _guard = lock.lock().map_err(|_| "Credential lock failed")?;

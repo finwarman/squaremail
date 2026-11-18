@@ -36,6 +36,8 @@ final class MailCore {
     private let sync = MailCore.makeQueue("sync", limit: 1)
     private let login = MailCore.makeQueue("login", limit: 1)
     private let media = MailCore.makeQueue("media", limit: 1)
+    private let calendar = MailCore.makeQueue("calendar", limit: 1)
+    private let notifications = MailCore.makeQueue("notifications", limit: 1)
     private let renderer: MediaRenderer
     private let directory: URL
 
@@ -86,6 +88,8 @@ final class MailCore {
                 case .sync: sync.addOperation(work)
                 case .login: login.addOperation(work)
                 case .media: media.addOperation(work)
+                case .calendar: calendar.addOperation(work)
+                case .notifications: notifications.addOperation(work)
                 }
             }
         }, onCancel: { ticket.cancel() })

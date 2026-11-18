@@ -113,7 +113,7 @@ impl std::fmt::Display for HttpError {
         match self.status {
             401 | 403 => write!(
                 f,
-                "Sign-in or additional read consent is required (HTTP {})",
+                "Sign-in or additional consent is required (HTTP {})",
                 self.status
             ),
             429 => write!(f, "Provider rate limit. Sync will retry later"),
