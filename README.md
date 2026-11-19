@@ -1,80 +1,27 @@
 # Square Mail
 
-A native macOS email client with a reusable Visual Basic-era UI system.
+A native macOS mail and calendar client with a Visual Basic-era interface. Swift/AppKit UI, Rust core and local SQLite search. Classic and Pink themes.
 
-![Square Mail native reader](docs/images/squaremail.png)
+[Download the launcher](https://f1nb0.dev/apps/) · [Screenshots](docs/images/) · [Design](docs/design.md)
 
-The interface uses Swift and AppKit. The mail engine uses Rust. Lists, scrolling, selection, focus, text editing and window management stay native. WebKit is created only when an HTML body is requested. There is no browser application shell.
+- Gmail and Outlook.com/Live/Microsoft 365 accounts, folders and a unified inbox.
+- Offline reading, fuzzy search, gradual body caching and on-demand attachments.
+- Calendars, reminders, drafts, replies and reversible mail actions.
 
-## Run
+Preview software for macOS 14+. Apple Silicon is qualified; broader provider and live write testing remains open. Gmail preview sign-in requires the test audience. Mail is cached locally in plaintext; tokens use Keychain. Remote images are blocked by default.
 
-macOS 14+, Apple command-line developer tools, Rust and Swift are required. Development is currently qualified on Apple Silicon only.
+## Build
+
+Requires Rust, Swift and Apple command-line developer tools.
 
 ```sh
-./scripts/build.sh
+SQUAREMAIL_ADHOC=1 ./scripts/build.sh
 open ".build/Square Mail.app"
+SQUAREMAIL_ADHOC=1 ./scripts/check.sh
 ```
 
-Publisher builds use persistent local signing and desktop provider configuration. Standalone developers can use `SQUAREMAIL_ADHOC=1` and Accounts / Advanced setup. Xcode is not required to run the finished app. Apple Developer ID signing and notarization remain pending.
+Source builds need [your own OAuth setup](docs/accounts.md). Ad-hoc signing may prompt for Keychain access. Publisher signing and app registrations are not included.
 
-Help / App updates opens the installed f1nb0 Apps launcher, or [its download page](https://f1nb0.dev/apps/) if it is absent. Activation is asynchronous. Mail adds no updater timer or download worker. Classic and Pink share a [theme source](ui/README.md) with WordCraft Fin.
+[Architecture](docs/architecture.md) · [Contracts](docs/invariants.md) · [Limits and roadmap](docs/roadmap.md) · [Shared theme source](ui/README.md)
 
-## Current reader
-
-- Local demo mailbox, separate from personal mail.
-- Import `.eml`, including MIME text/HTML alternatives and encoded headers.
-- Persistent SQLite WAL/FTS5 search over sender names/addresses, subjects, previews and cached text. Optional bounded fuzzy fallback, account/folder scope, clear button and approximate-match feedback. See [search behavior](docs/search.md).
-- Native reusable rows with bounded pages and a draggable reading-pane divider.
-- Side by side toolbar toggle and View menu choices for a reading pane below or on the right. The choice survives restart; the right-pane list shows sender, date, subject and preview.
-- Older/Newer paging retains at most 250 message headers.
-- Global Mail/Calendar, sync, accounts and workspace navigation. Reply, Forward, Archive, Trash, Move, read/flag/pin and text/HTML controls live in the selected message pane, with More overflow in narrow layouts. Right-click actions remain available. Delete moves to Trash; there is no permanent-delete command.
-- Progressive older-body caching for offline search, with small lower-priority batches and a saved pause option. Attachments stay on demand.
-- Automatic read after two seconds of visible ready content, with a saved manual-reading option and persistent per-email Keep unread until explicitly marked read. Offline read flags queue without reloading the body.
-- Native reply/reply-all/forward and To/CC/BCC composition, bounded local autosaving drafts and an offline outbox with explicit send review.
-- Optional plain-text compact spacing preserves quote nesting, bullets and separators. Calendar shows current date/time and a day/week time marker with separate today/selection highlights.
-- Readable plain-text links condense email/Markdown links and long URLs, with full hover targets and copy. Compact spacing also removes invisible newsletter padding. See [reader behavior](docs/reader-text.md).
-- Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
-- Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh. Published preview builds supply desktop application configuration so recipients choose a provider and sign in. Gmail preview users must be on the test audience.
-- Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
-- Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
-- One Refresh action with a muted static idle bar, persistent batch progress, account/operation detail and distinct retry/offline/completion states. Classic segmented indicators keep unknown totals indeterminate; image loading uses known item counts.
-- Passive HTML with scripts and direct web requests blocked. Load images opts in for the current message; Hide images or changing messages resets access.
-- Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
-- Five-second idle release of the HTML renderer after returning to text.
-- Native bell history with a 50-entry limit, per-account preferences and opt-in macOS alerts/reminders.
-- Provider-aware calendar creation/editing with separate write consent, bounded offline queue, local drafts and conditional patches.
-- Lazy native calendar UI with today highlights, month/week/day, source filters, search and a resizable agenda below or on the right. One warm view pair is kept for five seconds; a bounded event snapshot survives view release. Demo mode remains separate from provider data.
-
-See [mail actions and drafts](docs/mail-actions.md), [design/themes](docs/design.md), [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
-
-Open Calendar from its toolbar button or ⌘3. Return to Mail with ⌘4. Calendar caches, sync, editing and notifications are wired up. See [editing and write consent](docs/calendar-editing.md) and [notification behaviour](docs/notifications.md). See [calendar UI](docs/calendar.md) and [media previews and limits](docs/attachments.md).
-
-![Square Mail calendar with sample events](docs/images/calendar.png)
-
-## Limits
-
-This is a reader prototype. Gmail and personal Outlook live sign-in/cache reads were exercised; Microsoft 365 consent and broader live qualification remain pending. Mail changes and sends require separate consent; calendar writes have their own consent and native alerts require macOS permission. Mail/calendar writes and delivery paths have synthetic qualification; live provider and OS qualification remain pending. Composition is plain text and forwarding omits attachments. Drafts are local, not cross-device. Uncertain sends require checking Sent before recovery. Header backfill is gradual, and provider reconciliation is still being qualified. Search covers downloaded headers, previews and text, not uncached provider bodies. Calendar views cap loaded events at 2,000, and account folder/source lists have explicit bounds. Dense-calendar pagination remains unfinished. Remote images are blocked by default. Media previews cap downloads at 8 MiB and support limited formats. Office packages with external relationships, macros or embedded objects are blocked. HTML formatting is simplified. There is no claim of performance parity with any other client.
-
-Mail is stored as plaintext in `~/Library/Application Support/Square Mail/`, with user-only filesystem permissions. Tokens are stored separately in macOS Keychain. No telemetry is configured.
-
-## UI system
-
-View > Appearance offers Classic and Pink. The saved choice applies after restart. Mail/document content retains its own colors; OS controls retain macOS styling.
-
-`ClassicKit` is an independent Swift package product. It has no mail or Rust dependency. It provides the palette, Tahoma-first font selection, raised/inset borders, original pixel icons, buttons, title bars and native table cells. Coordinates use integral logical points; macOS draws at the display's backing scale, including 2× Retina. OS-owned sheets retain macOS styling.
-
-Visual references: [visualbasic.world](https://visualbasic.world/), [Double Dragon Outlook Bar](https://github.com/Planet-Source-Code/vlad-vissoultchev-double-dragon-outlook-bar-control-photoshop-style-color-picker-now-witho__1-36529), and [Philip Naparan's inventory system](https://github.com/Planet-Source-Code/philip-v-naparan-a-complete-inventory-and-account-receivable-system-updated__1-62781). Their code, icons and fonts are not copied. Tahoma is used only when installed on the user's Mac.
-
-## Check
-
-```sh
-./scripts/check.sh
-```
-
-The native integration probe starts a temporary demo mailbox and exercises the actual AppKit controller, Rust bridge, SQLite search and body reader. It uses hidden, non-activating windows and never signs in or contacts a provider. [Control checks](docs/ui-testing.md) also cover unsaved-edit prompts, local calendar drafts, menu actions and close. Provider live qualification remains a separate release gate.
-
-`scripts/profile.py` measures native selection through body layout and draw submission, startup, and process-family footprint. It can run a 1,000-switch stress test and include WebKit helpers. See [the performance method](docs/performance.md) before comparing numbers.
-
-Original project code is MIT licensed. The project starts private under `finwarman/squaremail`, with public release planned after the release gates are met.
-
-The original app icon uses editable geometry in `assets/icon.json`. SVG/PNG previews are in `assets/`; the app bundles `macos/Resources/AppIcon.icns`. Run `scripts/make-icon.sh` after editing the source.
+MIT licensed. Icons and UI artwork are original; Windows fonts are not bundled.

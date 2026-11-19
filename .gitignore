@@ -7,3 +7,10 @@ target/
 local-oauth.json
 artifacts/
 __pycache__/
+
+# Local release bundles and credentials
+builds/
+.env.*
+*.p12
+*.pfx
+*.keychain*

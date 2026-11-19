@@ -36,7 +36,7 @@ References: [authorization code and PKCE](https://learn.microsoft.com/en-us/entr
 
 The cached reader opens before networking. One scheduler runs while the app is open, catches up after wake/reconnect and retries failures with persisted backoff. Normal mail/calendar polling targets about a minute after each completed resource round. Backfill, throttling, sleep and OS scheduling can delay that target. Quitting stops sync. No webhook service or quit-time background agent is installed.
 
-Header backfill is paged and resumes after restart. New-mail work is separate from archive backfill. Gmail uses history cursors; Graph uses per-folder delta plus a bounded recent-message refresh. Bodies download when opened and remain cached. An uncached body needs an online connection. Search covers cached headers/previews and downloaded text, not unread remote bodies. It remains full-text/prefix search, without typo tolerance or sender-address indexing.
+Header backfill is paged and resumes after restart. New-mail work is separate from archive backfill. Gmail uses history cursors; Graph uses per-folder delta plus a bounded recent-message refresh. Bodies download when opened or through bounded lower-priority backfill and remain cached. An uncached body needs an online connection. Search covers cached headers, sender addresses, previews and downloaded text, with optional bounded fuzzy fallback. See [search behavior](search.md).
 
 Gmail text/HTML parts are fetched without requesting binary attachment originals. Text parts have a combined 4 MiB limit. HTML remains passive. On-demand image/PDF/DOCX/XLSX previews use a separate bounded media queue. See [media limits](attachments.md).
 
