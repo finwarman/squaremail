@@ -46,6 +46,15 @@ class SharedThemeTest(unittest.TestCase):
                 self.assertFalse(swift.exists())
                 self.assertFalse(rust.exists())
 
+    def test_caption_blend_is_integral(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'themes.json'
+            for invalid in [27.5,-1,101,True]:
+                value=json.loads((ROOT/'themes.json').read_text())
+                value['palettes']['pink']['captionBlend']=invalid
+                source.write_text(json.dumps(value))
+                with self.assertRaises(AssertionError):generate(source,root/'T.swift',root/'t.rs',False)
+
     def test_glitter_bounds_shared(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);source=root/'themes.json';swift=root/'Tokens.swift';rust=root/'tokens.rs'

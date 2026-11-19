@@ -27,33 +27,35 @@
         "workspace": "B7B9B8",
         "rulerFace": "F5F4EF",
         "rulerMargin": "D4D0C8"
-      }
+      },
+      "captionBlend": 40
     },
     "pink": {
       "label": "Pink",
       "colors": {
-        "face": "F3D7E4",
+        "face": "FBE6F1",
         "light": "FFFFFF",
-        "shadow": "A56D89",
-        "dark": "733953",
-        "ink": "3B1F2D",
-        "muted": "735365",
-        "navy": "7F2450",
-        "blue": "ECA8CA",
-        "paper": "FFF8FC",
-        "selection": "7F2450",
-        "row": "FFF3F8",
-        "focus": "B02768",
-        "todaySurface": "FBE1ED",
-        "selectedSurface": "F6D0E3",
-        "grid": "D6AFBF",
-        "timeMarker": "AD204D",
+        "shadow": "B4779A",
+        "dark": "874363",
+        "ink": "3F1830",
+        "muted": "785066",
+        "navy": "A12565",
+        "blue": "FFBADA",
+        "paper": "FFFAFD",
+        "selection": "B12770",
+        "row": "FFF3FA",
+        "focus": "C3247E",
+        "todaySurface": "FFE6F1",
+        "selectedSurface": "F8CDE4",
+        "grid": "DAB4C9",
+        "timeMarker": "BE185D",
         "input": "FFFFFF",
         "titleInk": "FFFFFF",
-        "workspace": "D4C8CF",
-        "rulerFace": "FFF3F8",
-        "rulerMargin": "E3C4D1"
-      }
+        "workspace": "EBD8E5",
+        "rulerFace": "FFF1F9",
+        "rulerMargin": "F5D7E8"
+      },
+      "captionBlend": 28
     }
   },
   "metrics": {
