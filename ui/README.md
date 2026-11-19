@@ -17,6 +17,6 @@ Optional cursor sparkles use the same shared metrics in both apps:32 particles,4
 
 Caption gradients use each palette’s dark/light endpoints. The fade starts at15% and reaches the palette-specific blend at70%, then continues to the light right edge. This broadens the light field while keeping white central title text at least4.5:1 against the middle stop in both palettes. Shared metrics control both toolkit adapters.
 
-Caption glitter is an original static pixel pattern shared by both adapters. Small edge stars/flecks leave the central text band clear. The compiled source bounds marks, opacity and128 horizontal repetitions. Swift draws rectangles and Rust batches one small mesh, with no image texture, view, timer, random generator or idle repaint. Classic/Pink retain their existing gradient endpoints.
+Caption glitter is an original static pixel pattern shared by both adapters. Small edge stars/flecks repeat every128pt,25% denser than the initial160pt pattern, and leave the central text band clear. The compiled source bounds marks, opacity and128 horizontal repetitions. Swift draws rectangles and Rust batches one small mesh, with no image texture, view, timer, random generator or idle repaint. Classic/Pink retain their existing gradient endpoints.
 
 Pink uses lighter blush surfaces, a brighter rose selection and a pale pink-lilac workspace. Its caption blend is28% at the middle stop to retain white-title contrast with the brighter base; Classic remains40%. These values stay in each shared palette and are compiled into both clients.
