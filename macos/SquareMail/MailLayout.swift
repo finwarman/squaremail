@@ -17,8 +17,7 @@ final class MailLayout: NSView, NSSplitViewDelegate {
     let reader = ReaderView()
     let status = ClassicPanel()
     let statusText = NSTextField(labelWithString: "Opening local mailbox…")
-    let statusMode = NSTextField(labelWithString: "LOCAL DEMO")
-    let statusReader = NSTextField(labelWithString: "PLAIN TEXT")
+    let statusReader = NSTextField(labelWithString: "Text")
     let syncProgress = ClassicProgress()
     let syncCaption = NSTextField(labelWithString: "Refresh checks connected mail and calendars")
     let searchBorder = ClassicPanel()
@@ -27,6 +26,11 @@ final class MailLayout: NSView, NSSplitViewDelegate {
     let searchScope = NSPopUpButton(frame: .zero)
     let fuzzy = ClassicButton("Fuzzy", style: .toggle)
     let folderLabel = NSTextField(labelWithString: "Inbox")
+    var folderTitle: String {
+        get { folderLabel.stringValue }
+        set { folderLabel.stringValue = newValue; needsLayout = true }
+    }
+    private var composeButton: ClassicButton?
     private var scale: CGFloat = 1
     private let surface = ClassicSurface()
 
@@ -83,11 +87,12 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         searchScope.toolTip = "All folders searches within the selected account or All accounts."
         fuzzy.toolTip = "When no literal/prefix matches exist, try bounded one-edit spelling corrections."
         filter.addSubview(searchScope); filter.addSubview(fuzzy)
-        for field in [statusText, statusMode, statusReader] {
+        for field in [statusText, statusReader] {
             field.font = ClassicTheme.font(11)
             field.textColor = ClassicTheme.muted
             status.addSubview(field)
         }
+        statusReader.alignment = .right
         status.addSubview(syncProgress)
         syncCaption.font = ClassicTheme.font(11); syncCaption.textColor = ClassicTheme.muted
         syncCaption.lineBreakMode = .byTruncatingTail; status.addSubview(syncCaption)
@@ -96,6 +101,10 @@ final class MailLayout: NSView, NSSplitViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
+
+    func setComposeButton(_ button: ClassicButton) {
+        composeButton = button; filter.addSubview(button); needsLayout = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         ClassicTheme.face.setFill(); bounds.fill()
@@ -118,20 +127,22 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         let left: CGFloat = 210
         sidebar.frame = NSRect(x: 4, y: contentTop, width: left - 8, height: max(0, statusTop - contentTop - 3))
         filter.frame = NSRect(x: left, y: contentTop, width: width - left - 4, height: 40)
-        folderLabel.frame = NSRect(x: 10, y: 9, width: 110, height: 22)
         searchBorder.frame = NSRect(x: max(245, filter.bounds.width - 365), y: 5, width: 355, height: 28)
         search.frame = NSRect(x: 8, y: 5, width: max(0, searchBorder.bounds.width - 38), height: max(0, searchBorder.bounds.height - 10))
         clearSearch.frame = NSRect(x: searchBorder.bounds.width - 26, y: 4, width: 20, height: 20)
         searchScope.frame = NSRect(x: searchBorder.frame.minX - 200, y: 7, width: 112, height: 26)
         fuzzy.frame = NSRect(x: searchBorder.frame.minX - 82, y: 7, width: 76, height: 26)
+        let titleLimit = max(40, searchScope.frame.minX - 129)
+        let titleWidth = min(titleLimit, min(180, ceil(folderLabel.intrinsicContentSize.width)))
+        folderLabel.frame = NSRect(x: 10, y: 9, width: titleWidth, height: 22)
+        composeButton?.frame = NSRect(x: folderLabel.frame.maxX + 12, y: 6, width: 95, height: 28)
         split.frame = NSRect(x: left, y: contentTop + 42, width: width - left - 4, height: max(0, statusTop - contentTop - 45))
         layoutPanes()
         status.frame = NSRect(x: 4, y: statusTop, width: width - 8, height: 42)
         statusText.frame = NSRect(x: 8, y: 3, width: width - 24, height: 16)
         syncProgress.frame = NSRect(x: 8, y: 24, width: 130, height: 14)
-        syncCaption.frame = NSRect(x: 148, y: 23, width: max(0, width - 500), height: 16)
-        statusMode.frame = NSRect(x: width - 342, y: 23, width: 170, height: 16)
-        statusReader.frame = NSRect(x: width - 164, y: 23, width: 148, height: 16)
+        syncCaption.frame = NSRect(x: 148, y: 23, width: max(0, width - 420), height: 16)
+        statusReader.frame = NSRect(x: width - 256, y: 23, width: 240, height: 16)
         needsDisplay = true
     }
 

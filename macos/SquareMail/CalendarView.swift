@@ -15,12 +15,17 @@ enum CalendarFeed: String, CaseIterable {
     }
 }
 
+enum AgendaLayout: String { case below, right }
+
 struct CalendarState {
     var date = Date()
     var period: ClassicCalendarPeriod = .month
     var feeds = Set(CalendarFeed.allCases)
     var query = ""
     var hiddenSources: Set<String> = []
+    var agendaLayout: AgendaLayout = .below
+    var belowRatio: Double = 0.7
+    var rightRatio: Double = 0.6
 }
 
 private struct SampleEvent {
@@ -34,30 +39,40 @@ private struct SampleEvent {
 }
 
 private enum AgendaColumn: String {
-    case time, title, calendar, location
+    case time, title, calendar, location, summary
 }
 
-final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSplitViewDelegate {
     var onNew: ((Date) -> Void)?
     var onEdit: ((EventKey) -> Void)?
     var onPending: (() -> Void)?
     var onDateChanged: ((Date) -> Void)?
+    var onLayoutChange: ((CalendarState) -> Void)?
     var range: (Date, Date) {
         let dates = grid.visibleDates
         return (dates.first!, Calendar.current.date(byAdding: .day, value: 1, to: dates.last!)!)
     }
     var state: CalendarState {
-        CalendarState(date: grid.date, period: grid.period, feeds: feeds, query: query, hiddenSources: hiddenSources)
+        CalendarState(date: grid.date, period: grid.period, feeds: feeds, query: query, hiddenSources: hiddenSources, agendaLayout: agendaLayout, belowRatio: belowRatio, rightRatio: rightRatio)
     }
     private let newEvent = ClassicButton("New event")
     private let editEvent = ClassicButton("Edit event")
     private let pending = ClassicButton("Drafts…")
     private let grid = ClassicCalendar()
+    private let split = AgendaSplit()
+    private let gridPane = ClassicPanel()
+    private let agendaPane = ClassicPanel()
+    private let agendaActions = ClassicActionBar()
+    private var agendaLayout: AgendaLayout
+    private var belowRatio: Double
+    private var rightRatio: Double
+    private var layingOut = false
     private let surface = ClassicSurface()
     private let caption = NSTextField(labelWithString: "")
     private let dayCaption = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "Select an event for details.")
     private let agenda = NSTableView()
+    private let agendaHeader = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 26))
     private let agendaScroll = NSScrollView()
     var onClockTick: (() -> Void)?
     enum ClockActivity { case running, stopped }
@@ -86,6 +101,9 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     init(state: CalendarState, mode: MailboxMode = .demo) {
         self.mode = mode
+        agendaLayout = state.agendaLayout
+        belowRatio = Self.safeRatio(state.belowRatio, fallback: 0.7)
+        rightRatio = Self.safeRatio(state.rightRatio, fallback: 0.6)
         hiddenSources = state.hiddenSources
         feeds = state.feeds
         query = state.query
@@ -100,11 +118,20 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         timeFormat.dateFormat = "HH:mm"
         grid.date = state.date
         grid.period = state.period
-        for view in [grid, caption, dayCaption, detail, agendaScroll, today, previous, next, newEvent, editEvent, pending, clock] { addSubview(view) }
+        for view in [split, caption, detail, today, previous, next, clock] { addSubview(view) }
+        split.isVertical = agendaLayout == .right; split.dividerStyle = .thick; split.delegate = self
+        split.setAccessibilityLabel("Calendar grid and selected-day agenda")
+        split.addArrangedSubview(gridPane); split.addArrangedSubview(agendaPane)
+        gridPane.edge = .flat; agendaPane.edge = .flat
+        gridPane.addSubview(grid)
+        for view in [dayCaption, agendaScroll, agendaActions] { agendaPane.addSubview(view) }
+        split.onDragEnd = { [weak self] in guard let self else { return }; onLayoutChange?(self.state) }
+        for button in [newEvent, editEvent, pending] { agendaActions.addItem(button, width: 98) }
         clock.font = ClassicTheme.font(10); clock.textColor = ClassicTheme.muted; clock.alignment = .right
         tickClock()
         caption.font = ClassicTheme.font(17, weight: .bold)
         dayCaption.font = ClassicTheme.font(12, weight: .bold)
+        dayCaption.lineBreakMode = .byTruncatingTail
         detail.font = ClassicTheme.font(11)
         detail.textColor = ClassicTheme.muted
         today.onPress = { [weak self] in self?.selectDate(Date()) }
@@ -144,16 +171,63 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         for (index, button) in modeButtons.enumerated() {
             button.frame = NSRect(x: bounds.width - 220 + CGFloat(index) * 70, y: 10, width: 66, height: 27)
         }
-        let agendaHeight: CGFloat = 175
-        grid.frame = NSRect(x: 3, y: 47, width: bounds.width - 6, height: max(160, bounds.height - 47 - agendaHeight))
-        dayCaption.frame = NSRect(x: 12, y: bounds.height - agendaHeight + 7, width: max(0, bounds.width - 345), height: 20)
-        for (index, button) in [newEvent, editEvent, pending].enumerated() {
-            button.frame = NSRect(x: bounds.width - 320 + CGFloat(index) * 105, y: bounds.height - agendaHeight + 2, width: 100, height: 27)
-        }
-        agendaScroll.frame = NSRect(x: 4, y: bounds.height - agendaHeight + 32, width: bounds.width - 8, height: 115)
+        layingOut = true
+        split.frame = NSRect(x: 3, y: 47, width: max(0, bounds.width - 6), height: max(0, bounds.height - 73))
+        let ratio = agendaLayout == .right ? rightRatio : belowRatio
+        let limits = splitLimits()
+        split.setPosition(min(limits.max, max(limits.min, floor(splitLength * ratio))), ofDividerAt: 0)
+        layoutAgenda()
+        layingOut = false
         detail.frame = NSRect(x: 12, y: bounds.height - 23, width: max(0, bounds.width - 305), height: 18)
         clock.frame = NSRect(x: bounds.width - 285, y: bounds.height - 23, width: 273, height: 18)
         needsDisplay = true
+    }
+
+    private static func safeRatio(_ value: Double, fallback: Double) -> Double {
+        value.isFinite ? min(0.85, max(0.15, value)) : fallback
+    }
+    private var splitLength: CGFloat { max(0, (split.isVertical ? split.bounds.width : split.bounds.height) - split.dividerThickness) }
+    private func splitLimits() -> (min: CGFloat, max: CGFloat) {
+        let first: CGFloat = split.isVertical ? 360 : 210
+        let second: CGFloat = split.isVertical ? 280 : 160
+        let scale = min(1, splitLength / (first + second))
+        return (first * scale, splitLength - second * scale)
+    }
+    private func layoutAgenda() {
+        grid.frame = gridPane.bounds
+        let width = agendaPane.bounds.width
+        let stacked = width < 760
+        let actionsWidth = stacked ? width : 324
+        let actionsHeight = agendaActions.fittingHeight(actionsWidth)
+        dayCaption.frame = NSRect(x: 9, y: 7, width: max(0, width - (stacked ? 18 : actionsWidth + 12)), height: 20)
+        agendaActions.frame = NSRect(x: stacked ? 0 : width - actionsWidth, y: stacked ? 27 : 0, width: actionsWidth, height: actionsHeight)
+        let top = agendaActions.frame.maxY
+        agendaScroll.frame = NSRect(x: 2, y: top, width: max(0, width - 4), height: max(0, agendaPane.bounds.height - top - 2))
+        if agendaLayout == .right, let column = agenda.tableColumns.first { column.width = max(0, agendaScroll.contentSize.width) }
+    }
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        layoutAgenda()
+        guard !layingOut, splitLength > 0 else { return }
+        let length = split.isVertical ? gridPane.frame.width : gridPane.frame.height
+        let ratio = Self.safeRatio(length / splitLength, fallback: 0.6)
+        if agendaLayout == .right { rightRatio = ratio } else { belowRatio = ratio }
+    }
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { max(proposedMinimumPosition, splitLimits().min) }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { min(proposedMaximumPosition, splitLimits().max) }
+
+    func setAgendaLayout(_ value: AgendaLayout) {
+        guard value != agendaLayout else { return }
+        let selected = agendaItems.indices.contains(agenda.selectedRow) ? agendaItems[agenda.selectedRow].mark.id : nil
+        layingOut = true
+        agendaLayout = value; split.isVertical = value == .right
+        configureAgenda()
+        layingOut = false
+        needsLayout = true; layoutSubtreeIfNeeded()
+        if let index = agendaItems.firstIndex(where: { $0.mark.id == selected }) {
+            agenda.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            agenda.scrollRowToVisible(index)
+        }
+        onLayoutChange?(state)
     }
 
     func setClock(_ activity: ClockActivity) {
@@ -174,6 +248,49 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         guard old?.isCancelled == true, clockTask != nil, !clock.stringValue.isEmpty, grid.date == selected else { throw MailError(message: "Calendar clock duplicated work or changed the selected day") }
         setPeriod(.week); try WindowPresentation.snapshot(self, name: "calendar-week")
         setPeriod(.month); try WindowPresentation.snapshot(self, name: "calendar-month")
+        try verifyAgendaLayout()
+    }
+    func verifyAgendaLayout() throws {
+        guard WindowPresentation.isBackground else { throw MailError(message: "Use a hidden generated calendar") }
+        let saved = state; let frame = self.frame
+        let marks = grid.items.map(\.id); let selectedDate = grid.date
+        if !agendaItems.isEmpty { agenda.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
+        let selected = agendaItems.first?.mark.id
+        defer {
+            belowRatio = saved.belowRatio; rightRatio = saved.rightRatio
+            setAgendaLayout(saved.agendaLayout); self.frame = frame
+            needsLayout = true; layoutSubtreeIfNeeded()
+        }
+        let changed = onDateChanged; var dateCallbacks = 0
+        onDateChanged = { _ in dateCallbacks += 1 }
+        defer { onDateChanged = changed }
+        for orientation in [AgendaLayout.right, .below, .right] {
+            setAgendaLayout(orientation)
+            for size in [NSSize(width: 640, height: 480), NSSize(width: 1100, height: 720)] {
+                setFrameSize(size); needsLayout = true; layoutSubtreeIfNeeded()
+                let limits = splitLimits()
+                for position in [limits.min, (limits.min + limits.max) / 2, limits.max] {
+                    split.setPosition(position, ofDividerAt: 0); layoutSubtreeIfNeeded()
+                    guard grid.frame == gridPane.bounds, agendaPane.bounds.contains(agendaScroll.frame),
+                          abs(agendaScroll.frame.maxY - (agendaPane.bounds.height - 2)) < 1,
+                          !dayCaption.frame.intersects(agendaActions.frame) else { throw MailError(message: "Agenda divider left stale or overlapping content") }
+                    guard grid.date == selectedDate, grid.items.map(\.id) == marks, dateCallbacks == 0 else { throw MailError(message: "Agenda layout reloaded events or changed date") }
+                    if let selected {
+                        guard agendaItems.indices.contains(agenda.selectedRow), agendaItems[agenda.selectedRow].mark.id == selected else { throw MailError(message: "Agenda layout lost the selected event") }
+                    }
+                    if orientation == .right {
+                        guard agenda.tableColumns.count == 1, agenda.rowHeight == 65 else { throw MailError(message: "Right agenda lost its compact rows") }
+                        if !agendaItems.isEmpty, let cell = agenda.view(atColumn: 0, row: 0, makeIfNecessary: true) {
+                            guard cell is AgendaSummaryCell else { throw MailError(message: "Right agenda has no reusable summary cell") }
+                        }
+                    }
+                }
+            }
+            let limits = splitLimits()
+            split.setPosition((limits.min + limits.max) / 2, ofDividerAt: 0)
+            layoutSubtreeIfNeeded()
+            try WindowPresentation.snapshot(self, name: "agenda-" + orientation.rawValue)
+        }
     }
     private func tickClock() { clock.stringValue = clockFormat.string(from: Date()); grid.needsDisplay = true; onClockTick?() }
     deinit { clockTask?.cancel() }
@@ -231,6 +348,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         captionFormat.dateFormat = grid.period == .month ? "MMMM yyyy" : "d MMMM yyyy"
         caption.stringValue = captionFormat.string(from: grid.date)
         dayCaption.stringValue = dateFormat.string(from: grid.date) + (mode == .demo ? "  ·  SAMPLE EVENTS" : "  ·  CACHED EVENTS" + (events.count == 2000 ? " (2,000 shown)" : ""))
+        dayCaption.toolTip = dayCaption.stringValue
         for (index, button) in modeButtons.enumerated() {
             button.state = ClassicCalendarPeriod.allCases[index] == grid.period ? .on : .off
         }
@@ -243,19 +361,11 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func buildAgenda() {
-        let columns: [(AgendaColumn, String, Double)] = [(.time, "Time", 140), (.title, "Event", 470),
-                                                       (.calendar, "Calendar", 210), (.location, "Location", 250)]
-        for (id, title, width) in columns {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id.rawValue))
-            column.width = width
-            column.headerCell = ClassicHeaderCell(textCell: title)
-            agenda.addTableColumn(column)
-        }
+        configureAgenda()
         agenda.style = .plain
-        agenda.rowHeight = 25
         agenda.usesAutomaticRowHeights = false
         agenda.gridStyleMask = [.solidHorizontalGridLineMask]
-        agenda.gridColor = ClassicTheme.color(0xE5E3DD)
+        agenda.gridColor = ClassicTheme.grid
         agenda.backgroundColor = .white
         agenda.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         agenda.dataSource = self
@@ -268,6 +378,22 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         agendaScroll.borderType = .bezelBorder
     }
 
+    private func configureAgenda() {
+        for column in agenda.tableColumns { agenda.removeTableColumn(column) }
+        let columns: [(AgendaColumn, String, Double)] = [(.time, "Time", 140), (.title, "Event", 470),
+                                                       (.calendar, "Calendar", 210), (.location, "Location", 250)]
+        for (id, title, width) in agendaLayout == .right ? [(.summary, "Events", 300)] : columns {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id.rawValue))
+            column.width = width
+            column.headerCell = ClassicHeaderCell(textCell: title)
+            agenda.addTableColumn(column)
+        }
+        agenda.rowHeight = agendaLayout == .right ? 65 : 25
+        agenda.headerView = agendaLayout == .right ? nil : agendaHeader
+        agendaScroll.hasHorizontalScroller = agendaLayout == .below
+        agenda.reloadData()
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int { agendaItems.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -278,14 +404,21 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard agendaItems.indices.contains(row), let column = tableColumn else { return nil }
+        let event = agendaItems[row]
+        let time = event.mark.span == .allDay ? "All day" : timeFormat.string(from: event.mark.start) + " - " + timeFormat.string(from: event.mark.end)
+        if agendaLayout == .right {
+            let cell = (tableView.makeView(withIdentifier: column.identifier, owner: self) as? AgendaSummaryCell) ?? AgendaSummaryCell()
+            cell.identifier = column.identifier
+            cell.configure(event.mark.title, time: time, source: event.sourceName + (event.location.isEmpty ? "" : " · " + event.location))
+            return cell
+        }
         let cell = (tableView.makeView(withIdentifier: column.identifier, owner: self) as? ClassicTableCell) ?? ClassicTableCell()
         cell.identifier = column.identifier
-        let event = agendaItems[row]
         switch AgendaColumn(rawValue: column.identifier.rawValue) {
-        case .time: cell.configure(event.mark.span == .allDay ? "All day" : timeFormat.string(from: event.mark.start) + " - " + timeFormat.string(from: event.mark.end))
+        case .time: cell.configure(time)
         case .title: cell.configure(event.mark.title, weight: .bold)
         case .calendar: cell.configure(event.sourceName)
-        case .location, .none: cell.configure(event.location)
+        case .location, .summary, .none: cell.configure(event.location)
         }
         return cell
     }
@@ -302,6 +435,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func selfTest() throws {
+        try verifyAgendaLayout()
         for (period, count) in [(ClassicCalendarPeriod.month, 42), (.week, 7), (.day, 1)] {
             setPeriod(period)
             guard grid.visibleDates.count == count else { throw MailError(message: "Calendar period has the wrong day count") }
@@ -485,4 +619,50 @@ private final class CalendarSourceCell: NSView {
     }
     override func layout() { super.layout(); check.frame = bounds }
     @objc private func changed() { onChange?(check.state) }
+}
+
+private final class AgendaSplit: NSSplitView {
+    var onDragEnd: (() -> Void)?
+    override var isFlipped: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        onDragEnd?()
+    }
+    override func drawDivider(in rect: NSRect) {
+        ClassicTheme.face.setFill(); rect.fill()
+        ClassicTheme.shadow.setFill()
+        for offset: CGFloat in [-5, 0, 5] {
+            NSRect(x: floor(rect.midX) + (isVertical ? 0 : offset), y: floor(rect.midY) + (isVertical ? offset : 0), width: 2, height: 2).fill()
+        }
+    }
+}
+
+private final class AgendaSummaryCell: NSTableCellView {
+    private let time = NSTextField(labelWithString: "")
+    private let title = NSTextField(labelWithString: "")
+    private let source = NSTextField(labelWithString: "")
+    override var isFlipped: Bool { true }
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { updateColors() } }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        for field in [time, title, source] { field.lineBreakMode = .byTruncatingTail; addSubview(field) }
+        time.font = ClassicTheme.font(10); title.font = ClassicTheme.font(12, weight: .bold); source.font = ClassicTheme.font(10)
+        updateColors()
+    }
+    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
+    func configure(_ value: String, time: String, source: String) {
+        title.stringValue = value; self.time.stringValue = time; self.source.stringValue = source
+        toolTip = [time, value, source].joined(separator: " · ")
+        setAccessibilityLabel(toolTip); needsLayout = true
+    }
+    private func updateColors() {
+        title.textColor = backgroundStyle == .emphasized ? .white : ClassicTheme.ink
+        for field in [time, source] { field.textColor = backgroundStyle == .emphasized ? .white : ClassicTheme.muted }
+    }
+    override func layout() {
+        super.layout()
+        for (field, y, height) in [(time, 5.0, 16.0), (title, 23.0, 19.0), (source, 45.0, 16.0)] {
+            field.frame = NSRect(x: 8, y: y, width: max(0, bounds.width - 16), height: height)
+        }
+    }
 }

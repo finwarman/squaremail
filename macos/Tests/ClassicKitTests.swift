@@ -2,6 +2,28 @@ import XCTest
 @testable import ClassicKit
 
 final class ClassicKitTests: XCTestCase {
+    func testMonthRegionsStaySeparate() {
+        for height: CGFloat in [18, 24, 35, 44, 61, 74, 95, 160] {
+            let cell = NSRect(x: 11, y: 47, width: 100, height: height)
+            for count in 0...20 {
+                let layout = MonthCellLayout(cell, count: count)
+                let events = (0..<layout.eventCount).map(layout.eventRect)
+                XCTAssertEqual(layout.eventCount + layout.moreCount, count)
+                for (index, rect) in events.enumerated() {
+                    XCTAssertTrue(cell.contains(rect))
+                    XCTAssertGreaterThanOrEqual(rect.minY, cell.minY + 22)
+                    XCTAssertTrue(events.dropFirst(index + 1).allSatisfy { !$0.intersects(rect) })
+                    if layout.moreCount > 0 { XCTAssertFalse(layout.moreRect.intersects(rect)) }
+                }
+                guard layout.moreCount > 0 else { continue }
+                XCTAssertTrue(cell.contains(layout.moreRect))
+                if layout.morePlacement == .header {
+                    XCTAssertLessThanOrEqual(layout.moreRect.maxY, cell.minY + 22)
+                    XCTAssertGreaterThanOrEqual(layout.moreRect.minX, cell.minX + 28)
+                } else { XCTAssertGreaterThanOrEqual(layout.moreRect.minY, cell.minY + 22) }
+            }
+        }
+    }
     func testReaderSegmentStates() async {
         await MainActor.run {
             let button = ClassicButton("Text", icon: .text, style: .segment)
