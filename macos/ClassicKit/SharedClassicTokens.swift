@@ -20,9 +20,12 @@ struct ClassicPalette {
     let timeMarker: NSColor
     let input: NSColor
     let titleInk: NSColor
+    let workspace: NSColor
+    let rulerFace: NSColor
+    let rulerMargin: NSColor
 }
 enum SharedClassicTokens {
-    static let digest = "2a7b5df8d477fbb945f9e8d185f6f665cc4e029400f3ec81c70260f1dd667c76"
+    static let digest = "f38ca6b02654149f70912c68954df25fe92d4f85edb44639f3685dc06b10c655"
     static let classic = ClassicPalette(
         face: ClassicTheme.color(0xD4D0C8),
         light: ClassicTheme.color(0xFFFFFF),
@@ -41,7 +44,10 @@ enum SharedClassicTokens {
         grid: ClassicTheme.color(0xC8C6C0),
         timeMarker: ClassicTheme.color(0xBD3345),
         input: ClassicTheme.color(0xFFFFFF),
-        titleInk: ClassicTheme.color(0xFFFFFF)
+        titleInk: ClassicTheme.color(0xFFFFFF),
+        workspace: ClassicTheme.color(0xB7B9B8),
+        rulerFace: ClassicTheme.color(0xF5F4EF),
+        rulerMargin: ClassicTheme.color(0xD4D0C8)
     )
     static let pink = ClassicPalette(
         face: ClassicTheme.color(0xF3D7E4),
@@ -61,7 +67,10 @@ enum SharedClassicTokens {
         grid: ClassicTheme.color(0xD6AFBF),
         timeMarker: ClassicTheme.color(0xAD204D),
         input: ClassicTheme.color(0xFFFFFF),
-        titleInk: ClassicTheme.color(0xFFFFFF)
+        titleInk: ClassicTheme.color(0xFFFFFF),
+        workspace: ClassicTheme.color(0xD4C8CF),
+        rulerFace: ClassicTheme.color(0xFFF3F8),
+        rulerMargin: ClassicTheme.color(0xE3C4D1)
     )
     static let borderWidth: CGFloat = 1
     static let tooltipDelayMs: CGFloat = 220
