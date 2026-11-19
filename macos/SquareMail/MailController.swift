@@ -1718,6 +1718,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard WindowPresentation.lastDialog?.title == "Import email" else { throw MailError(message: "Import did not present its file picker") }
         connectAccount()
         guard WindowPresentation.lastDialog?.title == "Mail and calendar accounts", connectTask == nil, sidebar.connect.isEnabled else { throw MailError(message: "Cancelled account prompt left controls blocked") }
+        let setup = AccountDialog()
+        let clients = [Provider.gmail: ClientConfig(clientId: "synthetic-google", configured: true), .outlook: ClientConfig(clientId: "synthetic-microsoft", configured: true)]
+        guard setup.run(clients) == nil, WindowPresentation.lastDialog?.title == "Connect Gmail or Outlook",
+              WindowPresentation.lastDialog?.editableFields == 0,
+              WindowPresentation.lastDialog?.buttons == ["Sign in", "Cancel"] else { throw MailError(message: "Recipient sign-in exposed developer fields or ignored cancellation") }
         showAbout()
         guard WindowPresentation.lastDialog?.title == "Square Mail 0.1" else { throw MailError(message: "About action did not present its dialog") }
         print("CONTROLS verified hidden native buttons, view menus, import/account/about dialogs, unsaved-edit prompts, local draft restore and save-error recovery. No foreground windows or provider writes.")

@@ -25,7 +25,7 @@ struct ClassicPalette {
     let rulerMargin: NSColor
 }
 enum SharedClassicTokens {
-    static let digest = "bd8c5d48ab5ddc106587d3a307b14f70319e69c78177e6c29b1c666105ba08c7"
+    static let digest = "024876bcdd578d47917c6ad0b61bacc743248c2938b354b7050a11cd289caf76"
     static let classic = ClassicPalette(
         face: ClassicTheme.color(0xD4D0C8),
         light: ClassicTheme.color(0xFFFFFF),
@@ -87,4 +87,18 @@ enum SharedClassicTokens {
     static let captionGradientStart: CGFloat = 15
     static let captionGradientMiddle: CGFloat = 70
     static let captionGradientBlend: CGFloat = 40
+    static let captionGlitterPeriod: CGFloat = 160
+    static let captionGlitterOpacity: CGFloat = 18
+    static let captionGlitter: [(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, alpha: CGFloat)] = [
+        (22, 1, 1, 5, 70),
+        (20, 3, 5, 1, 70),
+        (22, 3, 1, 1, 100),
+        (106, 25, 1, 3, 55),
+        (105, 26, 3, 1, 55),
+        (106, 26, 1, 1, 90),
+        (58, 2, 1, 1, 40),
+        (141, 4, 1, 1, 30),
+        (73, 27, 1, 1, 40),
+        (150, 26, 1, 1, 25),
+    ]
 }

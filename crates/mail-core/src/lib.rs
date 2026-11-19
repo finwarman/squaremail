@@ -97,6 +97,10 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             Ok(json!({}))
         }
         Command::ClientConfig { provider } => Ok(oauth::client_config(provider)),
+        Command::ExportClients { path } => {
+            oauth::export_clients(&path)?;
+            Ok(json!({}))
+        }
         Command::Configure {
             provider,
             client_id,

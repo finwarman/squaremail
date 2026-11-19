@@ -74,3 +74,5 @@ The native reader defaults to text and creates WebKit only on first HTML use. To
 The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. A long-paragraph workload exposed large TextKit 2 graphics surfaces. The native text path preserves selection, copy and scrolling. Measurement details remain in `docs/performance.md`.
 
 | INV-UI-cursor-sparkles | Decoration defaults off, uses bounded particles/lifetime, passes events through, respects Reduce Motion and stops timers while idle/hidden. Disable/destruction releases event/notification observers. | shared model, repaint-expiry and native lifecycle tests |
+
+| INV-OAUTH-release-config | Fresh installs use bounded signed desktop metadata; existing overrides win, Keychain errors stay visible, and account tokens/endpoints cannot enter the release resource. Normal sign-in shows no developer fields. | Rust config/precedence contracts, packaging gate and native setup qualification |

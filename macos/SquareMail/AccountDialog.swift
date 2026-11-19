@@ -10,7 +10,8 @@ final class AccountDialog: NSObject {
         let clientSecret: String
     }
     private let provider = NSPopUpButton(frame: .zero)
-    private let client = NSTextField(frame: .zero)
+    private let connectionNote = NSTextField(wrappingLabelWithString: "")
+    private weak var signIn: NSButton?
     private var configs: [Provider: ClientConfig] = [:]
 
     func manage(_ accounts: [Account]) -> Action? {
@@ -19,7 +20,7 @@ final class AccountDialog: NSObject {
         alert.informativeText = "Each account has its own cache and browser sign-in. Disconnect removes its saved tokens. Cached mail can remain available offline."
         alert.addButton(withTitle: "Add / reconnect")
         alert.addButton(withTitle: "Disconnect selected")
-        alert.addButton(withTitle: "OAuth setup")
+        alert.addButton(withTitle: "Advanced setup…")
         alert.addButton(withTitle: "Cancel")
         let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 420, height: 28))
         for account in accounts where account.provider != .local {
@@ -42,40 +43,36 @@ final class AccountDialog: NSObject {
         alert.informativeText = "Sign in through your browser. Square Mail requests read-only mail and calendar access. Tokens stay in macOS Keychain. Choose another browser account to add a second mailbox."
         alert.addButton(withTitle: "Sign in")
         alert.addButton(withTitle: "Cancel")
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 170))
-        provider.frame = NSRect(x: 110, y: 132, width: 326, height: 26)
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 90))
+        provider.frame = NSRect(x: 0, y: 56, width: 440, height: 26)
         provider.removeAllItems()
         provider.addItems(withTitles: ["Gmail / Google Workspace", "Outlook.com / Live / Microsoft 365"])
+        provider.setAccessibilityLabel("Email provider")
         provider.target = self
         provider.action = #selector(changeProvider)
-        client.frame = NSRect(x: 110, y: 94, width: 326, height: 24)
-        client.placeholderString = "OAuth client ID, or configure in OAuth setup"
-        client.setAccessibilityLabel("OAuth client ID")
-        let secret = NSSecureTextField(frame: NSRect(x: 110, y: 56, width: 326, height: 24))
-        secret.placeholderString = "Leave empty when a Google client file is saved"
-        secret.setAccessibilityLabel("Optional Google desktop client secret")
-        for (label, y) in [("Provider:", 136), ("Client ID:", 98), ("Client secret:", 60)] {
-            let field = NSTextField(labelWithString: label)
-            field.frame = NSRect(x: 0, y: y, width: 104, height: 19)
-            field.font = ClassicTheme.font(11)
-            form.addSubview(field)
-        }
-        let note = NSTextField(wrappingLabelWithString: "Google: Desktop app with Gmail and Calendar enabled. Microsoft: public desktop client allowing both personal and work accounts, with http://localhost/callback registered.")
-        note.frame = NSRect(x: 0, y: 0, width: 440, height: 42)
-        note.font = ClassicTheme.font(10)
-        for view in [provider, client, secret, note] { form.addSubview(view) }
+        connectionNote.frame = NSRect(x: 0, y: 0, width: 440, height: 44)
+        connectionNote.font = ClassicTheme.font(11)
+        for view in [provider, connectionNote] { form.addSubview(view) }
         alert.accessoryView = form
+        signIn = alert.buttons.first
         changeProvider()
         alert.window.initialFirstResponder = provider
-        guard WindowPresentation.runAlert(alert) == .alertFirstButtonReturn else { return nil }
-        return Input(provider: selectedProvider, clientId: client.stringValue.trimmingCharacters(in: .whitespacesAndNewlines), clientSecret: secret.stringValue)
+        guard WindowPresentation.runAlert(alert) == .alertFirstButtonReturn,
+              configs[selectedProvider]?.configured == true else { return nil }
+        return Input(provider: selectedProvider, clientId: "", clientSecret: "")
     }
     private var selectedProvider: Provider { provider.indexOfSelectedItem == 0 ? .gmail : .outlook }
-    @objc private func changeProvider() { client.stringValue = configs[selectedProvider]?.clientId ?? "" }
+    @objc private func changeProvider() {
+        let ready = configs[selectedProvider]?.configured == true
+        signIn?.isEnabled = ready
+        connectionNote.stringValue = ready
+            ? "Your browser will open for sign-in. No developer setup is needed."
+            : "Provider setup is missing from this build. Use Accounts, Advanced setup, or install the current release."
+    }
 
     func setup() -> Input? {
         let alert = NSAlert()
-        alert.messageText = "Private preview OAuth setup"
+        alert.messageText = "Advanced provider setup"
         alert.informativeText = "Google: import the downloaded Desktop app JSON. Microsoft: save the Application (client) ID from your Entra app registration. These settings are stored in Keychain and reused for each account."
         alert.addButton(withTitle: "Import Google JSON")
         alert.addButton(withTitle: "Save Microsoft ID")
