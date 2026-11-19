@@ -59,6 +59,8 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     var onOpenPreview: ((MediaAsset, Mail) -> Void)?
     var onMediaReset: (() -> Void)?
     var onImageState: ((ImagePermission) -> Void)?
+    var onReady: ((String?) -> Void)?
+    private(set) var readyID: String?
     private let scroll = NSScrollView()
     // TextKit 1 avoids full-paragraph GPU surfaces for long plain-text messages.
     private let text = MailTextView(usingTextLayoutManager: false)
@@ -195,6 +197,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     }
 
     func display(_ mail: Mail, mode: ReaderMode) {
+        readyID = nil; onReady?(nil)
         if message?.id != mail.id { resetMedia() }
         if mode == .text { onMediaReset?() }
         message = mail
@@ -253,6 +256,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     }
 
     func showNotice(_ notice: String) {
+        readyID = nil; onReady?(nil)
         resetMedia()
         message = nil
         retryLoad.isHidden = true
@@ -370,7 +374,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         }
     }
 
-    func pause() { cancelText(); onMediaReset?(); queueHTMLRelease() }
+    func pause() { readyID = nil; onReady?(nil); cancelText(); onMediaReset?(); queueHTMLRelease() }
 
     func finishHTML() async throws {
         guard mode == .html, let navigation, finished !== navigation else { return }
@@ -380,6 +384,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard navigation === self.navigation else { return }
         finished = navigation
+        if mode == .html, !webView.isHidden { readyID = message?.id; onReady?(readyID) }
         htmlWaiter?.resume()
         htmlWaiter = nil
     }
@@ -414,9 +419,11 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
                 text.layoutManager?.allowsNonContiguousLayout = document.text.utf8.count > Self.textLayoutThreshold
                 text.textStorage?.setAttributedString(body); text.document = document
                 text.scrollToBeginningOfDocument(nil)
+                readyID = message?.id; onReady?(readyID)
             } catch is CancellationError {} catch {
                 guard let self, textRevision == revision else { return }
                 text.string = value
+                readyID = message?.id; onReady?(readyID)
             }
         }
     }

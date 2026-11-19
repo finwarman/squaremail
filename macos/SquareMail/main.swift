@@ -139,7 +139,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             stamp(.mail)
             await controller.finishSelection()
             WindowPresentation.show(window)
-            if !WindowPresentation.isBackground { NSApp.activate(ignoringOtherApps: true) }
+            if !WindowPresentation.isBackground, !arguments.contains("--launch-inactive") { NSApp.activate(ignoringOtherApps: true) }
             stamp(.window)
             controller.startSync()
             if let index = arguments.firstIndex(of: "--check-media"), arguments.indices.contains(index + 1) {
