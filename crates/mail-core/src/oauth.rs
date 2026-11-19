@@ -1,3 +1,4 @@
+use self::credentials::{delete_generic_password, get_generic_password, set_generic_password};
 use crate::{
     Result,
     mime::message_id,
@@ -7,9 +8,7 @@ use crate::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
 use reqwest::blocking::Client;
-use security_framework::passwords::{
-    delete_generic_password, get_generic_password, set_generic_password,
-};
+mod credentials;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};

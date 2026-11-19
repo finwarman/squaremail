@@ -22,6 +22,7 @@
 | INV-READER-preview | Row previews flatten newlines with separators without changing stored content. | MessageText contracts and native renders |
 | INV-MAIL-plain-text | MIME text and HTML alternatives remain separate. | MIME tests |
 | INV-MAIL-html-passive | Cached HTML excludes scripts, forms and remote resources. | HTML tests and native policy self-test |
+| INV-AUTH-stable-helper | Only the certificate-pinned reader may call the stable credential helper; changed reader builds reuse credential access without UI or widening token ACLs. | signed changed-reader and rejected-caller synthetic Keychain probe in f1nb0-launcher/scripts/check.sh |
 | INV-MAIL-oauth-state | OAuth callback state must match the pending login. | OAuth callback tests |
 | INV-MAIL-main-thread | Database and provider calls run off the AppKit main thread. | bridge precondition and native self-test |
 | INV-MAIL-latest-selection | Stale body responses cannot replace a newer selection. | native controller generation guard |
@@ -35,6 +36,7 @@
 | INV-SYNC-batch-feedback | Progress spans due pages/lanes, manual refresh wakes only idle waits, retries/offline/pause stop busy feedback, and stale workers cannot change replacements. | scheduler fixture, queue-readiness contract and hidden native action probe |
 | INV-SYNC-catalog-round | Completed catalog markers cannot prune the next round before its final page. | Outlook multi-page HTTP/catalog regression |
 | INV-MAIL-trash-catalog | Missing Outlook folder maps still permit reversible Trash moves; no hard-delete request is issued. | synthetic missing-catalog HTTP/action contract |
+| INV-STORAGE-wal-writers | Current-schema readers can open during an active writer; write transactions reserve the writer before reading, preventing WAL snapshot-upgrade failures. | concurrent open/write contracts |
 | INV-SYNC-page-checkpoint | Page changes and cursor advance commit together; stale cursor updates roll back. | real SQLite cursor/replay test |
 | INV-SYNC-snapshot | An interrupted calendar snapshot preserves the previous offline window. | staged snapshot/restart test |
 | INV-SYNC-recent-mail | New-mail work does not wait for archive backfill or erase its reconciliation markers. | synthetic Gmail HTTP history test |

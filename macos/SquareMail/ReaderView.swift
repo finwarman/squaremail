@@ -35,6 +35,7 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
     private var spacing: TextSpacing = WindowPresentation.isBackground ? .original : (TextSpacing(rawValue: UserDefaults.standard.string(forKey: "readerSpacing") ?? "") ?? .original)
     private let linksButton = ClassicButton("", icon: .link, style: .iconToggle)
     private var modeButtons: [ClassicButton] = []
+    private let modeGroup: ClassicPanel = { let panel = ClassicPanel(); panel.edge = .sunken; return panel }()
     private var linkStyle: LinkStyle = WindowPresentation.isBackground ? .readable : (LinkStyle(rawValue: UserDefaults.standard.string(forKey: "readerLinks") ?? "") ?? .readable)
     private var textTask: Task<Void, Never>?
     private var textRevision = 0
@@ -158,13 +159,14 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
 
     func setModeButtons(_ plain: ClassicButton, html: ClassicButton) {
         modeButtons = [plain, html]
-        for button in modeButtons { mediaBar.addSubview(button) }
+        mediaBar.addSubview(modeGroup)
+        for button in modeButtons { modeGroup.addSubview(button) }
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
-        let narrow = bounds.width < 600
+        let narrow = bounds.width < 690
         let loading = progress.state != .idle
         let barHeight: CGFloat = message == nil && !loading && retryLoad.isHidden ? 0 : (narrow ? 64 : 34) + (loading ? 16 : 0)
         let attachmentHeight: CGFloat = attachments.isHidden ? 0 : min(150, max(0, bounds.height - barHeight) / 2)
@@ -172,10 +174,13 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         mediaBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         imagesButton.frame = NSRect(x: 7, y: 5, width: 102, height: 24)
         attachmentsButton.frame = NSRect(x: 116, y: 5, width: 100, height: 24)
-        let controls = modeButtons + [spacingButton, linksButton]
-        let groupWidth = CGFloat(controls.count * 36 - 4)
+        let groupWidth: CGFloat = 244
         let groupX: CGFloat = narrow ? 7 : bounds.width - groupWidth - 7
-        for (index, button) in controls.enumerated() { button.frame = NSRect(x: groupX + CGFloat(index * 36), y: narrow ? 35 : 5, width: 32, height: 24) }
+        let groupY: CGFloat = narrow ? 35 : 4
+        modeGroup.frame = NSRect(x: groupX, y: groupY, width: 164, height: 26)
+        for (index, button) in modeButtons.enumerated() { button.frame = NSRect(x: 2 + CGFloat(index * 80), y: 2, width: 80, height: 22) }
+        spacingButton.frame = NSRect(x: groupX + 172, y: groupY + 1, width: 32, height: 24)
+        linksButton.frame = NSRect(x: groupX + 208, y: groupY + 1, width: 32, height: 24)
         let labelStart: CGFloat = loading || !retryLoad.isHidden ? 304 : 226
         mediaLabel.frame = NSRect(x: narrow ? groupWidth + 16 : labelStart, y: narrow ? 38 : 8, width: max(0, narrow ? bounds.width - groupWidth - 23 : groupX - labelStart - 8), height: 18)
         cancelLoad.frame = NSRect(x: 223, y: 5, width: 70, height: 24)
@@ -474,11 +479,12 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
 extension ReaderView {
     func verifyControlLayout() throws {
         guard message != nil else { return }
-        let controls = modeButtons + [spacingButton, linksButton, imagesButton, attachmentsButton]
-        guard modeButtons.count == 2, controls.allSatisfy({ mediaBar.bounds.contains($0.frame) && $0.toolTip?.isEmpty == false }),
-              (modeButtons + [spacingButton, linksButton]).allSatisfy({ $0.frame.width == 32 && $0.accessibilityLabel()?.isEmpty == false }) else { throw MailError(message: "Compact reader icons lost bounds, labels or tooltips") }
+        let controls = [modeGroup, spacingButton, linksButton, imagesButton, attachmentsButton]
+        guard modeButtons.count == 2, controls.allSatisfy({ mediaBar.bounds.contains($0.frame) }),
+              modeButtons.allSatisfy({ modeGroup.bounds.contains($0.frame) && !$0.title.isEmpty && $0.toolTip?.isEmpty == false }),
+              [spacingButton, linksButton].allSatisfy({ $0.frame.width == 32 && $0.accessibilityLabel()?.isEmpty == false }) else { throw MailError(message: "Grouped reader controls lost bounds, labels or help") }
         for (index, button) in controls.enumerated() {
-            guard controls.dropFirst(index + 1).allSatisfy({ !button.frame.intersects($0.frame) }) else { throw MailError(message: "Reader icons overlap other controls") }
+            guard controls.dropFirst(index + 1).allSatisfy({ !button.frame.intersects($0.frame) }) else { throw MailError(message: "Reader controls overlap") }
         }
     }
 

@@ -2,6 +2,18 @@ import XCTest
 @testable import ClassicKit
 
 final class ClassicKitTests: XCTestCase {
+    func testReaderSegmentStates() async {
+        await MainActor.run {
+            let button = ClassicButton("Text", icon: .text, style: .segment)
+            button.toolTip = "Plain text. Click to switch."
+            button.onPress = { button.state = .on }
+            button.performClick(nil)
+            XCTAssertEqual(button.state, .on)
+            XCTAssertEqual(button.title, "Text")
+            XCTAssertEqual(button.accessibilityHelp(), button.toolTip)
+            XCTAssertFalse(button.isHighlighted)
+        }
+    }
     func testThemeContrast() async {
         await MainActor.run {
             let saved = ClassicTheme.appearance

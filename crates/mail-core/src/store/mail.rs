@@ -44,7 +44,7 @@ impl Store {
         message: Message,
         action: MailAction,
     ) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let existing: Option<String> = tx
             .query_row(
                 "SELECT data FROM mail_actions WHERE id=?1",
@@ -122,7 +122,7 @@ impl Store {
         if data.len() > 2 * 1024 * 1024 {
             return Err("Draft exceeds its 2 MiB storage limit".into());
         }
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let sending: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM mail_outbox WHERE id=?1 AND state<>'done')",
             [&draft.id],
@@ -177,7 +177,7 @@ impl Store {
         Ok(())
     }
     pub(crate) fn queue_send(&self, draft: &MailDraft) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let count: i64 = tx.query_row(
             "SELECT COUNT(*) FROM mail_outbox WHERE state<>'done'",
             [],
@@ -261,7 +261,7 @@ impl Store {
         kind: MailWorkKind,
         choice: MailWorkChoice,
     ) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let (state, attempts, data, remote, due): (String, i64, String, Option<String>, i64) = tx
             .query_row(
             &format!(

@@ -37,8 +37,11 @@ impl Store {
         }
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
-        connection.execute_batch(include_str!("schema.sql"))?;
         let schema_version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;")?;
+        if schema_version < search::SCHEMA_VERSION {
+            connection.execute_batch(include_str!("schema.sql"))?;
+        }
         if schema_version < 2 {
             connection.execute_batch("BEGIN IMMEDIATE; DROP TRIGGER IF EXISTS message_update;
                 CREATE TRIGGER message_update AFTER UPDATE ON messages
@@ -89,7 +92,10 @@ impl Store {
                 PRAGMA user_version=3; COMMIT;")?;
         }
         if schema_version < search::SCHEMA_VERSION {
-            let tx = connection.unchecked_transaction()?;
+            let tx = rusqlite::Transaction::new_unchecked(
+                &connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
             let current: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             if current < search::SCHEMA_VERSION {
                 tx.execute_batch(include_str!("search-schema.sql"))?;
@@ -98,6 +104,15 @@ impl Store {
             tx.commit()?;
         }
         Ok(Self { connection })
+    }
+
+    // Reserve a writer before reading its snapshot. Deferred upgrades can fail
+    // immediately under WAL even with a busy timeout.
+    fn write_tx(&self) -> Result<rusqlite::Transaction<'_>> {
+        Ok(rusqlite::Transaction::new_unchecked(
+            &self.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?)
     }
 
     pub(crate) fn save_account(&self, account: &Account) -> Result<()> {
@@ -129,7 +144,7 @@ impl Store {
     }
 
     pub(crate) fn save(&self, message: &Message, folder: Folder) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         Self::upsert(&tx, message)?;
         tx.execute(
             "INSERT OR IGNORE INTO folders(message_id,folder) VALUES (?1,?2)",
@@ -292,6 +307,57 @@ mod tests {
                 provider: Provider::Local,
             })
             .unwrap();
+    }
+
+    #[test]
+    fn readers_open_during_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.sqlite");
+        let path = path.to_str().unwrap();
+        let writer = Store::open(path).unwrap();
+        writer
+            .connection
+            .execute_batch(
+                "BEGIN IMMEDIATE; INSERT INTO accounts VALUES('a','a@example.test','outlook');",
+            )
+            .unwrap();
+        let reader = Store::open(path).unwrap();
+        assert!(reader.accounts().unwrap().is_empty());
+        writer.connection.execute_batch("COMMIT;").unwrap();
+        assert_eq!(reader.accounts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn writers_wait_before_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.sqlite");
+        let writer = Store::open(path.to_str().unwrap()).unwrap();
+        let tx = writer.write_tx().unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let other = std::thread::spawn(move || {
+            let store = Store::open(path.to_str().unwrap()).unwrap();
+            started.send(()).unwrap();
+            let tx = store.write_tx().unwrap();
+            let count: i64 = tx
+                .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 1);
+            tx.execute(
+                "UPDATE accounts SET email='updated@example.test' WHERE id='a'",
+                [],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        });
+        ready.recv().unwrap();
+        tx.execute(
+            "INSERT INTO accounts VALUES('a','a@example.test','outlook')",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        other.join().unwrap();
+        assert_eq!(writer.accounts().unwrap()[0].email, "updated@example.test");
     }
 
     #[test]

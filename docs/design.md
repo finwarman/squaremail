@@ -19,3 +19,5 @@ App-owned classic panels use a light native appearance in both palettes, even wh
 ![Calendar form under a dark host, generated data](images/calendar-editor.png)
 
 Reader rendering controls use compact page, spacing and chain-link icons. All four remain visible with tooltips, accessibility names and bevel states, wrapping into a second row on narrow panes. Message previews flatten paragraph breaks with small muted pipe separators. Safe Links displays the locally decoded target plus a marker, without fetching it or replacing the protected click URL.
+
+Reader modes now form one recessed Text/HTML switch with text labels and one selected segment. Spacing/link icons remain adjacent. Shared ClassicKit hover help appears after220ms, stays inside the screen and closes on exit/click/window deactivation. One non-activating helper owns the pending hover task. No per-button polling.

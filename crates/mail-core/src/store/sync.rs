@@ -36,7 +36,7 @@ impl Store {
         Ok(())
     }
     pub(crate) fn pause_account(&self, account: &str, mode: DisconnectMode) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("INSERT OR IGNORE INTO account_paused VALUES(?1)", [account])?;
         if matches!(mode, DisconnectMode::RemoveCache) {
             for table in ["messages", "sync_seen", "event_stage"] {
@@ -153,7 +153,7 @@ impl Store {
         for source in sources {
             self.ensure_job(&source.account_id, JobKind::Calendar, &source.id, month)?;
         }
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         // Keep at most six recently viewed windows per source. Job state owns eviction order.
         tx.execute("UPDATE sync_jobs SET viewed_at=MAX(viewed_at,?2),active=1 WHERE kind='calendar' AND window=?1", params![month,chrono::Utc::now().timestamp_micros()])?;
         tx.execute("DELETE FROM sync_jobs WHERE kind='calendar' AND rowid IN (
@@ -239,7 +239,7 @@ impl Store {
         state: &Value,
         delay: i64,
     ) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("UPDATE sync_jobs SET state=state WHERE account_id=?1 AND kind=?2 AND resource=?3 AND window=?4",params![job.account_id,job.kind.as_str(),job.resource,job.window])?;
         if !self.connected(&job.account_id)? {
             return Err("Account is disconnected".into());
@@ -281,7 +281,7 @@ impl Store {
         state: &Value,
         delay: i64,
     ) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("UPDATE sync_jobs SET state=state WHERE account_id=?1 AND kind=?2 AND resource=?3 AND window=?4",params![job.account_id,job.kind.as_str(),job.resource,job.window])?;
         if !self.connected(&job.account_id)? {
             return Err("Account is disconnected".into());
@@ -408,7 +408,7 @@ impl Store {
         Ok(())
     }
     pub(crate) fn reset_job(&self, job: &SyncJob) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         if job.kind == JobKind::Mail {
             tx.execute(
                 "DELETE FROM sync_seen WHERE account_id=?1 AND resource=?2 AND window=?3",
@@ -433,7 +433,7 @@ impl Store {
         state: &Value,
         delay: i64,
     ) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("UPDATE sync_jobs SET state=state WHERE account_id=?1 AND kind=?2 AND resource=?3 AND window=?4",params![job.account_id,job.kind.as_str(),job.resource,job.window])?;
         if !self.connected(&job.account_id)? {
             return Err("Account is disconnected".into());

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 impl Store {
     pub(crate) fn prepare_notices(&self, now: i64) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("INSERT OR IGNORE INTO notice_calendars SELECT c.account_id,c.id FROM calendar_sources c WHERE NOT EXISTS(SELECT 1 FROM notice_settings s WHERE s.account_id=c.account_id) AND EXISTS(SELECT 1 FROM calendar_events e WHERE e.account_id=c.account_id AND e.calendar_id=c.id)",[])?;
         tx.execute("INSERT OR IGNORE INTO notice_settings(account_id,since) SELECT id,?1 FROM accounts WHERE provider<>'local'",[now])?;
         tx.execute("DELETE FROM notices WHERE occurred<?1 OR rowid NOT IN(SELECT rowid FROM notices ORDER BY occurred DESC,rowid DESC LIMIT ?2)",params![now-HISTORY_SECONDS,NOTICE_LIMIT])?;
@@ -37,7 +37,7 @@ impl Store {
         Ok(())
     }
     pub(crate) fn notice_batch(&self, delivery: NoticeDelivery, now: i64) -> Result<Value> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut stmt=tx.prepare("SELECT id,account_id,kind,target,calendar_id,title,detail,occurred,unread,delivered FROM notices ORDER BY occurred DESC,rowid DESC LIMIT 50")?;
         let items=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"account":r.get::<_,String>(1)?,"kind":r.get::<_,String>(2)?,"target":r.get::<_,String>(3)?,"calendar":r.get::<_,Option<String>>(4)?,"title":r.get::<_,String>(5)?,"detail":r.get::<_,String>(6)?,"occurred":r.get::<_,i64>(7)?,"unread":r.get::<_,bool>(8)?,"delivered":r.get::<_,bool>(9)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
         drop(stmt);
@@ -73,7 +73,7 @@ impl Store {
         Ok(json!({"items":items,"banners":banners,"planned":plan,"settings":settings}))
     }
     pub(crate) fn collect_reminders(&self, now: i64) -> Result<()> {
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let values = reminders(&tx, now - LATE_SECONDS, now)?;
         for (account, calendar, id, title, due) in values {
             let key =

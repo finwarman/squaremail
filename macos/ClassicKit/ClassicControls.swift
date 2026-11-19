@@ -34,7 +34,9 @@ public final class ClassicCheckbox: NSButton {
 public final class ClassicButton: NSButton {
     public override var title: String { didSet { setAccessibilityLabel(title); needsDisplay = true } }
     public override var isEnabled: Bool { didSet { if !isEnabled { hovered = false; highlight(false) }; needsDisplay = true } }
-    public enum Style { case normal, toolbar, toggle, iconToggle, title, menu }
+    public enum Style { case normal, toolbar, toggle, iconToggle, segment, title, menu }
+    private var helpText: String?
+    public override var toolTip: String? { get { helpText } set { helpText = newValue; setAccessibilityHelp(newValue) } }
     public var onPress: (() -> Void)?
     public var icon: ClassicIcon?
     private let style: Style
@@ -48,7 +50,7 @@ public final class ClassicButton: NSButton {
         self.title = title
         self.font = ClassicTheme.font()
         self.isBordered = false
-        self.setButtonType(style == .toggle || style == .iconToggle ? .pushOnPushOff : .momentaryPushIn)
+        self.setButtonType(style == .toggle || style == .iconToggle || style == .segment ? .pushOnPushOff : .momentaryPushIn)
         self.target = self
         self.action = #selector(pressed)
         self.setAccessibilityLabel(title)
@@ -58,6 +60,7 @@ public final class ClassicButton: NSButton {
     public override var isFlipped: Bool { true }
 
     @objc private func pressed() {
+        ClassicHelp.shared.hide()
         defer { highlight(false); needsDisplay = true }
         highlight(false)
         if style == .normal || style == .menu || style == .title { state = .off }
@@ -72,8 +75,8 @@ public final class ClassicButton: NSButton {
         hoverArea = area
     }
 
-    public override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
-    public override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    public override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true; ClassicHelp.shared.show(toolTip, from: self) }
+    public override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true; ClassicHelp.shared.hide() }
 
     public override func draw(_ dirtyRect: NSRect) {
         ClassicTheme.face.setFill(); bounds.fill()
@@ -83,6 +86,9 @@ public final class ClassicButton: NSButton {
         }
         let shift: CGFloat = down ? 1 : 0
         let ink = isEnabled ? ClassicTheme.ink : ClassicTheme.muted
+        if style == .segment && state == .on {
+            ClassicTheme.selection.withAlphaComponent(0.12).setFill(); bounds.insetBy(dx: 2, dy: 2).fill()
+        }
         if style == .iconToggle {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.cgContext.setAlpha(isEnabled ? 1 : 0.45)

@@ -34,3 +34,5 @@ The button reads Checking… or Syncing… while busy. One segmented indetermina
 Each successful step reports whether any provider/mail/calendar lane has due work. An idle provider lane cannot hide ready queued writes. Future retries, disconnected accounts and uncertain sends do not keep the indicator spinning. Manual Refresh interrupts only the idle delay. Generation checks prevent a cancelled worker from changing its replacement. Hidden/inactive progress has no animation.
 
 A completed Outlook catalog checkpoint starts a fresh traversal on its next round. Intermediate pages retain the prior cache and collect seen IDs; only the final calendar page reconciles absent folders/sources. Synthetic HTTP regression covers the old finished-marker/partial-traversal combination.
+
+Current-schema connections skip schema DDL. WAL readers can open while another connection writes. Application write transactions use BEGIN IMMEDIATE before reading their snapshot, so another writer cannot make that snapshot stale before its first write. Waiting stays in the background bridge; read-only search snapshots remain deferred. No network request runs inside these transactions.

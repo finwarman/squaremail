@@ -90,8 +90,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var mailSearch = ""
     private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
     private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions"]
-    private let textButton = ClassicButton("", icon: .text, style: .iconToggle)
-    private let htmlButton = ClassicButton("", icon: .html, style: .iconToggle)
+    private let textButton = ClassicButton("Text", icon: .text, style: .segment)
+    private let htmlButton = ClassicButton("HTML", icon: .html, style: .segment)
     private let more = ClassicButton("Older")
     private let newer = ClassicButton("Newer")
     private let syncButton = ClassicButton("Refresh", icon: .sync, style: .toolbar)

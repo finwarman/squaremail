@@ -25,7 +25,7 @@ impl Store {
         if data.len() > DETAIL_LIMIT + 32 * 1024 {
             return Err("Event details exceed the cache limit".into());
         }
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("INSERT INTO event_details VALUES(?1,?2,?3,?4,?5) ON CONFLICT(account_id,calendar_id,id) DO UPDATE SET data=excluded.data,touched=excluded.touched",params![detail.key.account,detail.key.calendar,id,data,chrono::Utc::now().timestamp()])?;
         tx.execute("DELETE FROM event_details WHERE rowid NOT IN(SELECT rowid FROM event_details ORDER BY touched DESC,rowid DESC LIMIT 100)",[])?;
         tx.commit()?;
@@ -36,7 +36,7 @@ impl Store {
         if data.len() > DETAIL_LIMIT + 64 * 1024 {
             return Err("Pending edit exceeds its size limit".into());
         }
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let previous: Option<String> = tx
             .query_row(
                 "SELECT data FROM event_writes WHERE operation=?1",
@@ -132,7 +132,7 @@ impl Store {
         if data.len() > DETAIL_LIMIT + 64 * 1024 {
             return Err("Calendar draft exceeds its size limit".into());
         }
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let pending: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM event_writes WHERE operation=?1)",
             [&write.change.operation],
@@ -189,7 +189,7 @@ impl Store {
             .single()
             .ok_or("Invalid event month")?
             .timestamp();
-        let tx = self.connection.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         super::save_event(&tx, window, event)?;
         tx.execute(
             "UPDATE event_writes SET state='done',result_id=?2,error=NULL WHERE operation=?1",
