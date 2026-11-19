@@ -10,7 +10,7 @@ public enum MessagePreview {
     private static let outputLimit = 512
 
     public static func render(_ source: String) -> PreviewSnippet {
-        let compact = TextNormalizer.compact(String(source.prefix(inputLimit)))
+        let compact = TextNormalizer.compact(HeaderText.decode(String(source.prefix(inputLimit))))
         var text = ""; var separators: [NSRange] = []
         var length = 0
         for line in compact.split(whereSeparator: \.isNewline) {

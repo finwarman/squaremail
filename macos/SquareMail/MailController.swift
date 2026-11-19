@@ -676,8 +676,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let weight: ClassicTheme.Weight = mail.unread ? .bold : .regular
         switch MailColumn(rawValue: id.rawValue) {
         case .status: cell.configure("", icon: mail.starred ? .star : (mail.unread ? .mail : nil))
-        case .sender: cell.configure(mail.sender.isEmpty ? mail.senderAddress : mail.sender, weight: weight)
-        case .subject: cell.configure((mail.pinned == true ? "Pinned · " : "") + mail.subject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
+        case .sender: cell.configure(mail.displaySender, weight: weight)
+        case .subject: cell.configure((mail.pinned == true ? "Pinned · " : "") + mail.displaySubject, weight: weight, icon: mail.hasAttachments ? .attach : nil)
         case .date: cell.configure(dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval(mail.timestamp))))
         case .account: cell.configure(accounts.first(where: { $0.id == mail.accountId })?.email ?? "")
         default: break
@@ -1328,10 +1328,24 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         } catch is CancellationError {} catch { layout.statusText.stringValue = error.localizedDescription }
     }
 
+    private func checkHeaderText() throws {
+        let json = #"{"id":"entities","account_id":"fixture","remote_id":"entities","sender":"Ada &amp; Co.","sender_address":"literal&amp;box@example.test","recipient":"fin@example.test","subject":"Offers &amp; Updates &#39;Today&#39;","preview":"You&#39;re getting noticed&nbsp;&nbsp;today","timestamp":0,"unread":false,"starred":false,"has_attachments":false}"#
+        let sample = try JSONDecoder().decode(Mail.self, from: Data(json.utf8))
+        let cell = MessageSummaryCell()
+        cell.configure(sample, date: "Today")
+        let labels = cell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
+        guard labels.contains("Ada & Co."), labels.contains("Offers & Updates 'Today'"), labels.contains("You're getting noticed today"),
+              sample.subject == "Offers &amp; Updates &#39;Today&#39;", sample.senderAddress == "literal&amp;box@example.test", sample.displayFrom == "Ada & Co. <literal&amp;box@example.test>" else { throw MailError(message: "Header entity rendering changed source data or missed a label") }
+        layout.header.display(sample)
+        defer { layout.header.display(current) }
+        try WindowPresentation.snapshot(layout, name: "header-entities")
+    }
+
     func checkMailActions() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
         try await SyncCoordinator.verifyFlow()
         await finishSelection(); try await layout.reader.verifySpacing()
+        try checkHeaderText()
         try verifyActionPlacement()
         guard let summary = selectedMail else { throw MailError(message: "Reader action fixture lost selection") }
         readMessage(summary); layout.reader.onCancelLoad?()
@@ -1365,8 +1379,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         calendarView?.selectDate(Calendar.current.date(byAdding: .day, value: offset, to: Date())!)
         try calendarView?.verifyClock()
         coordinator.onStatus?(.checking)
-        try await Task.sleep(for: .milliseconds(240))
-        guard !syncButton.isEnabled, syncButton.title == "Checking…", !layout.syncProgress.isHidden, layout.syncProgress.state == .indeterminate else { throw MailError(message: "Sync activity did not disable duplicate work") }
+        let progressDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while layout.syncProgress.isHidden && ContinuousClock.now < progressDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        guard !syncButton.isEnabled, syncButton.title == "Checking…", !layout.syncProgress.isHidden, layout.syncProgress.state == .indeterminate else { throw MailError(message: "Sync activity did not disable duplicate work: title=\(syncButton.title), enabled=\(syncButton.isEnabled), hidden=\(layout.syncProgress.isHidden)") }
         coordinator.onStatus?(.syncing)
         guard !layout.syncProgress.isHidden, syncButton.title == "Syncing…" else { throw MailError(message: "Sync progress disappeared between pages") }
         mailButton.performClick(nil)
@@ -1811,7 +1826,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 guard let cell = table.view(atColumn: 0, row: table.selectedRow, makeIfNecessary: true) as? MessageSummaryCell,
                       let mail = current else { throw MailError(message: "Compact message row is missing") }
                 let labels = cell.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
-                guard labels.contains(mail.subject), labels.contains(MessagePreview.render(mail.preview).text) else {
+                guard labels.contains(mail.displaySubject), labels.contains(MessagePreview.render(mail.preview).text) else {
                     throw MailError(message: "Compact row lost its subject or preview")
                 }
             }
