@@ -55,6 +55,7 @@ fn sync_cycle(store: &Store, context: &network::Context<'_>) -> Result<Value> {
 fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
     let store = Store::open(&request.database)?;
     match request.command {
+        Command::BodyBackfill { mode } => Ok(json!({"mode":store.backfill_mode(mode)?})),
         Command::MoveFolders { account } => Ok(serde_json::to_value(mailops::move_folders(
             &store, &account,
         )?)?),
@@ -123,6 +124,7 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
                 if store.connected(&account.id)? {
                     store.ensure_job(&account.id, JobKind::Catalog, "", 0)?;
                     store.ensure_job(&account.id, JobKind::RecentMail, "", 0)?;
+                    store.ensure_backfill(&account.id)?;
                     if account.provider == Provider::Gmail {
                         store.ensure_job(&account.id, JobKind::Mail, "", 0)?;
                     }

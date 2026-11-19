@@ -29,6 +29,7 @@ impl Store {
         )?;
         self.ensure_job(&account.id, JobKind::Catalog, "", 0)?;
         self.ensure_job(&account.id, JobKind::RecentMail, "", 0)?;
+        self.ensure_backfill(&account.id)?;
         if account.provider == Provider::Gmail {
             self.ensure_job(&account.id, JobKind::Mail, "", 0)?;
         }
@@ -66,7 +67,7 @@ impl Store {
     pub(crate) fn sync_now(&self) -> Result<()> {
         // Honour provider throttling. A manual refresh must not defeat Retry-After.
         self.connection.execute(
-            "UPDATE sync_jobs SET next_due=0 WHERE failures=0 OR retry_class='network'",
+            "UPDATE sync_jobs SET next_due=0 WHERE kind<>'body_backfill' AND (failures=0 OR retry_class='network')",
             [],
         )?;
         Ok(())
@@ -74,7 +75,7 @@ impl Store {
     pub(crate) fn next_job(&self, now: i64) -> Result<Option<SyncJob>> {
         let mut stmt = self.connection.prepare("WITH served AS (SELECT account_id,MAX(last_attempt) AS recent FROM sync_jobs WHERE active=1 GROUP BY account_id) SELECT j.account_id,kind,resource,window,state,failures FROM sync_jobs j JOIN served a ON a.account_id=j.account_id
             WHERE next_due<=?1 AND active=1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=j.account_id)
-            ORDER BY a.recent,CASE WHEN kind='catalog' THEN 0 WHEN kind='recent_mail' THEN 1 WHEN kind='calendar' AND last_success IS NULL THEN 2 ELSE 3 END,last_attempt LIMIT 1")?;
+            ORDER BY CASE WHEN kind='body_backfill' THEN 1 ELSE 0 END,a.recent,CASE WHEN kind='catalog' THEN 0 WHEN kind='recent_mail' THEN 1 WHEN kind='calendar' AND last_success IS NULL THEN 2 ELSE 3 END,last_attempt LIMIT 1")?;
         let mut rows = stmt.query([now])?;
         let Some(row) = rows.next()? else {
             return Ok(None);

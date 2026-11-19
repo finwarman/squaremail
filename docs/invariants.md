@@ -74,3 +74,5 @@ The native reader defaults to text and creates WebKit only on first HTML use. To
 The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. A long-paragraph workload exposed large TextKit 2 graphics surfaces. The native text path preserves selection, copy and scrolling. Measurement details remain in `docs/performance.md`.
 
 | INV-UI-cursor-sparkles | Decoration defaults off, uses bounded particles/lifetime, passes events through, respects Reduce Motion and stops timers while idle/hidden. Disable/destruction releases event/notification observers. | shared model, repaint-expiry and native lifecycle tests |
+
+| INV-SYNC-body-backfill | One missing body per account step, with a 20-second cooldown and recent resources first. Pause, disconnect and cancellation reject stale saves. Bodies/indexes/checkpoints commit together; failures defer without inventing cached content. No attachment/image prefetch or UI network wait. | synthetic provider GETs, offline restart/search, priority/cooldown/pause rollback and native setting probe |

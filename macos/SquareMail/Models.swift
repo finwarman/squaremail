@@ -139,19 +139,24 @@ struct CalendarEvent: Decodable, Equatable {
 struct SyncStep: Decodable {
     private enum CodingKeys: String, CodingKey {
         case worked, more
+        case bodyCached = "body_cached"
+        case bodyTotal = "body_total"
         case accountId = "account_id"
         case kind
         case error
         case retryAfter = "retry_after"
     }
 
+    let bodyCached: Int?
+    let bodyTotal: Int?
     let more: Bool?
     let worked: Bool
     let accountId: String?
     let kind: SyncKind?
     let error: String?
     let retryAfter: Int?
-    init(worked: Bool, accountId: String?, kind: SyncKind?, error: String?, retryAfter: Int?, more: Bool? = nil) {
+    init(worked: Bool, accountId: String?, kind: SyncKind?, error: String?, retryAfter: Int?, more: Bool? = nil, bodyCached: Int? = nil, bodyTotal: Int? = nil) {
+        self.bodyCached = bodyCached; self.bodyTotal = bodyTotal
         self.worked = worked; self.accountId = accountId; self.kind = kind; self.error = error; self.retryAfter = retryAfter; self.more = more
     }
 }
@@ -184,13 +189,17 @@ struct SyncStatus: Decodable {
     let error: String?
 }
 
-enum SyncKind: String, Decodable { case catalog, mail, calendar; case recentMail = "recent_mail" }
+enum BackfillMode: String, Decodable { case enabled, paused }
+struct BackfillConfig: Decodable { let mode: BackfillMode }
+
+enum SyncKind: String, Decodable { case catalog, mail, calendar; case bodyBackfill = "body_backfill"; case recentMail = "recent_mail" }
 
 enum CoreCommand: String {
     case searchMail = "search_mail"
     case compose
     case moveFolders = "move_folders"
     case queueMail = "queue_mail"
+    case bodyBackfill = "body_backfill"
     case readMail = "read_mail"
     case pinMail = "pin_mail"
     case saveMailDraft = "save_mail_draft"

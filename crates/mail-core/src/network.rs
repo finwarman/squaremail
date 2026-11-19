@@ -45,6 +45,10 @@ impl<'a> Context<'a> {
         Ok(())
     }
     pub(crate) fn send(&self, request: RequestBuilder) -> Result<Reply> {
+        self.send_limited(request, MAX_RESPONSE)
+    }
+    pub(crate) fn send_limited(&self, request: RequestBuilder, limit: u64) -> Result<Reply> {
+        let limit = limit.min(MAX_RESPONSE);
         self.check()?;
         let response = request
             .timeout(REQUEST_TIMEOUT.min(self.deadline.saturating_duration_since(Instant::now())))
@@ -89,9 +93,9 @@ impl<'a> Context<'a> {
             return Err(Box::new(HttpError { status, retry }));
         }
         let mut raw = Vec::new();
-        response.take(MAX_RESPONSE + 1).read_to_end(&mut raw)?;
+        response.take(limit + 1).read_to_end(&mut raw)?;
         self.check()?;
-        if raw.len() as u64 > MAX_RESPONSE {
+        if raw.len() as u64 > limit {
             return Err("Provider response exceeded the size limit".into());
         }
         Ok(Reply {

@@ -7,6 +7,9 @@ use url::Url;
 
 const CALENDAR_ROOT: &str = "https://www.googleapis.com/calendar/v3";
 const MAIL_PAGE: usize = 20;
+const BACKFILL_REPLY_BYTES: u64 = 8 * 1024 * 1024;
+const BACKFILL_SECONDS: i64 = 20;
+const BACKFILL_IDLE: i64 = 60;
 const EVENT_PAGE: usize = 100;
 const POLL_SECONDS: i64 = 60;
 const CATALOG_SECONDS: i64 = 900;
@@ -66,6 +69,11 @@ pub(crate) fn sync_next(store: &Store, context: &Context<'_>) -> Result<Value> {
         return Ok(json!({"worked":false}));
     }
     store.mark_attempt(&job, now)?;
+    if job.kind == JobKind::BodyBackfill && store.backfill_candidate(&account.id, now)?.is_none() {
+        // An empty offline-body queue needs no token/helper access or provider call.
+        store.checkpoint(&job, &job.state, BACKFILL_IDLE)?;
+        return Ok(json!({"worked":false}));
+    }
     let result = (|| -> Result<()> {
         let remote = Remote {
             client: network::client()?,
@@ -109,13 +117,20 @@ pub(crate) fn sync_next(store: &Store, context: &Context<'_>) -> Result<Value> {
             json!({"worked":true,"account_id":job.account_id,"kind":job.kind,"error":error.to_string(),"retry_after":delay}),
         );
     }
-    Ok(json!({"worked":true,"account_id":job.account_id,"kind":job.kind}))
+    let mut reply = json!({"worked":true,"account_id":job.account_id,"kind":job.kind});
+    if job.kind == JobKind::BodyBackfill {
+        let (cached, total) = store.backfill_counts(&job.account_id)?;
+        reply["body_cached"] = json!(cached);
+        reply["body_total"] = json!(total);
+    }
+    Ok(reply)
 }
 fn backoff(failures: i64) -> i64 {
     (15_i64 * (1_i64 << failures.clamp(0, 8))).min(3600)
 }
 fn step(store: &Store, account: &Account, job: &SyncJob, remote: &Remote<'_>) -> Result<()> {
     match job.kind {
+        JobKind::BodyBackfill => backfill_body(store, account, job, remote),
         JobKind::Catalog => catalog(store, account, job, remote),
         JobKind::RecentMail if account.provider == Provider::Gmail => {
             gmail_mail(store, account, job, remote)
@@ -126,6 +141,47 @@ fn step(store: &Store, account: &Account, job: &SyncJob, remote: &Remote<'_>) ->
         }
         JobKind::Mail => graph_mail(store, account, job, remote),
         JobKind::Calendar => calendar_events(store, account, job, remote),
+    }
+}
+fn backfill_body(
+    store: &Store,
+    account: &Account,
+    job: &SyncJob,
+    remote: &Remote<'_>,
+) -> Result<()> {
+    let Some(message) = store.backfill_candidate(&account.id, Utc::now().timestamp())? else {
+        return store.checkpoint(job, &job.state, BACKFILL_IDLE);
+    };
+    let body_remote = BodyRemote {
+        client: &remote.client,
+        token: &remote.token,
+        context: remote.context,
+        gmail: &remote.gmail,
+        graph: &remote.graph,
+        limit: Some(BACKFILL_REPLY_BYTES),
+    };
+    let result = read_body(&body_remote, account.provider, &message.remote_id);
+    remote.context.check()?;
+    match result {
+        Ok((text, html)) => {
+            if text.len() > MAX_BODY_BYTES || html.len() > MAX_BODY_BYTES {
+                return store.finish_backfill(job, &message.id, None, BACKFILL_SECONDS);
+            }
+            let clean = mime::clean_html(&html);
+            store.finish_backfill(job, &message.id, Some((&text, &clean)), BACKFILL_SECONDS)
+        }
+        Err(error) => {
+            let permanent = [400, 404, 413]
+                .iter()
+                .any(|status| network::is_status(error.as_ref(), *status));
+            let malformed = job.failures >= 2
+                && error.downcast_ref::<HttpError>().is_none()
+                && error.downcast_ref::<reqwest::Error>().is_none();
+            if permanent || malformed {
+                return store.finish_backfill(job, &message.id, None, BACKFILL_SECONDS);
+            }
+            Err(error)
+        }
     }
 }
 fn encoded(value: &str) -> String {
@@ -1358,5 +1414,95 @@ mod tests {
         assert_eq!(page[0]["isRead"], true);
         assert!(page[0].get("@removed").is_none());
         assert!(page[1].get("@removed").is_some());
+    }
+    #[test]
+    fn body_backfill_wire() {
+        for provider in [Provider::Gmail, Provider::Outlook] {
+            let store = Store::open(":memory:").unwrap();
+            let a = account(provider);
+            store.save_account(&a).unwrap();
+            let mut message =
+                crate::mime::parse(b"Subject: Archived\r\n\r\n", "a", "older").unwrap();
+            message.text = None;
+            message.html = None;
+            store.save(&message, Folder::Archive).unwrap();
+            let j = job(&store, JobKind::BodyBackfill, "", 0);
+            let context = Context::new(None, 25);
+            let replies = if provider == Provider::Gmail {
+                use base64::Engine;
+                let content =
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("Offline saffron");
+                vec![(
+                    "/gmail/messages/older?format=full",
+                    200,
+                    json!({"payload":{"mimeType":"text/plain","body":{"data":content}}}),
+                )]
+            } else {
+                vec![
+                    (
+                        "/graph/messages/older?$select=body",
+                        200,
+                        json!({"body":{"content":"<p>Offline saffron</p><img src='https://blocked.example.test/a'><script>bad()</script>"}}),
+                    ),
+                    (
+                        "/graph/messages/older?$select=body",
+                        200,
+                        json!({"body":{"content":"Offline saffron"}}),
+                    ),
+                ]
+            };
+            let fixture = Fixture::new(replies);
+            step(&store, &a, &j, &fixture.remote(&context)).unwrap();
+            fixture.finish();
+            let saved = store.message(&message.id).unwrap();
+            assert!(saved.text.unwrap().contains("saffron"));
+            assert!(!saved.html.unwrap().contains("<script"));
+            assert_eq!(
+                store
+                    .list(Some("a"), Folder::All, "saffron", 0, 10)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(store.backfill_candidate("a", 0).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn backfill_retry_classes() {
+        let store = Store::open(":memory:").unwrap();
+        let a = account(Provider::Gmail);
+        store.save_account(&a).unwrap();
+        let mut message =
+            crate::mime::parse(b"Subject: Archived\r\n\r\n", "a", "unavailable").unwrap();
+        message.text = None;
+        message.html = None;
+        store.save(&message, Folder::Archive).unwrap();
+        let j = job(&store, JobKind::BodyBackfill, "", 0);
+        let context = Context::new(None, 25);
+        for status in [401, 403, 429, 503] {
+            let fixture = Fixture::new(vec![(
+                "/gmail/messages/unavailable?format=full",
+                status,
+                json!({}),
+            )]);
+            assert!(step(&store, &a, &j, &fixture.remote(&context)).is_err());
+            fixture.finish();
+            assert!(store.backfill_candidate("a", 0).unwrap().is_some());
+        }
+        let fixture = Fixture::new(vec![(
+            "/gmail/messages/unavailable?format=full",
+            404,
+            json!({}),
+        )]);
+        step(&store, &a, &j, &fixture.remote(&context)).unwrap();
+        fixture.finish();
+        assert!(
+            store
+                .backfill_candidate("a", Utc::now().timestamp())
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.message(&message.id).unwrap().text.is_none());
     }
 }

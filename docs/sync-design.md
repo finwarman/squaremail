@@ -36,3 +36,16 @@ Each successful step reports whether any provider/mail/calendar lane has due wor
 A completed Outlook catalog checkpoint starts a fresh traversal on its next round. Intermediate pages retain the prior cache and collect seen IDs; only the final calendar page reconciles absent folders/sources. Synthetic HTTP regression covers the old finished-marker/partial-traversal combination.
 
 Current-schema connections skip schema DDL. WAL readers can open while another connection writes. Application write transactions use BEGIN IMMEDIATE before reading their snapshot, so another writer cannot make that snapshot stale before its first write. Waiting stays in the background bridge; read-only search snapshots remain deferred. No network request runs inside these transactions.
+
+
+## Progressive offline bodies
+
+Header discovery already traverses Gmail and Graph folders with durable cursors. The bounded list is a view, not a cache limit. Body backfill is enabled by default and can be paused under Tools > Cache older mail for offline search. The setting survives restarts and applies to newly connected accounts. Pausing keeps downloaded bodies and their search index.
+
+The existing worker fetches one missing body per account step, with a 20-second cooldown. Ready catalog, recent-mail, folder and calendar jobs run first. Manual Refresh does not reset this cooldown. Accounts share one network worker; bodies are held only for the current request and released after storage. An indexed missing-body queue chooses newest uncached messages across all folders, progressing to older mail. Completed body storage is the durable checkpoint, so restart needs no in-memory message list or offset scan.
+
+Bodies and sanitized HTML go to disk and SQLite FTS indexes the text in the same local transaction. No attachments, remote images or document previews are prefetched. Gmail may request a separate MIME text part when the provider stores it behind an attachment ID. Background responses are capped at 8 MiB and each returned text/HTML body at 4 MiB. Existing request deadlines, cancellation, consent and provider backoff remain. This can take days of open-app time for a large mailbox.
+
+HTTP 400/404/413 and oversized bodies are deferred for a day. Repeated non-HTTP failures defer that item after three failed attempts; authentication, throttling and other HTTP failures retain normal retry behavior. Deferred metadata remains searchable, with bodies available for an explicit reader fetch. A pause or disconnect during a download rejects its save. Backfill updates only body fields, retaining read/unread holds, flags and moves. A body sync refreshes an active mail search, without reloading Calendar, notifications or the current body. Progress reports cached bodies against currently cached headers; counts can grow during discovery.
+
+Schema 7 adds the missing-body index, retry timestamps and one saved preference. It does not rebuild FTS. No live provider request was used as agent qualification.

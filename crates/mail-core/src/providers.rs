@@ -23,14 +23,56 @@ pub(crate) fn body(
 ) -> Result<(String, String)> {
     let client = network::client()?;
     let token = oauth::access_token(account, context)?;
+    read_body(
+        &BodyRemote {
+            client: &client,
+            token: &token,
+            context,
+            gmail: GMAIL_ROOT,
+            graph: GRAPH_ROOT,
+            limit: None,
+        },
+        account.provider,
+        remote_id,
+    )
+}
+
+struct BodyRemote<'a> {
+    client: &'a reqwest::blocking::Client,
+    token: &'a str,
+    context: &'a Context<'a>,
+    gmail: &'a str,
+    graph: &'a str,
+    limit: Option<u64>,
+}
+impl BodyRemote<'_> {
+    fn send(&self, request: reqwest::blocking::RequestBuilder) -> Result<network::Reply> {
+        match self.limit {
+            Some(limit) => self.context.send_limited(request, limit),
+            None => self.context.send(request),
+        }
+    }
+}
+fn read_body(
+    remote: &BodyRemote<'_>,
+    provider: Provider,
+    remote_id: &str,
+) -> Result<(String, String)> {
     let id: String = url::form_urlencoded::byte_serialize(remote_id.as_bytes()).collect();
-    match account.provider {
+    let BodyRemote {
+        client,
+        token,
+        gmail,
+        graph,
+        ..
+    } = remote;
+    match provider {
         Provider::Gmail => {
-            let value = context
+            let value = remote
                 .send(
                     client
-                        .get(format!("{GMAIL_ROOT}/messages/{id}?format=full"))
-                        .bearer_auth(&token),
+                        .get(format!("{gmail}/messages/{id}?format=full"))
+                        .bearer_auth(token),
                 )?
                 .value;
             let mut body = Vec::new();
@@ -46,13 +88,11 @@ pub(crate) fn body(
                     }
                     let attachment = url::form_urlencoded::byte_serialize(attachment.as_bytes())
                         .collect::<String>();
-                    response = context
+                    response = remote
                         .send(
                             client
-                                .get(format!(
-                                    "{GMAIL_ROOT}/messages/{id}/attachments/{attachment}"
-                                ))
-                                .bearer_auth(&token),
+                                .get(format!("{gmail}/messages/{id}/attachments/{attachment}"))
+                                .bearer_auth(token),
                         )?
                         .value;
                     response["data"]
@@ -75,17 +115,17 @@ pub(crate) fn body(
         }
 
         Provider::Outlook => {
-            let url = format!("{GRAPH_ROOT}/messages/{id}?$select=body");
-            let html = context
+            let url = format!("{graph}/messages/{id}?$select=body");
+            let html = remote
                 .send(
                     client
                         .get(&url)
-                        .bearer_auth(&token)
+                        .bearer_auth(token)
                         .header("Prefer", "IdType=\"ImmutableId\""),
                 )?
                 .value;
-            let text = context
-                .send(client.get(&url).bearer_auth(&token).header(
+            let text = remote
+                .send(client.get(&url).bearer_auth(token).header(
                     "Prefer",
                     "IdType=\"ImmutableId\", outlook.body-content-type=\"text\"",
                 ))?

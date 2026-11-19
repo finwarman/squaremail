@@ -1,6 +1,7 @@
 use crate::{Result, model::*};
 use rusqlite::{Connection, params};
 
+mod backfill;
 mod mail;
 mod media;
 mod notices;
@@ -8,7 +9,7 @@ mod search;
 mod sync;
 
 pub(crate) const PAGE_LIMIT: usize = 250;
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 #[derive(Clone, Copy)]
 pub(crate) struct MailScope<'a> {
@@ -109,6 +110,7 @@ impl Store {
                     [],
                 )?;
             }
+            tx.execute_batch(include_str!("backfill-schema.sql"))?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }
@@ -655,10 +657,22 @@ mod tests {
         for values in [&mut list, &mut selective, &mut common] {
             values.sort_by(f64::total_cmp);
         }
+        store
+            .connection
+            .execute("UPDATE messages SET text=NULL WHERE rowid%1000=0", [])
+            .unwrap();
+        let mut body_pick = Vec::new();
+        for _ in 0..30 {
+            let start = Instant::now();
+            assert!(store.backfill_candidate("a", 0).unwrap().is_some());
+            assert_eq!(store.backfill_counts("a").unwrap().1, 100_000);
+            body_pick.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        body_pick.sort_by(f64::total_cmp);
         println!(
             "BENCHMARK {}",
             serde_json::json!({
-                "messages":100000,"seed_ms":seed_ms,"list_p95_ms":list[28],
+                "messages":100000,"backfill_pick_counts_p95_ms":body_pick[28],"seed_ms":seed_ms,"list_p95_ms":list[28],
                 "selective_search_p95_ms":selective[28],"common_search_p95_ms":common[28],
                 "sqlite_bytes":std::fs::metadata(path).unwrap().len()
             })

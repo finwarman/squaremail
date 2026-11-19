@@ -18,6 +18,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var composer: MailComposer?
     private var workspace: MailWorkspacePanel?
     private var mailTask: Task<Void, Never>?
+    private var backfillMode = BackfillMode.enabled
+    private var backfillTask: Task<Void, Never>?
     private let messageMenu = NSMenu(title: "Message")
     private let mailButton = ClassicButton("Mail", icon: .mail, style: .toolbar)
     private let newButton = ClassicButton("New mail", icon: .draft)
@@ -240,6 +242,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             case .catalog: phase = "folder/calendar discovery"
             case .calendar: phase = "calendar updates"
             case .mail, .recentMail: phase = "mail updates"
+            case .bodyBackfill:
+                let counts = reply.bodyCached.flatMap { cached in reply.bodyTotal.map { " (\(cached)/\($0) bodies cached)" } } ?? ""
+                phase = "caching older mail for offline search" + counts
             case nil: phase = "refresh"
             }
             if let error = reply.error {
@@ -267,6 +272,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if mailbox == .demo {
                 let _: EmptyReply = try await core.request(["command": CoreCommand.seedDemo.rawValue], mode: .demo)
             }
+            let config: BackfillConfig = try await core.request(["command": CoreCommand.bodyBackfill.rawValue], mode: .live)
+            backfillMode = config.mode
             try await loadAccounts()
             await loadList()
         } catch { showError(error) }
@@ -426,6 +433,20 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         readDwell.setHold(.keep)
         _ = queueRead(value.id, state: .unread)
         updateMailButtons()
+    }
+    @objc private func toggleBodyCache() {
+        guard backfillTask == nil else { return }
+        let mode: BackfillMode = backfillMode == .enabled ? .paused : .enabled
+        backfillTask = Task { [weak self] in
+            guard let self else { return }
+            defer { backfillTask = nil }
+            do {
+                let config: BackfillConfig = try await core.request(["command": CoreCommand.bodyBackfill.rawValue, "mode": mode.rawValue], mode: .live)
+                backfillMode = config.mode
+                layout.statusText.stringValue = mode == .enabled ? "Older-mail caching enabled. Small batches while online; attachments stay on demand." : "Older-mail caching paused. Downloaded mail remains available offline."
+                coordinator.kick()
+            } catch { layout.statusText.stringValue = "Could not change older-mail caching: " + error.localizedDescription }
+        }
     }
     @objc private func toggleAutoRead() {
         automaticRead = automaticRead == .afterDelay ? .manual : .afterDelay
@@ -1033,6 +1054,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             layout.statusText.stringValue = email + ": " + error
             return
         }
+        if reply.kind == .bodyBackfill {
+            if section == .mail, !mailSearch.isEmpty { refreshBodySearch() }
+            return
+        }
         workspace?.refresh()
         notifications?.refresh()
         if reply.kind == .catalog { pendingCatalog = true }
@@ -1043,6 +1068,15 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if pendingCatalog { pendingCatalog = false; await loadFolders(); await registerCalendar() }
             if section == .calendar { await loadCalendar() }
             else { await refreshList() }
+        }
+    }
+
+    private func refreshBodySearch() {
+        guard refreshTask == nil else { return }
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { refreshTask = nil }
+            await refreshList()
         }
     }
 
@@ -1229,6 +1263,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         addItem(view, "Cursor sparkles", #selector(toggleSparkles), "")
         let tools = NSMenu(title: "Tools")
         addItem(tools, "Refresh mail and calendars", #selector(syncMail), "r")
+        addItem(tools, "Cache older mail for offline search", #selector(toggleBodyCache), "")
         addItem(tools, "Notifications…", #selector(showNotices), "")
         addItem(file, "New calendar event…", #selector(newCalendarEvent), "")
         addItem(file, "Calendar drafts / pending…", #selector(showCalendarChanges), "")
@@ -1263,15 +1298,17 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         item.target = self
     }
 
-    var needsQuitConfirm: Bool { readTask != nil || editor?.requiresClosePrompt == true || composer?.needsClosePrompt == true }
+    var needsQuitConfirm: Bool { backfillTask != nil || readTask != nil || editor?.requiresClosePrompt == true || composer?.needsClosePrompt == true }
     func confirmQuit(_ reply: @escaping (CalendarEditor.CloseOutcome) -> Void) {
         readClosing = true; readDwell.cancel(); updateMailButtons()
         let finishReply: (CalendarEditor.CloseOutcome) -> Void = { [weak self] outcome in
             self?.readClosing = false; self?.updateMailButtons(); reply(outcome)
         }
         let pendingRead = readTask
+        let pendingSetting = backfillTask
         Task { [weak self] in
             await pendingRead?.value
+            await pendingSetting?.value
             guard let self else { finishReply(.closed); return }
             closeEditors(finishReply)
         }
@@ -1296,6 +1333,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && selectedMail?.id == current?.id && mailTask == nil
 
         case #selector(toggleSparkles): item.state = cursorTrail.mode == .enabled ? .on : .off
+        case #selector(toggleBodyCache): item.state = backfillMode == .enabled ? .on : .off; return mailbox == .live && backfillTask == nil
         case #selector(toggleAutoRead): item.state = automaticRead == .afterDelay ? .on : .off
         case #selector(classicAppearance): item.state = pendingAppearance == .classic ? .on : .off
         case #selector(pinkAppearance): item.state = pendingAppearance == .pink ? .on : .off
@@ -1643,9 +1681,26 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         print("Persistent unread \(probe.rawValue) passed")
     }
 
+    private func verifyBodyCache() async throws {
+        let old = backfillMode
+        let item = NSMenuItem(title: "Cache older mail", action: #selector(toggleBodyCache), keyEquivalent: "")
+        guard validateMenuItem(item) else { throw MailError(message: "Body caching menu is unavailable offline") }
+        toggleBodyCache(); let task = backfillTask; toggleBodyCache()
+        guard backfillTask != nil, needsQuitConfirm else { throw MailError(message: "Body caching duplicated or lost its settings write") }
+        await task?.value
+        let config: BackfillConfig = try await core.request(["command": CoreCommand.bodyBackfill.rawValue], mode: .live)
+        guard config.mode == backfillMode, backfillMode != old, validateMenuItem(item), item.state == (backfillMode == .enabled ? .on : .off) else { throw MailError(message: "Body caching menu state did not follow its saved setting") }
+        toggleBodyCache(); await backfillTask?.value
+        guard backfillMode == old else { throw MailError(message: "Body caching could not resume") }
+        let raw = #"{"worked":true,"kind":"body_backfill","body_cached":4,"body_total":10}"#
+        let reply = try JSONDecoder().decode(SyncStep.self, from: Data(raw.utf8))
+        guard reply.kind == .bodyBackfill, reply.bodyCached == 4, reply.bodyTotal == 10 else { throw MailError(message: "Backfill progress could not decode") }
+    }
+
     func checkMailActions() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
         try await SyncCoordinator.verifyFlow()
+        try await verifyBodyCache()
         await finishSelection(); try await layout.reader.verifySpacing()
         try checkHeaderText()
         try verifyActionPlacement()

@@ -188,6 +188,9 @@ pub(crate) enum Command {
         account: String,
     },
     SyncNext,
+    BodyBackfill {
+        mode: Option<BackfillMode>,
+    },
     SyncNow,
     SyncStatus,
     EventDetail {
@@ -323,6 +326,7 @@ pub(crate) struct CalendarEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum JobKind {
+    BodyBackfill,
     RecentMail,
     Catalog,
     Mail,
@@ -331,6 +335,7 @@ pub(crate) enum JobKind {
 impl JobKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::BodyBackfill => "body_backfill",
             Self::RecentMail => "recent_mail",
             Self::Catalog => "catalog",
             Self::Mail => "mail",
@@ -362,4 +367,11 @@ impl RetryClass {
             Self::Auth => "auth",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BackfillMode {
+    Enabled,
+    Paused,
 }
