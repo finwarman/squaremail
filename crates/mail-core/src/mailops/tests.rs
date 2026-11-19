@@ -807,9 +807,25 @@ fn draft_missing_original() {
     .unwrap();
     let mut draft: MailDraft = serde_json::from_value(result["draft"].clone()).unwrap();
     draft.revision = store.save_mail_draft(&draft).unwrap();
-    rusqlite::Connection::open(file)
-        .unwrap()
-        .execute("DELETE FROM messages WHERE id=?1", [original.id])
+    store
+        .ensure_job("fixture", JobKind::RecentMail, "", 0)
+        .unwrap();
+    let job = SyncJob {
+        account_id: "fixture".into(),
+        kind: JobKind::RecentMail,
+        resource: String::new(),
+        window: 0,
+        state: json!({}),
+        failures: 0,
+    };
+    store
+        .apply_mail(
+            &job,
+            &[],
+            std::slice::from_ref(&original.remote_id),
+            &json!({}),
+            60,
+        )
         .unwrap();
     draft.text = "Keep my new work".into();
     save_draft(&store, &draft).unwrap();

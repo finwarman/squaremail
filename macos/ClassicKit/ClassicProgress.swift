@@ -50,17 +50,18 @@ public final class ClassicProgress: NSView {
         }
     }
     public override func draw(_ dirtyRect: NSRect) {
-        ClassicTheme.light.setFill(); bounds.fill(); ClassicTheme.bevel(bounds, edge: .sunken)
+        let idle = state == .idle
+        (idle ? ClassicTheme.face : ClassicTheme.light).setFill(); bounds.fill(); ClassicTheme.bevel(bounds, edge: .sunken)
         let inner = bounds.insetBy(dx: 3, dy: 3)
         guard inner.width > 0, inner.height > 0 else { return }
         let count = max(1, Int(inner.width / 10))
         let filled: Int
         switch state {
-        case .idle: return
+        case .idle: filled = count
         case .indeterminate: filled = count
         case let .determinate(completed, total): filled = total > 0 ? Int(ceil(Double(max(0, min(completed, total))) / Double(total) * Double(count))) : 0
         }
-        ClassicTheme.selection.setFill()
+        (idle ? ClassicTheme.shadow.withAlphaComponent(0.35) : ClassicTheme.selection).setFill()
         for index in 0..<filled {
             if state == .indeterminate && (index + phase) % 8 >= 3 { continue }
             NSRect(x: inner.minX + CGFloat(index) * 10, y: inner.minY, width: min(8, inner.maxX - inner.minX - CGFloat(index) * 10), height: inner.height).fill()

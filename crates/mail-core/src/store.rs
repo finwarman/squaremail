@@ -37,6 +37,7 @@ impl Store {
         }
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        search::register(&connection)?;
         let schema_version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;")?;
         if schema_version < search::SCHEMA_VERSION {
@@ -569,11 +570,13 @@ mod tests {
                 .unwrap();
         }
         let mut message = mail("scale-0");
+        message.sender = "Example O&#39;Brien &amp; Partners".into();
+        message.preview = "You&#39;re invited to R&amp;D".into();
         for index in 0..100_000 {
             message.account_id = format!("scale-{}", index % 10);
             message.remote_id = (index / 10).to_string();
             message.id = format!("{}:{}", message.account_id, message.remote_id);
-            message.subject = format!("Engine invoice {index:06}");
+            message.subject = format!("Engine invoice {index:06}: R&amp;D");
             message.sender_address = format!("sender{index:06}@dept{}.example.test", index % 10);
             message.timestamp = index;
             let folder = [Folder::Inbox, Folder::Sent, Folder::Archive][index as usize % 3];
@@ -590,6 +593,21 @@ mod tests {
                 1,
             ),
             ("unified_selective", None, Folder::All, "073000", 1),
+            ("decoded_subject", None, Folder::All, "073000 R&D", 1),
+            (
+                "decoded_sender",
+                Some("scale-0"),
+                Folder::All,
+                "O’Brien & Partners",
+                250,
+            ),
+            (
+                "decoded_preview",
+                Some("scale-0"),
+                Folder::All,
+                "you're",
+                250,
+            ),
             (
                 "account_common",
                 Some("scale-0"),
@@ -683,6 +701,29 @@ mod tests {
             times.sort_by(f64::total_cmp);
             results.insert(name.into(), serde_json::json!({"p95_ms":times[28]}));
         }
+        // Rebuild a legacy index, then measure the actual one-time open migration.
+        store
+            .connection
+            .execute_batch(include_str!("store/search/legacy-v4.sql"))
+            .unwrap();
+        store
+            .connection
+            .pragma_update(None, "user_version", 4)
+            .unwrap();
+        drop(store);
+        let begin = Instant::now();
+        let migrated = Store::open(directory.path().join("mail.sqlite").to_str().unwrap()).unwrap();
+        results.insert(
+            "schema5_migration".into(),
+            serde_json::json!({"elapsed_ms":begin.elapsed().as_secs_f64()*1000.0}),
+        );
+        assert_eq!(
+            migrated
+                .list(None, Folder::All, "073000 R&D", 0, PAGE_LIMIT)
+                .unwrap()
+                .len(),
+            1
+        );
         println!(
             "MULTI_ACCOUNT_BENCHMARK {}",
             serde_json::Value::Object(results)

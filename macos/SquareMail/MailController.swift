@@ -172,21 +172,21 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             syncButton.title = status == .checking ? "Checking…" : (status == .syncing ? "Syncing…" : "Refresh")
             syncButton.toolTip = busy ? "Refresh is running. Cached mail and calendars remain usable." : "Check connected mail and calendars now (⌘R). Provider retry limits still apply."
             if busy {
-                layout.syncProgress.state = .indeterminate
+                layout.syncProgress.toolTip = "Checking connected mail and calendars."
                 if status == .checking {
                     layout.syncCaption.stringValue = "Checking mail and calendars…"
                     syncFailureText = nil
                 }
-                if layout.syncProgress.isHidden && syncFeedback == nil {
+                if layout.syncProgress.state == .idle && syncFeedback == nil {
                     syncFeedback = Task { [weak self] in
                         do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
-                        self?.layout.syncProgress.isHidden = false
+                        self?.layout.syncProgress.state = .indeterminate
                     }
                 }
                 return
             }
             syncFeedback?.cancel(); syncFeedback = nil
-            layout.syncProgress.state = .idle; layout.syncProgress.isHidden = true
+            layout.syncProgress.state = .idle
             switch status {
             case .waiting: layout.syncCaption.stringValue = "Check finished at " + DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
             case .offline: layout.syncCaption.stringValue = "Offline. Cached mail stays available; refresh resumes on reconnect."
@@ -196,6 +196,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             case .checking, .syncing: break
             }
             layout.syncCaption.toolTip = layout.syncCaption.stringValue
+            layout.syncProgress.toolTip = layout.syncCaption.stringValue
         }
         coordinator.onDetail = { [weak self] reply, count in
             guard let self else { return }
@@ -1380,14 +1381,14 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         try calendarView?.verifyClock()
         coordinator.onStatus?(.checking)
         let progressDeadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while layout.syncProgress.isHidden && ContinuousClock.now < progressDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        while layout.syncProgress.state == .idle && ContinuousClock.now < progressDeadline { try await Task.sleep(for: .milliseconds(10)) }
         guard !syncButton.isEnabled, syncButton.title == "Checking…", !layout.syncProgress.isHidden, layout.syncProgress.state == .indeterminate else { throw MailError(message: "Sync activity did not disable duplicate work: title=\(syncButton.title), enabled=\(syncButton.isEnabled), hidden=\(layout.syncProgress.isHidden)") }
         coordinator.onStatus?(.syncing)
         guard !layout.syncProgress.isHidden, syncButton.title == "Syncing…" else { throw MailError(message: "Sync progress disappeared between pages") }
         mailButton.performClick(nil)
         guard !syncButton.isEnabled else { throw MailError(message: "Navigation re-enabled an active sync button") }
         coordinator.onStatus?(.offline)
-        guard syncButton.isEnabled, syncButton.title == "Refresh", layout.syncProgress.isHidden, !syncButton.isHighlighted, layout.syncProgress.state == .idle else { throw MailError(message: "Offline sync retained its busy state") }
+        guard syncButton.isEnabled, syncButton.title == "Refresh", !layout.syncProgress.isHidden, !syncButton.isHighlighted, layout.syncProgress.state == .idle else { throw MailError(message: "Offline sync retained its busy state or hid the disabled track") }
         let appearance = pendingAppearance
         chooseAppearance(appearance == .classic ? .pink : .classic)
         guard pendingAppearance != appearance, ClassicTheme.appearance == appearance else { throw MailError(message: "Appearance choice did not remain pending until restart") }
@@ -1506,6 +1507,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             setSearchText(value.id + " project")
             await loadList()
             guard !messages.isEmpty, messages.allSatisfy({ $0.accountId == value.id }) else { throw MailError(message: "Scoped search lost account isolation") }
+            for query in ["O'Brien", "O’Brien", "R&D", "you're", "you’re", "O’Brein & Exmaple"] {
+                setSearchText(query); await loadList()
+                guard messages.count == Self.pageSize, messages.allSatisfy({ $0.accountId == value.id && $0.text == nil }),
+                      messages.first?.displaySender == "Ada O'Brien & Example" else { throw MailError(message: "Decoded search lost display parity, scope or bounded headers") }
+            }
             setSearchText("ada@example.test"); await loadList()
             guard messages.count == Self.pageSize, searchMatch == .literal, messages.allSatisfy({ $0.accountId == value.id && $0.text == nil }) else { throw MailError(message: "Address search lost bounded headers or account scope") }
             setSearchText("ada@exmaple.test"); await loadList()

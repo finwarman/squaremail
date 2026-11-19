@@ -91,7 +91,8 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         status.addSubview(syncProgress)
         syncCaption.font = ClassicTheme.font(11); syncCaption.textColor = ClassicTheme.muted
         syncCaption.lineBreakMode = .byTruncatingTail; status.addSubview(syncCaption)
-        syncProgress.isHidden = true
+        syncProgress.setAccessibilityLabel("Mail and calendar sync")
+        syncProgress.toolTip = "Sync is idle. Cached mail and calendars remain available."
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }

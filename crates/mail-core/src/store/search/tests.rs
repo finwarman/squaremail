@@ -33,6 +33,240 @@ fn smart(store: &Store, scope: MailScope<'_>, query: &str) -> SearchPage {
 }
 
 #[test]
+fn decoded_headers_and_scopes() {
+    let store = setup(":memory:");
+    let mut mail = message("a", "escaped");
+    mail.subject = "You're invited to R&amp;D".into();
+    mail.sender = "Jos&eacute; O&#39;Brien &amp; Partners".into();
+    mail.preview = "Salt &amp; Pepper: it&#x2019;s ready".into();
+    mail.sender_address = "raw&amp;address@example.test".into();
+    mail.text = Some("Body's literal &amp;notdecoded;".into());
+    for (account, folder) in [("a", Folder::Inbox), ("b", Folder::Archive)] {
+        mail.account_id = account.into();
+        mail.id = format!("{account}:escaped");
+        store.save(&mail, folder).unwrap();
+    }
+    let here = scope(Some("a"), Folder::Inbox);
+    for query in [
+        "you're",
+        "you’re",
+        "R&D",
+        "O'Brien",
+        "O’Brien",
+        "Jose",
+        "Salt & Pepper",
+        "it's ready",
+        "it’s ready",
+    ] {
+        let found = smart(&store, here, query);
+        assert_eq!(found.kind, SearchMatch::Literal, "{query}");
+        assert_eq!(found.messages.len(), 1, "{query}");
+        assert_eq!(found.messages[0].account_id, "a");
+        assert_eq!(found.messages[0].subject, mail.subject);
+        assert_eq!(found.messages[0].preview, mail.preview);
+        assert!(found.messages[0].text.is_none());
+        assert_eq!(
+            smart(&store, scope(None, Folder::All), query)
+                .messages
+                .len(),
+            2
+        );
+        assert!(
+            smart(&store, scope(Some("b"), Folder::Inbox), query)
+                .messages
+                .is_empty()
+        );
+    }
+    assert_eq!(
+        smart(&store, here, "O’Brein & Partenrs").kind,
+        SearchMatch::Approximate
+    );
+    for query in ["&", "’", "...", "& \" ' ", "raw&address"] {
+        assert!(smart(&store, here, query).messages.is_empty(), "{query}");
+    }
+    assert_eq!(smart(&store, here, "ampnotdecoded").messages.len(), 0);
+    assert_eq!(smart(&store, here, "notdecoded").messages.len(), 1);
+    assert_eq!(smart(&store, here, "amp").messages.len(), 1); // Raw body/address stay indexed literally.
+    store
+        .connection
+        .execute(
+            "INSERT INTO mail_folders VALUES('b','nested','Nested',NULL,NULL)",
+            [],
+        )
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO mail_membership VALUES('b','escaped','nested')",
+            [],
+        )
+        .unwrap();
+    let nested = MailScope {
+        account: Some("b"),
+        folder: Folder::All,
+        remote: Some("nested"),
+    };
+    assert_eq!(
+        smart(&store, nested, "O’Brein & Partenrs").messages[0].account_id,
+        "b"
+    );
+}
+
+#[test]
+fn decoded_index_lifecycle() {
+    let store = setup(":memory:");
+    let mut mail = message("a", "escaped");
+    mail.subject = "You&#39;re invited".into();
+    mail.sender = "M&uuml;ller".into();
+    mail.preview = "We&apos;re ready".into();
+    store.save(&mail, Folder::Inbox).unwrap();
+    let here = scope(None, Folder::All);
+    for query in ["you're", "muller", "we're"] {
+        assert_eq!(smart(&store, here, query).messages.len(), 1);
+    }
+    mail.subject = "They&#39;ve arrived".into();
+    mail.sender = "Dvo&rcaron;ak".into();
+    mail.preview = "She&#x27;s here".into();
+    store.save(&mail, Folder::Inbox).unwrap();
+    for query in ["you're", "muller", "we're"] {
+        assert!(smart(&store, here, query).messages.is_empty());
+    }
+    for query in ["they’ve", "dvorak", "she's"] {
+        assert_eq!(smart(&store, here, query).messages.len(), 1);
+    }
+    store
+        .save_body(&mail.id, "Fresh cached nebula", "")
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO message_search(message_search,rank) VALUES('integrity-check',1)",
+            [],
+        )
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO message_search(message_search) VALUES('rebuild')",
+            [],
+        )
+        .unwrap();
+    assert_eq!(smart(&store, here, "nebula").messages.len(), 1);
+    // Queries and pin/read-only changes must not run the header decoder or load a content view.
+    store
+        .connection
+        .create_scalar_function(
+            "squaremail_header_text",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |_| -> rusqlite::Result<String> { Err(rusqlite::Error::InvalidQuery) },
+        )
+        .unwrap();
+    store.pin_mail(&mail.id, true.into()).unwrap();
+    store
+        .connection
+        .execute(
+            "UPDATE messages SET unread=0,starred=1 WHERE id=?1",
+            [&mail.id],
+        )
+        .unwrap();
+    assert_eq!(smart(&store, here, "they’ve").messages.len(), 1);
+    assert_eq!(smart(&store, here, "dvorka").kind, SearchMatch::Approximate);
+    register(&store.connection).unwrap();
+    store
+        .connection
+        .execute("DELETE FROM messages WHERE id=?1", [&mail.id])
+        .unwrap();
+    assert!(smart(&store, here, "they've").messages.is_empty());
+    store
+        .connection
+        .execute(
+            "INSERT INTO message_search(message_search,rank) VALUES('integrity-check',1)",
+            [],
+        )
+        .unwrap();
+}
+
+#[test]
+fn escaped_schema4_migration() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("mail.sqlite");
+    let path = path.to_str().unwrap();
+    let id;
+    {
+        let store = setup(path);
+        store
+            .connection
+            .execute_batch(include_str!("legacy-v4.sql"))
+            .unwrap();
+        store
+            .connection
+            .pragma_update(None, "user_version", 4)
+            .unwrap();
+        let mut mail = message("a", "escaped");
+        mail.subject = "You&#39;re invited to R&amp;D".into();
+        mail.sender = "O&#39;Brien".into();
+        mail.preview = "It&apos;s ready".into();
+        id = mail.id.clone();
+        store.save(&mail, Folder::Inbox).unwrap();
+        store
+            .queue_mail("kept-read", mail, MailAction::Read { unread: false })
+            .unwrap();
+        let draft = MailDraft {
+            id: "kept".into(),
+            account: "a".into(),
+            kind: ComposeKind::New,
+            original: None,
+            to: vec![],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Draft &amp; subject".into(),
+            text: "Unsent draft".into(),
+            headers: None,
+            revision: 0,
+        };
+        store.save_mail_draft(&draft).unwrap();
+        assert!(
+            smart(&store, scope(None, Folder::All), "you're")
+                .messages
+                .is_empty()
+        );
+    }
+    for _ in 0..2 {
+        let store = Store::open(path).unwrap();
+        for query in ["you're", "R&D", "O'Brien", "it's"] {
+            assert_eq!(
+                smart(&store, scope(None, Folder::All), query)
+                    .messages
+                    .len(),
+                1,
+                "{query}"
+            );
+        }
+        let raw = store.message(&id).unwrap();
+        assert_eq!(raw.subject, "You&#39;re invited to R&amp;D");
+        assert_eq!(raw.sender, "O&#39;Brien");
+        assert_eq!(raw.preview, "It&apos;s ready");
+        assert!(raw.text.unwrap().contains("quartz"));
+        assert_eq!(
+            store.mail_draft("kept").unwrap().subject,
+            "Draft &amp; subject"
+        );
+        assert_eq!(
+            store.mail_workspace().unwrap()["work"][0]["id"],
+            "kept-read"
+        );
+        store
+            .connection
+            .execute(
+                "INSERT INTO message_search(message_search,rank) VALUES('integrity-check',1)",
+                [],
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn address_and_body_lifecycle() {
     let store = setup(":memory:");
     let mut mail = message("a", "1");

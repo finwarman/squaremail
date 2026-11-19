@@ -1,0 +1,74 @@
+[
+  {
+    "source": "Salt &amp; Pepper &#39;offers&#x27; &quot;today&quot;",
+    "decoded": "Salt & Pepper 'offers' \"today\""
+  },
+  {
+    "source": "&lt;b&gt;Literal&lt;/b&gt; &copy; &eacute; &rsquo;",
+    "decoded": "<b>Literal</b> \u00a9 \u00e9 \u2019"
+  },
+  {
+    "source": "&AMP; &apos; &#X1F4E7; &NotEqualTilde;",
+    "decoded": "& ' \ud83d\udce7 \u2242\u0338"
+  },
+  {
+    "source": "A &CounterClockwiseContourIntegral; B",
+    "decoded": "A \u2233 B"
+  },
+  {
+    "source": "&#128; &#x92;",
+    "decoded": "\u20ac \u2019"
+  },
+  {
+    "source": "R&D &unknown; &amp;#39; &copy without a semicolon",
+    "decoded": "R&D &unknown; &#39; &copy without a semicolon"
+  },
+  {
+    "source": "You&#39;re getting noticed&nbsp;&nbsp;today\n\nOffers &amp; updates",
+    "decoded": "You're getting noticed\u00a0\u00a0today\n\nOffers & updates"
+  },
+  {
+    "source": "&#0;",
+    "decoded": "&#0;"
+  },
+  {
+    "source": "&#xD800;",
+    "decoded": "&#xD800;"
+  },
+  {
+    "source": "&#1114112;",
+    "decoded": "&#1114112;"
+  },
+  {
+    "source": "&#999999999999999999999999999999;",
+    "decoded": "&#999999999999999999999999999999;"
+  },
+  {
+    "source": "&#-1;",
+    "decoded": "&#-1;"
+  },
+  {
+    "source": "&#x;",
+    "decoded": "&#x;"
+  },
+  {
+    "source": "&#;",
+    "decoded": "&#;"
+  },
+  {
+    "source": "&;",
+    "decoded": "&;"
+  },
+  {
+    "source": "&#129;",
+    "decoded": "&#129;"
+  },
+  {
+    "source": "a &amp",
+    "decoded": "a &amp"
+  },
+  {
+    "source": "&unknown;",
+    "decoded": "&unknown;"
+  }
+]

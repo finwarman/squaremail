@@ -1,5 +1,6 @@
 mod calendar;
 mod demo;
+mod header_text;
 mod mailops;
 mod media;
 mod mime;
