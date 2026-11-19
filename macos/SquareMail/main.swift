@@ -167,6 +167,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                     try await controller.checkReadHold(probe); NSApp.terminate(nil)
                 } catch { fputs("READ HOLD FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
             }
+            if arguments.contains("--check-action-nav") {
+                do { try await controller.checkActionNav(); NSApp.terminate(nil) }
+                catch { fputs("ACTION NAV FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-mail-actions") {
                 do { try await controller.checkMailActions(); NSApp.terminate(nil) }
                 catch { fputs("MAIL ACTIONS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }

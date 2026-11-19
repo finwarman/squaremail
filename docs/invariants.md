@@ -77,3 +77,5 @@ The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. 
 
 | INV-SYNC-body-backfill | One missing body per account step, with a 20-second cooldown and recent resources first. Pause, disconnect and cancellation reject stale saves. Bodies/indexes/checkpoints commit together; failures defer without inventing cached content. No attachment/image prefetch or UI network wait. | synthetic provider GETs, offline restart/search, priority/cooldown/pause rollback and native setting probe |
 | INV-OAUTH-release-config | Fresh installs use bounded signed desktop metadata; existing overrides win, Keychain errors stay visible, and account tokens/endpoints cannot enter the release resource. Normal sign-in shows no developer fields. | Rust config/precedence contracts, packaging gate and native setup qualification |
+
+| INV-MAIL-action-selection | Successful placement actions advance in current visible order, with previous-row/page fallback. New arrivals do not select the head; newer selection/scope wins. Failed/cancelled actions keep selection. Unread automatic-read clearing stays separate. | hidden260message offline repeated-action and navigation probe |

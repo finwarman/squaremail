@@ -936,3 +936,24 @@ fn outlook_trash_without_catalog() {
             .contains("changed during sync")
     );
 }
+
+#[test]
+#[ignore]
+fn seed_action_nav_fixture() {
+    let path = std::env::var("SQUAREMAIL_ACTION_NAV_DB").expect("Use a synthetic output database");
+    let store = Store::open(&path).unwrap();
+    let mut message = seed(&store);
+    message.timestamp = 1_700_000_000;
+    store.save(&message, Folder::Inbox).unwrap();
+    for index in 1..260 {
+        message.remote_id = format!("nav-{index}");
+        message.id = crate::mime::message_id("fixture", &message.remote_id);
+        message.timestamp = 1_700_000_000 + index;
+        message.subject = format!("Navigation message {index}");
+        store.save(&message, Folder::Inbox).unwrap();
+    }
+    store
+        .pause_account("fixture", DisconnectMode::KeepCache)
+        .unwrap();
+    println!("Generated disconnected260message action-navigation fixture");
+}

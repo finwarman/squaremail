@@ -39,6 +39,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var readIntents: [(id: String, state: MailReadState)] = []
     private var recentlyReadID: String?
     private var restoringSelection = false
+    private var selectionRevision = 0
     private var readObservations: [(NotificationCenter, NSObjectProtocol)] = []
     private var readSleeping = false
     private var readStopped = false
@@ -111,7 +112,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private static let calendarIdleDelay: Duration = .seconds(5)
     private var mailSearch = ""
     private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
-    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions", "--check-read-hold"]
+    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions", "--check-read-hold", "--check-action-nav"]
     private let textButton = ClassicButton("Text", icon: .text, style: .segment)
     private let htmlButton = ClassicButton("HTML", icon: .html, style: .segment)
     private let more = ClassicButton("Older")
@@ -548,11 +549,20 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard let value = selectedMail, value.id == current?.id else { return }
         runMailCommand(["command": CoreCommand.pinMail.rawValue, "id": value.id, "pinned": value.pinned != true], message: "Pin updated on this Mac.")
     }
+    private func actionAnchor() -> MailAdvance? {
+        MailAdvance(messages.map(\.id), id: current?.id, revision: listRevision, selection: selectionRevision)
+    }
     private func changeMail(_ action: [String: Any]) {
         guard let value = selectedMail, value.id == current?.id, mailbox == .live else { return }
-        runMailCommand(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], message: "Change queued. Drafts / outbox shows sync and consent status.")
+        let kind = (action["kind"] as? String).flatMap(MailActionKind.init(rawValue:))
+        let anchor: MailAdvance?
+        switch kind {
+        case .trash, .archive, .move: anchor = actionAnchor()
+        default: anchor = nil
+        }
+        runMailCommand(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], message: "Change queued. Drafts / outbox shows sync and consent status.", advance: anchor)
     }
-    private func runMailCommand(_ command: [String: Any], message: String) {
+    private func runMailCommand(_ command: [String: Any], message: String, advance: MailAdvance? = nil) {
         guard mailTask == nil, section == .mail else { return }
         let mode = mailbox
         updateMailButtons(.busy)
@@ -561,7 +571,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             defer { mailTask = nil; updateMailButtons() }
             do {
                 let _: EmptyReply = try await core.request(command, mode: mode)
-                await refreshList(); workspace?.refresh(); coordinator.kick()
+                await refreshList(after: advance); workspace?.refresh(); coordinator.kick()
                 layout.statusText.stringValue = message
             } catch { showError(error) }
         }
@@ -569,6 +579,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func moveMail() {
         guard mailTask == nil, let value = selectedMail, value.id == current?.id, mailbox == .live else { return }
         let source = remoteFolder?.id
+        let advance = actionAnchor()
         updateMailButtons(.busy)
         mailTask = Task { [weak self] in
             guard let self else { return }
@@ -585,7 +596,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 let target = targets[picker.indexOfSelectedItem]
                 let action: [String: Any] = target.system == Folder.trash.rawValue ? ["kind": MailActionKind.trash.rawValue] : ["kind": MailActionKind.move.rawValue, "destination": target.id, "source": source as Any? ?? NSNull()]
                 let _: EmptyReply = try await core.request(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], mode: .live)
-                await refreshList(); coordinator.kick(); workspace?.refresh()
+                await refreshList(after: advance); coordinator.kick(); workspace?.refresh()
                 layout.statusText.stringValue = "Move queued. Cached mail remains available offline."
             } catch { showError(error) }
         }
@@ -885,6 +896,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !restoringSelection else { return }
+        selectionRevision += 1
         readDwell.cancel()
         updateMailButtons()
         guard section == .mail else { return }
@@ -1080,32 +1092,53 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
-    private func refreshList() async {
+    private func refreshList(after advance: MailAdvance? = nil) async {
         guard section == .mail else { return }
         let revision = listRevision
         let command = listCommand
         do {
-            let result: MailSearchPage = try await core.request(command, mode: mailbox)
-            let rows = result.messages
+            var result: MailSearchPage = try await core.request(command, mode: mailbox)
             guard !Task.isCancelled, revision == listRevision, section == .mail, searchIsCurrent(command) else { return }
+            var previousPage = false
+            if result.messages.isEmpty, pageOffset > 0, advance?.isCurrent(revision: listRevision, selection: selectionRevision) == true {
+                let previousOffset = max(0, pageOffset - Self.pageSize)
+                var previous = command; previous["offset"] = previousOffset
+                result = try await core.request(previous, mode: mailbox)
+                guard !Task.isCancelled, revision == listRevision, section == .mail, searchIsCurrent(command),
+                      advance?.isCurrent(revision: listRevision, selection: selectionRevision) == true else { return }
+                pageOffset = previousOffset
+                listRevision += 1
+                previousPage = true
+            }
+            let rows = result.messages
+            let advancing = previousPage || advance?.isCurrent(revision: listRevision, selection: selectionRevision) == true
             let changedKind = searchMatch != result.kind
             searchMatch = result.kind
-            if rows == messages {
+            if rows == messages, !advancing {
                 if changedKind { layout.statusText.stringValue = matchCaption + String(rows.count) + " messages shown" }
                 return
             }
             let previous = current
             let selected = previous?.id
+            let neighbour = MailAdvance(messages.map(\.id), id: selected, revision: revision, selection: selectionRevision)
+            let origin = table.enclosingScrollView?.contentView.bounds.origin
             restoringSelection = true
             table.deselectAll(nil)
             messages = rows
             table.reloadData()
             more.isEnabled = rows.count == Self.pageSize
             layout.listCaption.stringValue = "\(listTitle.uppercased())  ·  \(rows.isEmpty ? "0" : "\(pageOffset + 1)-\(pageOffset + rows.count)") SHOWN"
-            if let id = selected, let index = rows.firstIndex(where: { $0.id == id }) {
-                table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                table.scrollRowToVisible(index)
-            } else if !rows.isEmpty, folder != .unread || recentlyReadID == nil { table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
+            let target: Int?
+            if advancing { target = previousPage ? rows.indices.last : advance?.next(in: rows.map(\.id)) }
+            else if let selected, let index = rows.firstIndex(where: { $0.id == selected }) { target = index }
+            else if folder != .unread || recentlyReadID == nil { target = neighbour?.next(in: rows.map(\.id)) }
+            else { target = nil }
+            if let target { table.selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false) }
+            if let origin, let scroll = table.enclosingScrollView {
+                scroll.contentView.scroll(to: origin); scroll.reflectScrolledClipView(scroll.contentView)
+            }
+            if let target { table.scrollRowToVisible(target) }
+            newer.isEnabled = pageOffset > 0
             restoringSelection = false
             if let row = selectedMail {
                 if let previous, previous.id == row.id {
@@ -1114,7 +1147,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             } else {
                 bodyRevision += 1; readingTask?.cancel(); readDwell.select(nil)
                 current = nil; layout.header.display(nil)
-                layout.reader.showNotice(rows.isEmpty ? "No cached messages in this view." : "Marked read. Select another message to continue.")
+                layout.reader.showNotice(rows.isEmpty ? "No cached messages in this view." : (advancing ? "Select another message to continue." : "Select a message to read it."))
             }
             updateMailButtons()
             layout.statusText.stringValue = matchCaption + "Cache updated · " + String(rows.count) + " messages shown"
@@ -1695,6 +1728,57 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let raw = #"{"worked":true,"kind":"body_backfill","body_cached":4,"body_total":10}"#
         let reply = try JSONDecoder().decode(SyncStep.self, from: Data(raw.utf8))
         guard reply.kind == .bodyBackfill, reply.bodyCached == 4, reply.bodyTotal == 10 else { throw MailError(message: "Backfill progress could not decode") }
+    }
+
+    func checkActionNav() async throws {
+        guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test",
+              accounts.first?.connected == false, messages.count == Self.pageSize else { throw MailError(message: "Use the disconnected action-navigation fixture") }
+        let sample = MailAdvance(["a", "b", "c"], id: "b", revision: 1, selection: 1)!
+        guard sample.next(in: ["new", "a", "c"]) == 2, sample.next(in: ["new", "a"]) == 1,
+              !sample.isCurrent(revision: 2, selection: 1), !sample.isCurrent(revision: 1, selection: 2) else { throw MailError(message: "Neighbour selection followed new arrivals or stale navigation") }
+        account = accounts[0].id
+        await loadList()
+        table.selectRowIndexes(IndexSet(integer: 120), byExtendingSelection: false)
+        await finishSelection()
+        for _ in 0..<3 {
+            let next = messages[table.selectedRow + 1].id
+            trashButton.performClick(nil); await mailTask?.value
+            guard selectedMail?.id == next, table.selectedRow == 120, trashButton.isEnabled else { throw MailError(message: "Repeated Trash jumped away from the next row") }
+        }
+        let source = selectedMail!.id
+        let next = messages[table.selectedRow + 1].id
+        changeMail(["kind": MailActionKind.move.rawValue, "destination": "label:project", "source": "label:INBOX"])
+        await mailTask?.value
+        guard selectedMail?.id == next, !messages.contains(where: { $0.id == source }) else { throw MailError(message: "Move lost the next message") }
+        let kept = selectedMail!.id
+        moveButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.id == kept, trashButton.isEnabled else { throw MailError(message: "Cancelled Move changed selection or left actions blocked") }
+        changeMail(["kind": MailActionKind.move.rawValue, "destination": "not-cached", "source": "label:INBOX"])
+        await mailTask?.value
+        guard selectedMail?.id == kept, trashButton.isEnabled else { throw MailError(message: "Failed Move advanced or blocked selection") }
+        trashButton.performClick(nil)
+        let chosen = messages[10].id
+        table.selectRowIndexes(IndexSet(integer: 10), byExtendingSelection: false)
+        await mailTask?.value
+        guard selectedMail?.id == chosen else { throw MailError(message: "An action replaced a newer user selection") }
+        folder = .all; await loadList()
+        table.selectRowIndexes(IndexSet(integer: 30), byExtendingSelection: false)
+        let archived = messages[30].id; let after = messages[31].id
+        archiveButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.id == after, messages.contains(where: { $0.id == archived }) else { throw MailError(message: "Archive did not advance when All mail retained the row") }
+        folder = .inbox; await loadList(); await loadList(page: .older)
+        guard pageOffset == Self.pageSize, messages.count > 1 else { throw MailError(message: "Missing last-page fixture") }
+        table.selectRowIndexes(IndexSet(integer: messages.count - 1), byExtendingSelection: false)
+        let previous = messages[messages.count - 2].id
+        archiveButton.performClick(nil); await mailTask?.value
+        guard selectedMail?.id == previous else { throw MailError(message: "The last row did not fall back to the previous message") }
+        var attempts = 0
+        while pageOffset > 0, !messages.isEmpty, attempts < 20 {
+            trashButton.performClick(nil); await mailTask?.value; attempts += 1
+        }
+        guard pageOffset == 0, table.selectedRow == messages.count - 1, table.selectedRow > 0 else { throw MailError(message: "Empty last page did not return to its preceding row") }
+        try WindowPresentation.snapshot(layout, name: "action-next-row")
+        print("Action navigation passed: repeated Trash, Move, All mail, previous row/page, cancellation, failure and newer user selection")
     }
 
     func checkMailActions() async throws {
