@@ -24,6 +24,37 @@ final class ClassicKitTests: XCTestCase {
             }
         }
     }
+    func testSparkleBoundsAndExpiry() {
+        var state = SparkleState()
+        for index in 0..<10_000 { state.move(to: NSPoint(x: index * 10, y: 20), at: Double(index) / 1000) }
+        XCTAssertEqual(state.particles.count, SparkleState.limit)
+        state.expire(at: 11)
+        XCTAssertTrue(state.particles.isEmpty)
+        state.move(to: NSPoint(x: 100_020, y: 20), at: 11.01)
+        state.clear(); XCTAssertTrue(state.particles.isEmpty)
+    }
+
+    func testTrailReleasesObservers() async {
+        await MainActor.run {
+            _ = NSApplication.shared
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: true)
+            let root = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100)); window.contentView = root
+            let previous = window.acceptsMouseMovedEvents
+            weak var released: ClassicCursorTrail?
+            autoreleasepool {
+                let trail = ClassicCursorTrail(); released = trail
+                trail.attach(to: root); trail.mode = .enabled
+                XCTAssertTrue(window.acceptsMouseMovedEvents)
+                trail.mode = .disabled
+                XCTAssertEqual(window.acceptsMouseMovedEvents, previous)
+                trail.mode = .enabled
+            }
+            XCTAssertNil(released)
+            XCTAssertEqual(window.acceptsMouseMovedEvents, previous)
+            window.orderOut(nil)
+        }
+    }
+
     func testReaderSegmentStates() async {
         await MainActor.run {
             let button = ClassicButton("Text", icon: .text, style: .segment)
@@ -45,6 +76,11 @@ final class ClassicKitTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(contrast(ClassicTheme.ink, ClassicTheme.face), 7)
                 XCTAssertGreaterThanOrEqual(contrast(.white, ClassicTheme.selection), 4.5)
                 XCTAssertGreaterThanOrEqual(contrast(ClassicTheme.muted, ClassicTheme.face), 4.5)
+                let titleBar = ClassicTitleBar(frame: NSRect(x: 0, y: 0, width: 1000, height: 32))
+                let bitmap = titleBar.bitmapImageRepForCachingDisplay(in: titleBar.bounds)!
+                titleBar.cacheDisplay(in: titleBar.bounds, to: bitmap)
+                let middle = bitmap.colorAt(x: bitmap.pixelsWide * 70 / 100, y: 1)!
+                XCTAssertGreaterThanOrEqual(contrast(.white, middle), 4.5)
                 XCTAssertNotEqual(ClassicTheme.todaySurface, ClassicTheme.selectedSurface)
             }
         }

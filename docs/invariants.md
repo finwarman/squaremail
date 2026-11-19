@@ -71,3 +71,5 @@
 The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Mail changes/sending require separate consent and explicit queued user actions. Calendar writes require their own consent and a user-queued edit.
 
 The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. A long-paragraph workload exposed large TextKit 2 graphics surfaces. The native text path preserves selection, copy and scrolling. Measurement details remain in `docs/performance.md`.
+
+| INV-UI-cursor-sparkles | Decoration defaults off, uses bounded particles/lifetime, passes events through, respects Reduce Motion and stops timers while idle/hidden. Disable/destruction releases event/notification observers. | shared model, repaint-expiry and native lifecycle tests |

@@ -55,6 +55,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private static let agendaBelowKey = "calendarAgendaBelowRatio"
     private static let agendaRightKey = "calendarAgendaRightRatio"
     private var pendingAppearance = ClassicTheme.appearance
+    private let cursorTrail = ClassicCursorTrail()
+    private static let sparkleKey = "cursorSparkles"
     private var current: Mail?
     private enum ListPhase { case ready, loading }
     private var listPhase: ListPhase = .ready
@@ -112,6 +114,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.media = MessageMedia(core: core, reader: layout.reader)
         super.init()
         let arguments = ProcessInfo.processInfo.arguments
+        cursorTrail.attach(to: layout)
+        if !WindowPresentation.isBackground { cursorTrail.mode = UserDefaults.standard.bool(forKey: Self.sparkleKey) ? .enabled : .disabled }
         if Self.offlineArgs.isDisjoint(with: arguments), let value = UserDefaults.standard.string(forKey: Self.layoutKey) {
             readingLayout = ReadingLayout(rawValue: value) ?? .below
         }
@@ -1063,6 +1067,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         appearance.addItem(.separator())
         appearance.addItem(withTitle: "Applies after restarting Square Mail", action: nil, keyEquivalent: "")
         view.addItem(withTitle: "Appearance", action: nil, keyEquivalent: "").submenu = appearance
+        addItem(view, "Cursor sparkles", #selector(toggleSparkles), "")
         let tools = NSMenu(title: "Tools")
         addItem(tools, "Refresh mail and calendars", #selector(syncMail), "r")
         addItem(tools, "Notifications…", #selector(showNotices), "")
@@ -1116,6 +1121,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if item.action == #selector(togglePin) { item.title = selectedMail?.pinned == true ? "Unpin on this Mac" : "Pin on this Mac" }
             return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && selectedMail?.id == current?.id && mailTask == nil
 
+        case #selector(toggleSparkles): item.state = cursorTrail.mode == .enabled ? .on : .off
         case #selector(classicAppearance): item.state = pendingAppearance == .classic ? .on : .off
         case #selector(pinkAppearance): item.state = pendingAppearance == .pink ? .on : .off
         case #selector(showText): item.state = section == .mail && readerMode == .text ? .on : .off
@@ -1138,6 +1144,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func agendaRight() { calendarView?.setAgendaLayout(.right) }
 
     @objc private func focusSearch() { layout.window?.makeFirstResponder(layout.search) }
+    @objc private func toggleSparkles() {
+        cursorTrail.mode = cursorTrail.mode == .enabled ? .disabled : .enabled
+        if !WindowPresentation.isBackground { UserDefaults.standard.set(cursorTrail.mode == .enabled, forKey: Self.sparkleKey) }
+        layout.statusText.stringValue = cursorTrail.mode == .enabled ? "Cursor sparkles enabled. Reduce Motion and inactive windows suppress animation." : "Cursor sparkles off."
+    }
     @objc private func classicAppearance() { chooseAppearance(.classic) }
     @objc private func pinkAppearance() { chooseAppearance(.pink) }
     private func chooseAppearance(_ appearance: ClassicTheme.Appearance) {
@@ -1427,6 +1438,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard !syncButton.isEnabled else { throw MailError(message: "Navigation re-enabled an active sync button") }
         coordinator.onStatus?(.offline)
         guard syncButton.isEnabled, syncButton.title == "Refresh", !layout.syncProgress.isHidden, !syncButton.isHighlighted, layout.syncProgress.state == .idle else { throw MailError(message: "Offline sync retained its busy state or hid the disabled track") }
+        toggleSparkles()
+        guard cursorTrail.mode == .enabled else { throw MailError(message: "Cursor sparkles did not enable") }
+        toggleSparkles()
+        guard cursorTrail.mode == .disabled else { throw MailError(message: "Cursor sparkles did not disable") }
         let appearance = pendingAppearance
         chooseAppearance(appearance == .classic ? .pink : .classic)
         guard pendingAppearance != appearance, ClassicTheme.appearance == appearance else { throw MailError(message: "Appearance choice did not remain pending until restart") }

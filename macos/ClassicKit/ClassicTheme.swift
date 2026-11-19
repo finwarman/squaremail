@@ -109,7 +109,15 @@ public final class ClassicTitleBar: NSView {
     public override var mouseDownCanMoveWindow: Bool { true }
 
     public override func draw(_ dirtyRect: NSRect) {
-        NSGradient(starting: ClassicTheme.navy, ending: ClassicTheme.blue)?.draw(in: bounds, angle: 0)
+        let blend = SharedClassicTokens.captionGradientBlend / 100
+        let start = ClassicTheme.navy.usingColorSpace(.sRGB) ?? ClassicTheme.navy
+        let end = ClassicTheme.blue.usingColorSpace(.sRGB) ?? ClassicTheme.blue
+        let middle = NSColor(srgbRed: start.redComponent + (end.redComponent - start.redComponent) * blend,
+                             green: start.greenComponent + (end.greenComponent - start.greenComponent) * blend,
+                             blue: start.blueComponent + (end.blueComponent - start.blueComponent) * blend, alpha: 1)
+        let gradient = NSGradient(colors: [ClassicTheme.navy, ClassicTheme.navy, middle, ClassicTheme.blue],
+                                  atLocations: [0, SharedClassicTokens.captionGradientStart / 100, SharedClassicTokens.captionGradientMiddle / 100, 1], colorSpace: .sRGB)
+        gradient?.draw(in: bounds, angle: 0)
         ClassicIcon.mail.draw(in: NSRect(x: 6, y: 6, width: 20, height: 20))
         ClassicTheme.text(title, in: NSRect(x: 34, y: 7, width: bounds.width - 132, height: 22),
                           size: 14, color: .white, weight: .bold)

@@ -63,6 +63,14 @@
     "cornerRadius": 0,
     "captionHeight": 28,
     "textSize": 12,
-    "gap": 4
+    "gap": 4,
+    "sparkleMaxParticles": 32,
+    "sparkleLifetimeMs": 450,
+    "sparkleFrameMs": 33,
+    "sparkleSpacing": 8,
+    "sparkleRadius": 3,
+    "captionGradientStart": 15,
+    "captionGradientMiddle": 70,
+    "captionGradientBlend": 40
   }
 }
