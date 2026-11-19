@@ -7,12 +7,24 @@ const EVENT_LIMIT: usize = 2000;
 const WINDOW_LIMIT: i64 = 6;
 
 impl Store {
+    fn sync_due(&self) -> Result<Option<i64>> {
+        Ok(self.connection.query_row("SELECT MIN(due) FROM (
+            SELECT next_due AS due FROM sync_jobs j WHERE active=1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=j.account_id)
+            UNION ALL SELECT due FROM mail_actions a WHERE state IN('pending','retry','sending') AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=a.account)
+            UNION ALL SELECT due FROM mail_outbox a WHERE state IN('pending','retry') AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=a.account)
+            UNION ALL SELECT next_due FROM event_writes e WHERE state IN('pending','retry','sending') AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=e.account_id))", [], |r|r.get(0))?)
+    }
     pub(crate) fn sync_ready(&self, now: i64) -> Result<bool> {
-        Ok(self.connection.query_row("SELECT
-            EXISTS(SELECT 1 FROM sync_jobs j WHERE active=1 AND next_due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=j.account_id)) OR
-            EXISTS(SELECT 1 FROM mail_actions a WHERE state IN('pending','retry','sending') AND due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=a.account)) OR
-            EXISTS(SELECT 1 FROM mail_outbox a WHERE state IN('pending','retry') AND due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=a.account)) OR
-            EXISTS(SELECT 1 FROM event_writes e WHERE state IN('pending','retry','sending') AND next_due<=?1 AND NOT EXISTS(SELECT 1 FROM account_paused p WHERE p.account_id=e.account_id))",[now],|r|r.get(0))?)
+        Ok(self.sync_due()?.is_some_and(|due| due <= now))
+    }
+    pub(crate) fn sync_wait(&self, now: i64) -> Result<i64> {
+        const MIN_WAIT_MS: i64 = 250;
+        const MAX_WAIT_MS: i64 = 5000;
+        Ok(self.sync_due()?.map_or(MAX_WAIT_MS, |due| {
+            due.saturating_sub(now)
+                .saturating_mul(1000)
+                .clamp(MIN_WAIT_MS, MAX_WAIT_MS)
+        }))
     }
     pub(crate) fn connected(&self, account: &str) -> Result<bool> {
         Ok(!self.connection.query_row(
@@ -587,16 +599,21 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         account(&store, "a");
         assert!(!store.sync_ready(100).unwrap());
+        assert_eq!(store.sync_wait(100).unwrap(), 5000);
         let due = job(&store, "a", JobKind::Mail, "inbox", 0);
         assert!(store.sync_ready(100).unwrap());
+        assert_eq!(store.sync_wait(100).unwrap(), 250);
         store
             .fail_job(&due, 100, "throttled", 120, RetryClass::Throttled)
             .unwrap();
         store.sync_now().unwrap();
         assert!(!store.sync_ready(219).unwrap());
+        assert_eq!(store.sync_wait(217).unwrap(), 3000);
+        assert_eq!(store.sync_wait(219).unwrap(), 1000);
         assert!(store.sync_ready(220).unwrap());
         store.pause_account("a", DisconnectMode::KeepCache).unwrap();
         assert!(!store.sync_ready(220).unwrap());
+        assert_eq!(store.sync_wait(220).unwrap(), 5000);
         store
             .connection
             .execute("DELETE FROM account_paused", [])
@@ -630,6 +647,7 @@ mod tests {
                 .execute(&format!("UPDATE {table} SET state='retry',{due}=200"), [])
                 .unwrap();
             assert!(!store.sync_ready(199).unwrap(), "{table}");
+            assert_eq!(store.sync_wait(199).unwrap(), 1000);
             store.pause_account("a", DisconnectMode::KeepCache).unwrap();
             assert!(!store.sync_ready(200).unwrap(), "{table}");
             store

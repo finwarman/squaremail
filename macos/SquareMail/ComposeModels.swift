@@ -24,8 +24,10 @@ struct ComposeReply: Decodable {
     private enum CodingKeys: String, CodingKey { case draft; case needsHeaders = "needs_headers"; case attachmentsOmitted = "attachments_omitted" }
 }
 struct DraftReceipt: Decodable { let revision: Int64 }
+struct QueuedSend { let id: String; let account: String }
 struct MailWorkspace: Decodable {
     let drafts: [DraftSummary]; let work: [MailWorkSummary]
+    let receipts: [MailWorkSummary]?
 }
 struct DraftSummary: Decodable { let id: String; let account: String; let subject: String; let updated: Int64; let revision: Int64 }
 enum MailWorkKind: String, Decodable { case action, outbox }

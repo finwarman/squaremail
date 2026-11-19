@@ -178,9 +178,9 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
         }
         Command::SyncNext => {
             let mut reply = sync_cycle(&store, context)?;
-            if reply["worked"].as_bool() == Some(true) {
-                reply["more"] = json!(store.sync_ready(chrono::Utc::now().timestamp())?);
-            }
+            let now = chrono::Utc::now().timestamp();
+            reply["more"] = json!(store.sync_ready(now)?);
+            reply["wait_ms"] = json!(store.sync_wait(now)?);
             Ok(reply)
         }
         Command::EventDetail { key, mode } => calendar::detail(&store, &key, mode, context),

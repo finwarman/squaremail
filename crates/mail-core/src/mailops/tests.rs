@@ -957,3 +957,31 @@ fn seed_action_nav_fixture() {
         .unwrap();
     println!("Generated disconnected260message action-navigation fixture");
 }
+
+#[test]
+fn bounded_send_receipts() {
+    let store = Store::open(":memory:").unwrap();
+    seed(&store);
+    for _ in 0..25 {
+        let mut draft = new_draft(&store);
+        draft.revision = store.save_mail_draft(&draft).unwrap();
+        queue_send(&store, &draft.id, draft.revision).unwrap();
+        store
+            .mark_mail_work(
+                MailWorkKind::Outbox,
+                &draft.id,
+                MailWorkState::Done,
+                None,
+                0,
+            )
+            .unwrap();
+    }
+    let workspace = store.mail_workspace().unwrap();
+    assert!(workspace["work"].as_array().unwrap().is_empty());
+    let receipts = workspace["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 20);
+    assert!(receipts.iter().all(|r| r["state"] == "done"
+        && r["kind"] == "outbox"
+        && r.get("text").is_none()
+        && r.get("data").is_none()));
+}

@@ -25,7 +25,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     private let send = ClassicButton("Send")
     private let cancel = ClassicButton("Close")
     var onSaved: (() -> Void)?
-    var onQueued: (() -> Void)?
+    var onQueued: ((QueuedSend) -> Void)?
     var onStatus: ((String) -> Void)?
     init(core: MailCore, prompts: EditorPrompting? = nil) { self.core = core; self.prompts = prompts ?? EditorPrompter(); super.init() }
     var needsClosePrompt: Bool { window != nil && (dirty || phase == .saving) }
@@ -220,7 +220,9 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
                     guard let draft else { return }
                     let _: EmptyReply = try await core.request(["command": CoreCommand.sendMail.rawValue, "id": draft.id, "revision": draft.revision], mode: .live)
                     guard generation == revision else { return }
-                    onQueued?(); onStatus?("Email queued. Drafts / outbox shows delivery or consent errors."); close()
+                    let queued = QueuedSend(id: draft.id, account: draft.account)
+                    close(); onQueued?(queued)
+                    onStatus?("Email queued. The outbox shows its send status and any permission needed.")
                 } catch { guard generation == revision else { return }; transition(.editing); status.stringValue = error.localizedDescription }
             }
         }
@@ -255,9 +257,12 @@ extension MailComposer {
         to.stringValue = "invalid recipient"
         send.performClick(nil); prompts.respond(.alertFirstButtonReturn); await task?.value
         guard phase == .editing, send.isEnabled, !status.stringValue.isEmpty else { throw MailError(message: "Invalid send left compose blocked") }
+        var queued: QueuedSend?; var closedBeforeOutbox = false
+        onQueued = { [weak self] value in queued = value; closedBeforeOutbox = self?.window == nil }
         to.stringValue = "ada@example.test"
         send.performClick(nil); prompts.respond(.alertFirstButtonReturn); await task?.value
-        guard window == nil else { throw MailError(message: "Queued offline send did not close compose") }
+        guard window == nil, closedBeforeOutbox, let queued, queued.id == saved.id, queued.account == saved.account else { throw MailError(message: "Queued offline send lost its outbox focus or kept compose open") }
+        let panel = MailWorkspacePanel(core: core); try await panel.verifyQueued(accounts: accounts, queued: queued)
         let work: MailWorkspace = try await core.request(["command": CoreCommand.mailWorkspace.rawValue], mode: .live)
         guard work.work.contains(where: { $0.id == saved.id && $0.kind == .outbox && $0.state == .pending }) else { throw MailError(message: "Offline send was not durably queued") }
         let _: EmptyReply = try await core.request(["command": CoreCommand.mailWork.rawValue, "id": saved.id, "kind": MailWorkKind.outbox.rawValue, "choice": MailWorkChoice.cancel.rawValue], mode: .live)

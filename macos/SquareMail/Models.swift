@@ -139,6 +139,7 @@ struct CalendarEvent: Decodable, Equatable {
 struct SyncStep: Decodable {
     private enum CodingKeys: String, CodingKey {
         case worked, more
+        case waitMS = "wait_ms"
         case bodyCached = "body_cached"
         case bodyTotal = "body_total"
         case accountId = "account_id"
@@ -147,6 +148,7 @@ struct SyncStep: Decodable {
         case retryAfter = "retry_after"
     }
 
+    let waitMS: Int?
     let bodyCached: Int?
     let bodyTotal: Int?
     let more: Bool?
@@ -155,7 +157,8 @@ struct SyncStep: Decodable {
     let kind: SyncKind?
     let error: String?
     let retryAfter: Int?
-    init(worked: Bool, accountId: String?, kind: SyncKind?, error: String?, retryAfter: Int?, more: Bool? = nil, bodyCached: Int? = nil, bodyTotal: Int? = nil) {
+    init(worked: Bool, accountId: String?, kind: SyncKind?, error: String?, retryAfter: Int?, more: Bool? = nil, bodyCached: Int? = nil, bodyTotal: Int? = nil, waitMS: Int? = nil) {
+        self.waitMS = waitMS
         self.bodyCached = bodyCached; self.bodyTotal = bodyTotal
         self.worked = worked; self.accountId = accountId; self.kind = kind; self.error = error; self.retryAfter = retryAfter; self.more = more
     }

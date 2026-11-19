@@ -6,6 +6,7 @@ const ACTION_LIMIT: i64 = 100;
 const DRAFT_LIMIT: i64 = 100;
 const OUTBOX_LIMIT: i64 = 50;
 const RECEIPT_LIMIT: i64 = 200;
+const VISIBLE_SEND_RECEIPTS: i64 = 20;
 enum ReadWrite {
     Manual,
     Automatic,
@@ -251,7 +252,9 @@ impl Store {
             let rows=stmt.query_map(params![kind.table(),ACTION_LIMIT],|r|Ok(json!({"id":r.get::<_,String>(0)?,"account":r.get::<_,String>(1)?,"state":r.get::<_,String>(2)?,"error":r.get::<_,Option<String>>(3)?,"attempts":r.get::<_,i64>(4)?,"remote":r.get::<_,Option<String>>(5)?,"subject":r.get::<_,String>(6)?,"kind":kind})))?.collect::<rusqlite::Result<Vec<_>>>()?;
             items.extend(rows);
         }
-        Ok(json!({"drafts":values,"work":items}))
+        let mut receipts = self.connection.prepare("SELECT id,account,state,error,attempts,remote,json_extract(data,'$.subject') FROM mail_outbox WHERE state='done' ORDER BY created DESC,rowid DESC LIMIT ?1")?;
+        let receipts = receipts.query_map([VISIBLE_SEND_RECEIPTS], |r| Ok(json!({"id":r.get::<_,String>(0)?,"account":r.get::<_,String>(1)?,"state":r.get::<_,String>(2)?,"error":r.get::<_,Option<String>>(3)?,"attempts":r.get::<_,i64>(4)?,"remote":r.get::<_,Option<String>>(5)?,"subject":r.get::<_,String>(6)?,"kind":MailWorkKind::Outbox})))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(json!({"drafts":values,"work":items,"receipts":receipts}))
     }
     pub(crate) fn next_mail_work(&self, kind: MailWorkKind) -> Result<Option<MailWork>> {
         // A send interrupted at any stage is never replayed automatically.

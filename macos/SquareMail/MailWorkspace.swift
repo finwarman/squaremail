@@ -3,7 +3,13 @@ import ClassicKit
 
 @MainActor
 final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
-    private enum Row { case draft(DraftSummary), work(MailWorkSummary) }
+    private enum Key: Equatable { case draft(String), work(MailWorkKind, String) }
+    private enum Row {
+        case draft(DraftSummary), work(MailWorkSummary)
+        var key: Key {
+            switch self { case .draft(let value): return .draft(value.id); case .work(let value): return .work(value.kind, value.id) }
+        }
+    }
     private let core: MailCore
     private let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 470), styleMask: [.titled, .closable], backing: .buffered, defer: false)
     private let table = NSTableView()
@@ -18,6 +24,7 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
     private let refreshButton = ClassicButton("Refresh")
     private let status = NSTextField(wrappingLabelWithString: "Local drafts, queued changes and sends. Nothing is permanently deleted at the provider.")
     private var rows: [Row] = []
+    private var queuedFocus: QueuedSend?
     private var task: Task<Void, Never>?
     private var generation = 0
     private var opened = false
@@ -49,9 +56,13 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         changes.onPress = { [weak self] in self?.consent(.changes) }; sending.onPress = { [weak self] in self?.consent(.send) }
         updateButtons()
     }
-    func open(accounts: [Account]) {
+    func open(accounts: [Account], queued: QueuedSend? = nil) {
+        let selected = queued?.account ?? account.selectedItem?.representedObject as? String
+        queuedFocus = queued
+        generation += 1; task?.cancel(); busy = false
         account.removeAllItems()
         for value in accounts where value.provider != .local { account.addItem(withTitle: value.email); account.lastItem?.representedObject = value.id }
+        if let index = account.itemArray.firstIndex(where: { $0.representedObject as? String == selected }) { account.selectItem(at: index) }
         opened = true; window.center(); WindowPresentation.show(window); refresh()
     }
     func close() { opened = false; generation += 1; task?.cancel(); task = nil; window.close() }
@@ -61,34 +72,46 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
     func showStatus(_ value: String) { status.stringValue = value }
     func refresh() {
         guard opened, !busy else { return }
+        let selected = queuedFocus.map { Key.work(.outbox, $0.id) } ?? selection?.key
         generation += 1; let revision = generation; task?.cancel(); busy = true; updateButtons()
         task = Task { [weak self] in
             guard let self else { return }
             do {
                 let values: MailWorkspace = try await core.request(["command": CoreCommand.mailWorkspace.rawValue], mode: .live)
                 guard generation == revision else { return }
-                rows = values.drafts.map(Row.draft) + values.work.map(Row.work); table.deselectAll(nil); table.reloadData()
-                busy = false; updateButtons()
-                status.stringValue = "\(values.drafts.count)/100 local drafts · \(values.work.count) queued/stopped operations · 50 sends, 100 actions max"
+                rows = values.drafts.map(Row.draft) + values.work.map(Row.work) + (values.receipts ?? []).map(Row.work)
+                table.deselectAll(nil); table.reloadData()
+                busy = false; queuedFocus = nil
+                status.stringValue = "\(values.drafts.count) local drafts · \(values.work.count) queued/stopped · \(values.receipts?.count ?? 0) recent accepted sends"
+                if let index = rows.firstIndex(where: { $0.key == selected }) {
+                    table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                    table.scrollRowToVisible(index)
+                }
+                updateButtons()
             } catch { guard generation == revision else { return }; busy = false; updateButtons(); status.stringValue = error.localizedDescription }
         }
     }
     private var selection: Row? { rows.indices.contains(table.selectedRow) ? rows[table.selectedRow] : nil }
     private func updateButtons() {
         let ready = !busy
+        table.isEnabled = ready
         let draft: Bool; let work: MailWorkSummary?
         switch selection { case .draft: draft = true; work = nil; case .work(let value): draft = false; work = value; default: draft = false; work = nil }
         openButton.isEnabled = ready && draft; remove.isEnabled = ready && draft
         retry.isEnabled = ready && [MailWorkState.retry, .blocked].contains(work?.state)
-        cancel.isEnabled = ready && work != nil && work?.state != .sending && work?.state != .uncertain && (work?.attempts == 0 || (work?.kind == .outbox && work?.remote == nil))
+        cancel.isEnabled = ready && [MailWorkState.pending, .retry, .blocked].contains(work?.state) && (work?.attempts == 0 || (work?.kind == .outbox && work?.remote == nil))
         recover.isEnabled = ready && [MailWorkState.uncertain, .blocked].contains(work?.state)
         refreshButton.isEnabled = ready
-        changes.isEnabled = !authorizing && account.numberOfItems > 0; sending.isEnabled = changes.isEnabled
-        account.isEnabled = !authorizing
+        changes.isEnabled = ready && !authorizing && account.numberOfItems > 0; sending.isEnabled = changes.isEnabled
+        account.isEnabled = ready && !authorizing
     }
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateButtons()
-        if case .work(let value) = selection { status.stringValue = value.error ?? "Queued changes wait for connectivity and consent. Cancel is available before provider work begins." }
+        if case .work(let value) = selection {
+            if let index = account.itemArray.firstIndex(where: { $0.representedObject as? String == value.account }) { account.selectItem(at: index) }
+            let waiting = value.kind == .outbox ? "Queued, not yet sent. Waiting for connectivity and sending permission." : "Queued change. Waiting for connectivity and mail-change permission."
+            status.stringValue = value.state == .done ? "Accepted by the provider. Sent folder updates on sync; acceptance is not delivery confirmation." : (value.error ?? waiting)
+        }
     }
     @objc private func openSelected() { guard !busy, case .draft(let value) = selection else { return }; onOpen?(value.id) }
     private func consent(_ access: MailAccess) {
@@ -134,12 +157,22 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         guard rows.indices.contains(row), let id = tableColumn?.identifier else { return nil }
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? ClassicTableCell) ?? ClassicTableCell(); cell.identifier = id
         let title: String
-        switch rows[row] { case .draft(let value): title = "Draft: " + value.subject; case .work(let value): title = value.kind.rawValue.capitalized + " · " + value.state.rawValue.capitalized + ": " + value.subject }
+        switch rows[row] { case .draft(let value): title = "Draft: " + value.subject; case .work(let value): title = (value.kind == .outbox && value.state == .done ? "Send · Accepted" : value.kind.rawValue.capitalized + " · " + value.state.rawValue.capitalized) + ": " + value.subject }
         cell.configure(title.isEmpty ? "(Untitled)" : title); return cell
     }
 }
 
 extension MailWorkspacePanel {
+    func verifyQueued(accounts: [Account], queued: QueuedSend) async throws {
+        precondition(WindowPresentation.isBackground)
+        open(accounts: accounts, queued: queued); await task?.value
+        guard case .work(let item) = selection, item.id == queued.id, item.kind == .outbox,
+              account.selectedItem?.representedObject as? String == queued.account,
+              status.stringValue.contains("not yet sent"), sending.isEnabled else { throw MailError(message: "Queued send did not expose its state and correct account") }
+        refresh(); await task?.value
+        guard case .work(let saved) = selection, saved.id == queued.id else { throw MailError(message: "Outbox refresh hid the selected send state") }
+        close()
+    }
     func verifyControls(accounts: [Account]) async throws {
         precondition(WindowPresentation.isBackground)
         open(accounts: accounts); await task?.value

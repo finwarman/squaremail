@@ -413,7 +413,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if let composer { return composer }
         let value = MailComposer(core: core)
         value.onSaved = { [weak self] in self?.workspace?.refresh() }
-        value.onQueued = { [weak self] in self?.workspace?.refresh(); self?.coordinator.kick() }
+        value.onQueued = { [weak self] queued in self?.openMailWorkspace(queued); self?.coordinator.kick() }
         value.onStatus = { [weak self] value in self?.layout.statusText.stringValue = value }
         composer = value; return value
     }
@@ -601,7 +601,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             } catch { showError(error) }
         }
     }
-    @objc private func showMailWorkspace() {
+    @objc private func showMailWorkspace() { openMailWorkspace() }
+    private func openMailWorkspace(_ queued: QueuedSend? = nil) {
         if workspace == nil {
             let value = MailWorkspacePanel(core: core)
             value.onOpen = { [weak self] id in guard let self else { return }; mailComposer().openDraft(id, accounts: accounts) }
@@ -609,7 +610,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             value.onConsent = { [weak self] id, access in self?.mailConsent(id, access: access) }
             workspace = value
         }
-        workspace?.open(accounts: accounts)
+        workspace?.open(accounts: accounts, queued: queued)
     }
     private func mailConsent(_ id: String, access: MailAccess) {
         guard connectTask == nil else { workspace?.showStatus("Another sign-in is pending. Use Cancel sign-in to stop it."); return }

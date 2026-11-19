@@ -115,6 +115,11 @@ final class SyncCoordinator {
             }
         }
     }
+    private static let minWaitMS = 250
+    private static let maxWaitMS = 5000
+    private func idleWait(_ reply: SyncStep) -> Int {
+        min(Self.maxWaitMS, max(Self.minWaitMS, reply.waitMS ?? Self.maxWaitMS))
+    }
     private func tick() async -> Int? {
         guard enabled, online, !sleeping else { return nil }
         let revision = generation
@@ -140,16 +145,17 @@ final class SyncCoordinator {
                 if reply.more == false && !refresh {
                     publish(issue == nil ? .waiting : .failed)
                     updates = 0; issue = nil
-                    return 5000
+                    return idleWait(reply)
                 }
                 return pageDelay
             }
+            if reply.more == true { return pageDelay }
             if status == .syncing || status == .checking || status == .paused || status == .offline || status == .sleeping {
                 if issue != nil { publish(.failed) }
                 else { publish(.waiting) }
                 updates = 0; issue = nil
             }
-            return 5000
+            return idleWait(reply)
         } catch {
             guard !Task.isCancelled, generation == revision, enabled, online, !sleeping else { return nil }
             feedback?.cancel(); feedback = nil
@@ -184,7 +190,8 @@ extension SyncCoordinator {
         precondition(WindowPresentation.isBackground)
         let page = SyncStep(worked: true, accountId: "fixture", kind: .mail, error: nil, retryAfter: nil, more: true)
         let end = SyncStep(worked: true, accountId: "fixture", kind: .calendar, error: nil, retryAfter: nil, more: false)
-        let driver = ScriptedSyncDriver([page, end])
+        let empty = SyncStep(worked: false, accountId: nil, kind: nil, error: nil, retryAfter: nil, more: true)
+        let driver = ScriptedSyncDriver([page, empty, end])
         let worker = SyncCoordinator(driver: driver, reachability: .scripted, pageDelay: 80)
         defer { worker.setActivity(.paused) }
         var states: [Status] = []
@@ -193,17 +200,26 @@ extension SyncCoordinator {
         try await waitUntil { driver.calls >= 1 }
         guard worker.status == .syncing, !states.contains(.waiting) else { throw MailError(message: "Sync ended between pages") }
         try await waitUntil { worker.status == .waiting }
-        guard driver.calls == 2, states == [.syncing, .waiting], worker.feedback == nil else { throw MailError(message: "Batch progress flashed or failed to complete") }
+        guard driver.calls == 3, states == [.syncing, .waiting], worker.feedback == nil else { throw MailError(message: "Batch progress flashed or failed to complete") }
         let oldSleep = worker.sleeper
         worker.requestRefresh(.manual)
         guard oldSleep?.isCancelled == true, worker.loop?.isCancelled == false else { throw MailError(message: "Manual refresh did not wake only the idle delay") }
-        try await waitUntil { driver.calls >= 3 }
+        try await waitUntil { driver.calls >= 4 }
         guard driver.refreshes == 2, worker.status == .waiting else { throw MailError(message: "Manual refresh waited for the idle poll") }
         driver.replies = [SyncStep(worked: true, accountId: "fixture", kind: .mail, error: "Synthetic retry", retryAfter: 60, more: false)]
         worker.requestRefresh(.manual)
         try await waitUntil { worker.status == .failed }
         worker.setActivity(.paused)
         guard worker.loop == nil, worker.sleeper == nil, worker.feedback == nil else { throw MailError(message: "Paused sync retained workers") }
+        let timedDriver = ScriptedSyncDriver([
+            SyncStep(worked: true, accountId: "fixture", kind: .bodyBackfill, error: nil, retryAfter: nil, more: false, waitMS: 3000),
+            SyncStep(worked: false, accountId: nil, kind: nil, error: nil, retryAfter: nil, more: true, waitMS: 250),
+            SyncStep(worked: false, accountId: nil, kind: nil, error: nil, retryAfter: nil, more: false, waitMS: 9000)])
+        let timed = SyncCoordinator(driver: timedDriver, reachability: .scripted, pageDelay: 80)
+        timed.enabled = true
+        defer { timed.setActivity(.paused) }
+        let backfillWait = await timed.tick(); let readyWait = await timed.tick(); let idleWait = await timed.tick()
+        guard backfillWait == 3000, readyWait == 80, idleWait == 5000 else { throw MailError(message: "Sync ignored due times or busy-polled idle work") }
         let slow = ScriptedSyncDriver([]); slow.delay = .milliseconds(100)
         let replacement = SyncCoordinator(driver: slow, reachability: .scripted, pageDelay: 1)
         defer { replacement.setActivity(.paused) }
