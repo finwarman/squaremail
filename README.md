@@ -17,6 +17,8 @@ open ".build/Square Mail.app"
 
 The build creates a local ad-hoc-signed app. Xcode is not required to run the finished app. Distribution signing and notarization are not configured.
 
+Help / App updates opens the installed f1nb0 Apps launcher, or [its download page](https://f1nb0.dev/apps/) if it is absent. Activation is asynchronous. Mail adds no updater timer or download worker. Classic and Pink share a [theme source](ui/README.md) with WordCraft Fin.
+
 ## Current reader
 
 - Local demo mailbox, separate from personal mail.

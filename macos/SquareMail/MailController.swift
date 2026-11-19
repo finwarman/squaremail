@@ -1034,6 +1034,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         addItem(file, "Calendar drafts / pending…", #selector(showCalendarChanges), "")
         let messageActions = NSMenu(title: "Message"); addMailActions(messageActions)
         let help = NSMenu(title: "Help")
+        addItem(help, "App updates…", #selector(openAppUpdates), "")
+        help.items.last?.toolTip = "Open f1nb0 Apps to check, download and install updates."
         addItem(help, "About this preview", #selector(showAbout), "")
         for menu in [file, edit, view, messageActions, tools, help] {
             main.addItem(withTitle: menu.title, action: nil, keyEquivalent: "").submenu = menu
@@ -1397,6 +1399,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         try await noticeService().verifyControls(notices, accounts: accounts)
         guard !NSApp.isActive, layout.window?.isVisible != true else { throw MailError(message: "Background control probe activated a host window") }
         guard let main = NSApp.mainMenu, let view = main.items.first(where: { $0.title == "View" })?.submenu else { throw MailError(message: "View menu is missing") }
+        guard let help = main.items.first(where: { $0.title == "Help" })?.submenu,
+              let updates = help.items.first(where: { $0.action == #selector(openAppUpdates) }),
+              updates.target === self, validateMenuItem(updates), updates.state == .off,
+              updates.toolTip?.isEmpty == false else { throw MailError(message: "Update-manager menu entry is missing or stuck") }
         func item(_ action: Selector) throws -> NSMenuItem {
             guard let value = view.items.first(where: { $0.action == action }) else { throw MailError(message: "View action is missing") }
             return value
@@ -1661,6 +1667,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 "cached_reopen_p95_ms": reopening[9],
                 "mail_before": before, "calendar_active": active, "mail_after_close": closed]
     }
+
+    @objc private func openAppUpdates() { AppUpdates.open() }
 
     @objc private func showAbout() {
         let alert = NSAlert()
