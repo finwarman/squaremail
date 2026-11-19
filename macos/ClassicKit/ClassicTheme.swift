@@ -118,6 +118,7 @@ public final class ClassicTitleBar: NSView {
         let gradient = NSGradient(colors: [ClassicTheme.navy, ClassicTheme.navy, middle, ClassicTheme.blue],
                                   atLocations: [0, SharedClassicTokens.captionGradientStart / 100, SharedClassicTokens.captionGradientMiddle / 100, 1], colorSpace: .sRGB)
         gradient?.draw(in: bounds, angle: 0)
+        drawGlitter()
         ClassicIcon.mail.draw(in: NSRect(x: 6, y: 6, width: 20, height: 20))
         ClassicTheme.text(title, in: NSRect(x: 34, y: 7, width: bounds.width - 132, height: 22),
                           size: 14, color: .white, weight: .bold)
@@ -126,5 +127,20 @@ public final class ClassicTitleBar: NSView {
     public override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 { window?.zoom(nil); return }
         window?.performDrag(with: event)
+    }
+
+    private func drawGlitter() {
+        // Static edge flecks leave the caption's text band clear. No texture or repaint timer.
+        NSGraphicsContext.saveGraphicsState()
+        bounds.clip()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let width = min(bounds.width, SharedClassicTokens.captionGlitterPeriod * 128)
+        for mark in SharedClassicTokens.captionGlitter {
+            NSColor.white.withAlphaComponent(SharedClassicTokens.captionGlitterOpacity * mark.alpha / 10000).setFill()
+            let y = mark.y < SharedClassicTokens.captionHeight / 2 ? mark.y : bounds.height - SharedClassicTokens.captionHeight + mark.y
+            for tile in stride(from: CGFloat.zero, to: width, by: SharedClassicTokens.captionGlitterPeriod) {
+                NSRect(x: bounds.minX + tile + mark.x, y: bounds.minY + y, width: mark.w, height: mark.h).fill()
+            }
+        }
     }
 }

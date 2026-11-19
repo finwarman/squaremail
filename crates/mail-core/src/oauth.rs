@@ -9,6 +9,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
 use reqwest::blocking::Client;
 mod credentials;
+mod release;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -20,6 +21,7 @@ use std::{
 use url::Url;
 
 const KEYCHAIN_SERVICE: &str = "com.finwarman.squaremail.oauth";
+const KEYCHAIN_NOT_FOUND: i32 = -25300;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(180);
 type AccountLock = std::sync::Arc<std::sync::Mutex<()>>;
 static REFRESH_LOCKS: std::sync::LazyLock<
@@ -585,7 +587,7 @@ pub(crate) fn disconnect(id: &str) -> Result<()> {
     let _guard = lock.lock().map_err(|_| "Credential lock failed")?;
     match delete_generic_password(KEYCHAIN_SERVICE, id) {
         Ok(()) => Ok(()),
-        Err(error) if error.code() == -25300 => Ok(()),
+        Err(error) if error.code() == KEYCHAIN_NOT_FOUND => Ok(()),
         Err(error) => Err(error.into()),
     }
 }
@@ -596,16 +598,29 @@ struct ClientConfig {
     client_secret: Option<String>,
 }
 fn load_client(provider: Provider) -> Result<ClientConfig> {
-    Ok(serde_json::from_slice(&get_generic_password(
-        KEYCHAIN_SERVICE,
-        &format!("client:{}", provider.as_str()),
-    )?)?)
+    resolve_client(
+        get_generic_password(KEYCHAIN_SERVICE, &format!("client:{}", provider.as_str())),
+        || release::client(provider),
+    )
+}
+fn resolve_client(
+    saved: security_framework::base::Result<Vec<u8>>,
+    fallback: impl FnOnce() -> Result<ClientConfig>,
+) -> Result<ClientConfig> {
+    match saved {
+        Ok(raw) => Ok(serde_json::from_slice(&raw)?),
+        Err(error) if error.code() == KEYCHAIN_NOT_FOUND => fallback(),
+        Err(error) => Err(error.into()),
+    }
 }
 pub(crate) fn client_config(provider: Provider) -> Value {
     match load_client(provider) {
         Ok(v) => serde_json::json!({"client_id":v.client_id,"configured":true}),
         Err(_) => serde_json::json!({"client_id":"","configured":false}),
     }
+}
+pub(crate) fn export_clients(path: &str) -> Result<()> {
+    release::export(path)
 }
 pub(crate) fn configure(provider: Provider, id: &str, secret: Option<&str>) -> Result<()> {
     if provider == Provider::Local || id.trim().is_empty() {

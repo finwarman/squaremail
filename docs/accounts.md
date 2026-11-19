@@ -2,14 +2,18 @@
 
 Accounts opens the native manager. Add/reconnect opens a system-browser OAuth flow. Choose Gmail/Workspace or Outlook.com/Live/Microsoft 365, then choose the intended browser identity. Each completed identity becomes a separate account. The account picker includes a unified view. Standard folders and discovered account folders read the local cache.
 
-OAuth client configuration and tokens are saved in macOS Keychain. Google client JSON can be imported through Accounts, OAuth setup. Microsoft uses the public desktop Application (client) ID. The registration is reused across accounts. No browser cookies or other applications' tokens are imported.
+Release builds include the application's desktop provider configuration. Add/reconnect asks only for the provider, then opens the browser for the recipient's own sign-in and consent. No developer registration, client ID or JSON import is needed by the recipient. Google preview users must be listed on the app's test audience; testing consent/refresh tokens can expire after seven days.
+
+Account tokens stay in macOS Keychain. An existing developer client override remains in Keychain and takes precedence. Only a missing override falls back to the signed app resource; permission or malformed-override errors never silently switch registrations. Accounts / Advanced setup retains developer configuration controls.
+
+The publisher prepares ignored `local-oauth.json` using `--export-desktop-config /absolute/new/path.json` from a signed configured Square Mail app, with a temporary `--data-dir`. This exports only Google/Microsoft desktop application metadata, never account tokens, addresses, mail or passwords. The Google Desktop value named client secret is distributed public-client metadata and still required by the current Google token endpoint. Never use a confidential web/server client secret. PKCE, state validation, browser consent and per-account token storage remain required. The file stays outside Git and is copied to the signed app resource during build. Publication rejects missing configuration. It is read only on sign-in, off the main thread, with a4KiB cap and no config polling.
 
 ## Google registration
 
 1. Create a private Google Cloud project. Enable Gmail API and Google Calendar API.
 2. Configure Google Auth Platform branding. Use External, Testing for the private preview and add your Google identity as a test user. Accept Google's policy yourself or explicitly authorize it.
 3. Create a Desktop app OAuth client and download its JSON.
-4. Accounts, OAuth setup, Import Google JSON. Then Add/reconnect, Gmail.
+4. Accounts, Advanced setup, Import Google JSON. Then Add/reconnect, Gmail.
 5. Review browser consent for read-only mail, subscribed-calendar listing and calendar events.
 
 Scopes: `gmail.readonly`, `calendar.calendarlist.readonly`, `calendar.events.readonly`, under `https://www.googleapis.com/auth/`. Gmail's restricted scope has public-distribution verification requirements. Testing-mode refresh tokens can expire after seven days. This private setup is not a public OAuth qualification.
@@ -20,7 +24,7 @@ References: [Desktop OAuth](https://developers.google.com/identity/protocols/oau
 
 1. In Microsoft Entra, create an app registration for organizational directories **and personal Microsoft accounts**.
 2. Add a Public client/native desktop redirect: `http://localhost/callback`.
-3. Save the Application (client) ID through Accounts, OAuth setup. No client secret is used.
+3. Save the Application (client) ID through Accounts, Advanced setup. No client secret is used.
 4. Add/reconnect, Outlook.com/Live/Microsoft 365. Choose the intended personal or work identity.
 5. Review delegated `Mail.Read`, `User.Read`, `Calendars.Read` and `offline_access`. Organization-wide admin consent is not required by Square Mail. Tenant policy may require an administrator's separate approval.
 

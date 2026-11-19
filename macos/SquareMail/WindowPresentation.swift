@@ -2,11 +2,22 @@ import AppKit
 
 @MainActor
 enum WindowPresentation {
-    struct Dialog { let title: String; let buttons: [String] }
+    struct Dialog { let title: String; let buttons: [String]; var editableFields: Int = 0 }
     private(set) static var lastDialog: Dialog?
     @discardableResult
     static func runAlert(_ alert: NSAlert) -> NSApplication.ModalResponse {
-        if isBackground { lastDialog = Dialog(title: alert.messageText, buttons: alert.buttons.map(\.title)); return .abort }
+        if isBackground {
+            var pending = alert.accessoryView.map { [$0] } ?? []
+            var fields = 0
+            var visited = 0
+            while let view = pending.popLast(), visited < 128 {
+                visited += 1
+                if let field = view as? NSTextField, field.isEditable { fields += 1 }
+                pending.append(contentsOf: view.subviews)
+            }
+            lastDialog = Dialog(title: alert.messageText, buttons: alert.buttons.map(\.title), editableFields: fields)
+            return .abort
+        }
         return alert.runModal()
     }
     static func runOpen(_ panel: NSOpenPanel) -> NSApplication.ModalResponse {

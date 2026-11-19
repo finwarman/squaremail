@@ -13,6 +13,13 @@ def generate(source,swift,rust,check):
         colors=value['palettes'][name]['colors'];assert list(colors)==roles
         assert all(re.fullmatch('[0-9A-Fa-f]{6}',x) for x in colors.values())
     metrics=value['metrics'];assert all(isinstance(x,int) and 0<=x<=512 for x in metrics.values())
+    glitter=value.get('captionGlitter',[])
+    assert len(glitter)<=32
+    for x,y,w,h,alpha in glitter:
+        assert all(isinstance(n,int) for n in [x,y,w,h,alpha])
+        assert 0<=x<x+w<=metrics['captionGlitterPeriod'] and 0<=y<y+h<=metrics['captionHeight']
+        assert 1<=w<=5 and 1<=h<=5 and 1<=alpha<=100
+    if glitter:assert 1<=metrics['captionGlitterOpacity']<=20 and metrics['captionGlitterPeriod']>=64
     for key,low,high in [('sparkleMaxParticles',1,64),('sparkleLifetimeMs',100,512),('sparkleFrameMs',16,100),('sparkleSpacing',1,64),('sparkleRadius',1,4)]:
         if key in metrics:assert low<=metrics[key]<=high,'Invalid sparkle metric: '+key
     if 'captionGradientStart' in metrics:
@@ -24,7 +31,9 @@ def generate(source,swift,rust,check):
     for name in names:
         colors=value['palettes'][name]['colors'];lines+=['    static let '+name+' = ClassicPalette(']
         lines+=['        '+key+': ClassicTheme.color(0x'+colors[key]+')'+(',' if i+1<len(roles) else '') for i,key in enumerate(roles)];lines+=['    )']
-    lines+=['    static let '+key+': CGFloat = '+str(val) for key,val in metrics.items()];lines+=['}']
+    lines+=['    static let '+key+': CGFloat = '+str(val) for key,val in metrics.items()]
+    lines+=['    static let captionGlitter: [(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, alpha: CGFloat)] = [']
+    lines+=['        ('+', '.join(map(str,row))+'),' for row in glitter];lines+=['    ]','}']
     outputs=[(swift,'\n'.join(lines)+'\n')]
     if rust:
         snake=lambda name:re.sub(r'(?<!^)(?=[A-Z])','_',name).lower()
@@ -34,6 +43,8 @@ def generate(source,swift,rust,check):
             lines+=['pub(super) const '+name.upper()+': Palette = Palette {']
             lines+=['    '+snake(key)+': 0x'+value['palettes'][name]['colors'][key]+',' for key in roles];lines+=['};']
         lines+=['pub(super) const '+snake(key).upper()+': f32 = '+str(val)+'.0;' for key,val in metrics.items()]
+        lines+=['pub(super) const CAPTION_GLITTER: &[[f32; 5]] = &[']
+        lines+=['    ['+', '.join(str(n)+'.0' for n in row)+'],' for row in glitter];lines+= ['];']
         outputs.append((rust,'\n'.join(lines)+'\n'))
     for path,text in outputs:
         if check:

@@ -46,5 +46,17 @@ class SharedThemeTest(unittest.TestCase):
                 self.assertFalse(swift.exists())
                 self.assertFalse(rust.exists())
 
+    def test_glitter_bounds_shared(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'themes.json';swift=root/'Tokens.swift';rust=root/'tokens.rs'
+            value=json.loads((ROOT/'themes.json').read_text())
+            source.write_text(json.dumps(value))
+            generate(source,swift,rust,False)
+            self.assertIn('captionGlitter:',swift.read_text())
+            self.assertIn('CAPTION_GLITTER:',rust.read_text())
+            for invalid in [[[0,0,600,1,100]],[[0,0,1,1,101]],value['captionGlitter']*4]:
+                value['captionGlitter']=invalid;source.write_text(json.dumps(value))
+                with self.assertRaises(AssertionError):generate(source,swift,rust,False)
+
 if __name__=='__main__':
     unittest.main()

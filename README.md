@@ -15,7 +15,7 @@ macOS 14+, Apple command-line developer tools, Rust and Swift are required. Deve
 open ".build/Square Mail.app"
 ```
 
-The build creates a local ad-hoc-signed app. Xcode is not required to run the finished app. Distribution signing and notarization are not configured.
+Publisher builds use persistent local signing and desktop provider configuration. Standalone developers can use `SQUAREMAIL_ADHOC=1` and Accounts / Advanced setup. Xcode is not required to run the finished app. Apple Developer ID signing and notarization remain pending.
 
 Help / App updates opens the installed f1nb0 Apps launcher, or [its download page](https://f1nb0.dev/apps/) if it is absent. Activation is asynchronous. Mail adds no updater timer or download worker. Classic and Pink share a [theme source](ui/README.md) with WordCraft Fin.
 
@@ -34,7 +34,7 @@ Help / App updates opens the installed f1nb0 Apps launcher, or [its download pag
 - Optional plain-text compact spacing preserves quote nesting, bullets and separators. Calendar shows current date/time and a day/week time marker with separate today/selection highlights.
 - Readable plain-text links condense email/Markdown links and long URLs, with full hover targets and copy. Compact spacing also removes invisible newsletter padding. See [reader behavior](docs/reader-text.md).
 - Keyboard navigation, copy, text selection, search with ⌘F, sync with ⌘R, text/HTML with ⌘1/⌘2.
-- Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
+- Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh. Published preview builds supply desktop application configuration so recipients choose a provider and sign in. Gmail preview users must be on the test audience.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
 - Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
 - One Refresh action with a muted static idle bar, persistent batch progress, account/operation detail and distinct retry/offline/completion states. Classic segmented indicators keep unknown totals indeterminate; image loading uses known item counts.

@@ -169,6 +169,9 @@ pub(crate) enum Command {
     ClientConfig {
         provider: Provider,
     },
+    ExportClients {
+        path: String,
+    },
     Configure {
         provider: Provider,
         client_id: String,

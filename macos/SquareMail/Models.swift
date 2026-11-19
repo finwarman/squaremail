@@ -213,6 +213,7 @@ enum CoreCommand: String {
     case importMail = "import"
     case calendarWindows = "calendar_windows"
     case clientConfig = "client_config"
+    case exportClients = "export_clients"
     case importClient = "import_client"
     case seedDemo = "seed_demo"
     case refreshAccount = "refresh_account"

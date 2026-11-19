@@ -85,6 +85,21 @@ final class ClassicKitTests: XCTestCase {
             }
         }
     }
+    func testCaptionGlitterIsStatic() async {
+        await MainActor.run {
+            let view = ClassicTitleBar(frame: NSRect(x: 0, y: 0, width: 1000, height: 32))
+            view.title = ""
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let star = bitmap.colorAt(x: 182 * bitmap.pixelsWide / 1000, y: bitmap.pixelsHigh * 2 / 32)!
+            let beside = bitmap.colorAt(x: 181 * bitmap.pixelsWide / 1000, y: bitmap.pixelsHigh * 2 / 32)!
+            XCTAssertGreaterThan(star.usingColorSpace(.sRGB)!.redComponent, beside.usingColorSpace(.sRGB)!.redComponent)
+            let first = bitmap.representation(using: .png, properties: [:])
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            XCTAssertEqual(first, bitmap.representation(using: .png, properties: [:]))
+            XCTAssertTrue(SharedClassicTokens.captionGlitter.allSatisfy { $0.y + $0.h <= 6 || $0.y >= 25 })
+        }
+    }
     private func contrast(_ first: NSColor, _ second: NSColor) -> Double {
         func luminance(_ color: NSColor) -> Double {
             let color = color.usingColorSpace(.sRGB)!

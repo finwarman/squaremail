@@ -55,6 +55,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                                                      appropriateFor: nil, create: true).appendingPathComponent("Square Mail")
         }
         let core = try MailCore(directory: directory)
+        if let index = arguments.firstIndex(of: "--export-desktop-config"), arguments.indices.contains(index + 1) {
+            Task {
+                do {
+                    let _: EmptyReply = try await core.request(["command": CoreCommand.exportClients.rawValue, "path": arguments[index + 1]], mode: .live, queue: .login)
+                    print("Desktop application metadata prepared. No account credentials exported.")
+                    NSApp.terminate(nil)
+                } catch { fputs("Client configuration unavailable\n", stderr); exit(EXIT_FAILURE) }
+            }
+            return
+        }
         if let index = arguments.firstIndex(of: "--import-client"), arguments.indices.contains(index + 1) {
             Task {
                 do {
