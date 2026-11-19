@@ -6,6 +6,7 @@ public enum ClassicTheme {
     // Configure before constructing views. Existing windows retain stored control colors.
     public static func configure(_ value: Appearance) { appearance = value }
     private static var palette: ClassicPalette { appearance == .classic ? SharedClassicTokens.classic : SharedClassicTokens.pink }
+    fileprivate static var captionBlend: CGFloat { palette.captionBlend }
     public static var face: NSColor { palette.face }
     public static var light: NSColor { palette.light }
     public static var shadow: NSColor { palette.shadow }
@@ -109,7 +110,7 @@ public final class ClassicTitleBar: NSView {
     public override var mouseDownCanMoveWindow: Bool { true }
 
     public override func draw(_ dirtyRect: NSRect) {
-        let blend = SharedClassicTokens.captionGradientBlend / 100
+        let blend = ClassicTheme.captionBlend / 100
         let start = ClassicTheme.navy.usingColorSpace(.sRGB) ?? ClassicTheme.navy
         let end = ClassicTheme.blue.usingColorSpace(.sRGB) ?? ClassicTheme.blue
         let middle = NSColor(srgbRed: start.redComponent + (end.redComponent - start.redComponent) * blend,

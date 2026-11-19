@@ -23,9 +23,10 @@ struct ClassicPalette {
     let workspace: NSColor
     let rulerFace: NSColor
     let rulerMargin: NSColor
+    let captionBlend: CGFloat
 }
 enum SharedClassicTokens {
-    static let digest = "024876bcdd578d47917c6ad0b61bacc743248c2938b354b7050a11cd289caf76"
+    static let digest = "f7964014afad2cb0636bdacf6559d8f7bc1468e259d02221bc808d7c3a2afbbd"
     static let classic = ClassicPalette(
         face: ClassicTheme.color(0xD4D0C8),
         light: ClassicTheme.color(0xFFFFFF),
@@ -47,30 +48,32 @@ enum SharedClassicTokens {
         titleInk: ClassicTheme.color(0xFFFFFF),
         workspace: ClassicTheme.color(0xB7B9B8),
         rulerFace: ClassicTheme.color(0xF5F4EF),
-        rulerMargin: ClassicTheme.color(0xD4D0C8)
+        rulerMargin: ClassicTheme.color(0xD4D0C8),
+        captionBlend: 40
     )
     static let pink = ClassicPalette(
-        face: ClassicTheme.color(0xF3D7E4),
+        face: ClassicTheme.color(0xFBE6F1),
         light: ClassicTheme.color(0xFFFFFF),
-        shadow: ClassicTheme.color(0xA56D89),
-        dark: ClassicTheme.color(0x733953),
-        ink: ClassicTheme.color(0x3B1F2D),
-        muted: ClassicTheme.color(0x735365),
-        navy: ClassicTheme.color(0x7F2450),
-        blue: ClassicTheme.color(0xECA8CA),
-        paper: ClassicTheme.color(0xFFF8FC),
-        selection: ClassicTheme.color(0x7F2450),
-        row: ClassicTheme.color(0xFFF3F8),
-        focus: ClassicTheme.color(0xB02768),
-        todaySurface: ClassicTheme.color(0xFBE1ED),
-        selectedSurface: ClassicTheme.color(0xF6D0E3),
-        grid: ClassicTheme.color(0xD6AFBF),
-        timeMarker: ClassicTheme.color(0xAD204D),
+        shadow: ClassicTheme.color(0xB4779A),
+        dark: ClassicTheme.color(0x874363),
+        ink: ClassicTheme.color(0x3F1830),
+        muted: ClassicTheme.color(0x785066),
+        navy: ClassicTheme.color(0xA12565),
+        blue: ClassicTheme.color(0xFFBADA),
+        paper: ClassicTheme.color(0xFFFAFD),
+        selection: ClassicTheme.color(0xB12770),
+        row: ClassicTheme.color(0xFFF3FA),
+        focus: ClassicTheme.color(0xC3247E),
+        todaySurface: ClassicTheme.color(0xFFE6F1),
+        selectedSurface: ClassicTheme.color(0xF8CDE4),
+        grid: ClassicTheme.color(0xDAB4C9),
+        timeMarker: ClassicTheme.color(0xBE185D),
         input: ClassicTheme.color(0xFFFFFF),
         titleInk: ClassicTheme.color(0xFFFFFF),
-        workspace: ClassicTheme.color(0xD4C8CF),
-        rulerFace: ClassicTheme.color(0xFFF3F8),
-        rulerMargin: ClassicTheme.color(0xE3C4D1)
+        workspace: ClassicTheme.color(0xEBD8E5),
+        rulerFace: ClassicTheme.color(0xFFF1F9),
+        rulerMargin: ClassicTheme.color(0xF5D7E8),
+        captionBlend: 28
     )
     static let borderWidth: CGFloat = 1
     static let tooltipDelayMs: CGFloat = 220
