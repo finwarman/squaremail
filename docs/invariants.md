@@ -16,7 +16,7 @@
 | INV-MAIL-bounded-list | A list returns only a bounded page, without bodies. | store contract tests |
 | INV-MAIL-query-literal | User search text cannot become SQL or FTS syntax. | store contract tests |
 | INV-SEARCH-scope | Fuzzy fallback and all-folder searches retain account/custom-folder scope, literal precedence, stable order and bounded header-only pages. | SQLite contracts and hidden account probe |
-| INV-SEARCH-index | Schema4 indexes existing sender addresses atomically; header/body updates and deletions keep the index current without losing drafts or queued work. | legacy migration/index lifecycle contracts |
+| INV-SEARCH-index | Schema5 indexes decoded subjects/sender names/previews and raw addresses/bodies atomically; updates/deletions keep it current without losing raw fields, drafts or queued work. Queries and flag/pin changes perform no decoding. | schema3/schema4 migration, decoder parity and index lifecycle contracts |
 | INV-SEARCH-bounds | Input, dictionary probes and expansions are bounded; fuzzy search does not load body text into application memory. | bound/query-plan contracts and100k release benchmark |
 | INV-READER-controls | Rendering/spacing/link toggles remain visible as labelled icon controls, with tooltips and current pressed/disabled states. | hidden layout/control probes |
 | INV-READER-header-entities | Displayed subjects, sender names and previews decode recognized entities once, without parsing HTML or changing raw mail, addresses or targets. Work is bounded. | MessageText contracts and hidden header/row probe |
@@ -49,7 +49,7 @@
 | INV-CALENDAR-window-cache | Calendar source caches retain at most six month windows. | window eviction test |
 | INV-MAIL-reading-layout | Divider and window resizing fill both viewports; changing orientation preserves the selected message and bounded page. | native reader resize/layout probe |
 | INV-UI-action-scope | Message actions remain in the selected reader, with current enabled/label states in narrow overflow menus; global navigation does not retarget them. | ClassicKit overflow and hidden native layout/action probes |
-| INV-UI-progress | Unknown totals stay indeterminate; known totals clamp safely. Idle/hidden/inactive/sleeping progress has no animation work. Cancellation and stale results cannot restore previous selection progress. | ClassicKit progress and hidden reader/media action probes |
+| INV-UI-progress | Unknown totals stay indeterminate; known totals clamp safely. Idle sync retains a muted static track. Idle/hidden/inactive/sleeping progress has no animation work. Cancellation and stale results cannot restore previous selection progress. | ClassicKit progress and hidden reader/media action probes |
 | INV-UI-appearance | Classic is default. Saved appearance applies before constructing views on restart; text/selection contrast remains readable in both palettes. Classic auxiliary panels retain a light native appearance under a dark host. | palette contrast and hidden appearance-menu probes |
 | INV-MEDIA-opt-in | Default HTML makes no image request; approved resources are scoped to the selected message and cleared on selection change. | native image-delivery probe and sanitizer contracts |
 | INV-MEDIA-bounds | File downloads, image references, pixels and disk cache have explicit bounds. | cache/URL contracts and native downsampling probe |

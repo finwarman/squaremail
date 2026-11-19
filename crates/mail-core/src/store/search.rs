@@ -5,7 +5,7 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 #[cfg(test)]
 mod tests;
 
-pub(super) const SCHEMA_VERSION: i64 = 4;
+pub(super) const SCHEMA_VERSION: i64 = 5;
 const QUERY_BYTES: usize = 1024;
 const QUERY_PARTS: usize = 12;
 const FUZZY_WORDS: usize = 6;
@@ -15,15 +15,44 @@ const CANDIDATE_LIMIT: usize = 2048;
 const MATCH_LIMIT: usize = 8;
 const EXPANSION_LIMIT: usize = 24;
 
+pub(super) fn register(connection: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    connection.create_scalar_function(
+        "squaremail_header_text",
+        1,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        |ctx| {
+            let raw = ctx.get_raw(0).as_str()?;
+            Ok(crate::header_text::decode(raw).into_owned())
+        },
+    )?;
+    Ok(())
+}
+
+fn has_token(part: &str) -> bool {
+    part.chars().any(|c| {
+        c.is_alphanumeric()
+            || matches!(c as u32, 0xe000..=0xf8ff | 0xf0000..=0xffffd | 0x100000..=0x10fffd)
+    })
+}
+
 pub(super) fn literal(query: &str) -> Result<String> {
     if query.len() > QUERY_BYTES || query.split_whitespace().count() > QUERY_PARTS {
         return Err("Search supports up to 12 words and 1 KiB of text".into());
     }
-    Ok(query
+    let terms = query
         .split_whitespace()
+        .filter(|part| has_token(part))
         .map(quoted)
         .collect::<Vec<_>>()
-        .join(" AND "))
+        .join(" AND ");
+    // A punctuation-only query must not become the unfiltered mailbox.
+    if terms.is_empty() && !query.trim().is_empty() {
+        return Ok("\"\"".into());
+    }
+    Ok(terms)
 }
 
 fn quoted(term: &str) -> String {
@@ -103,7 +132,7 @@ impl Store {
         let mut remaining = FUZZY_WORDS;
         let mut changed = false;
         let mut groups = Vec::new();
-        for part in query.split_whitespace() {
+        for part in query.split_whitespace().filter(|part| has_token(part)) {
             let normalized: String = part
                 .nfd()
                 .filter(|c| !is_combining_mark(*c))

@@ -35,7 +35,7 @@ Help / App updates opens the installed f1nb0 Apps launcher, or [its download pag
 - Gmail and Microsoft Graph mail readers, browser OAuth with PKCE and state validation, Keychain tokens and refresh.
 - Multiple Gmail/Outlook accounts, a unified inbox, discovered folders and resumable header backfill. Bodies download on opening and remain available offline.
 - Automatic bounded mail/calendar sync while open, with wake/reconnect catch-up and persisted retries.
-- One Refresh action with persistent batch progress, account/operation detail and distinct retry/offline/completion states. Classic segmented indicators keep unknown totals indeterminate; image loading uses known item counts.
+- One Refresh action with a muted static idle bar, persistent batch progress, account/operation detail and distinct retry/offline/completion states. Classic segmented indicators keep unknown totals indeterminate; image loading uses known item counts.
 - Passive HTML with scripts and direct web requests blocked. Load images opts in for the current message; Hide images or changing messages resets access.
 - Native image/PDF/DOCX/XLSX thumbnails and separate document previews, downloaded on request with bounded disk caching.
 - Five-second idle release of the HTML renderer after returning to text.

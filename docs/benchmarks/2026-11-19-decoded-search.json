@@ -1,0 +1,67 @@
+{
+  "single_account": {
+    "common_search_p95_ms": 69.116625,
+    "list_p95_ms": 0.244959,
+    "messages": 100000,
+    "seed_ms": 14683.25475,
+    "selective_search_p95_ms": 0.136125,
+    "sqlite_bytes": 64958464
+  },
+  "ten_accounts": {
+    "account_common": {
+      "p95_ms": 15.215124999999999
+    },
+    "account_inbox": {
+      "p95_ms": 0.259708
+    },
+    "address_exact": {
+      "p95_ms": 2.3736669999999997
+    },
+    "address_typo": {
+      "p95_ms": 8.676
+    },
+    "body_typo": {
+      "p95_ms": 22.853082999999998
+    },
+    "decoded_preview": {
+      "p95_ms": 17.739
+    },
+    "decoded_sender": {
+      "p95_ms": 20.329541
+    },
+    "decoded_subject": {
+      "p95_ms": 6.776166999999999
+    },
+    "folder_common": {
+      "p95_ms": 13.571708
+    },
+    "name_typo": {
+      "p95_ms": 21.034792
+    },
+    "schema5_migration": {
+      "elapsed_ms": 292.343166
+    },
+    "scoped_selective": {
+      "p95_ms": 0.060584
+    },
+    "typo_no_hit": {
+      "p95_ms": 4.1325
+    },
+    "unified_address_typo": {
+      "p95_ms": 11.885209000000001
+    },
+    "unified_body_typo": {
+      "p95_ms": 63.020999999999994
+    },
+    "unified_common": {
+      "p95_ms": 57.061833
+    },
+    "unified_inbox": {
+      "p95_ms": 0.28204199999999996
+    },
+    "unified_selective": {
+      "p95_ms": 0.03275
+    }
+  },
+  "method": "Release core-only, generated100000 cached messages, ten accounts, warm OS cache,30 query repetitions. p95 excludes bridge/UI debounce/network. Migration is one elapsed sample. No new memory/startup/leak qualification."
+}

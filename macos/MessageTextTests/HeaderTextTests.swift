@@ -2,6 +2,14 @@ import XCTest
 @testable import MessageText
 
 final class HeaderTextTests: XCTestCase {
+    func testSharedSearchParity() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let cases = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("shared/header-cases.json"))) as! [[String: String]]
+        for item in cases { XCTAssertEqual(HeaderText.decode(item["source"]!), item["decoded"]!) }
+        let table = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("shared/header-entities.json"))) as! [String: Any]
+        for (name, expected) in table["entries"] as! [String: String] { XCTAssertEqual(HeaderText.decode("&\(name);"), expected, name) }
+        XCTAssertTrue(HeaderText.decode(String(repeating: "a", count: 8191) + "é").hasSuffix("\u{fffd}"))
+    }
     func testHeaderEscapes() {
         XCTAssertEqual(HeaderText.decode("Salt &amp; Pepper &#39;offers&#x27; &quot;today&quot;"), "Salt & Pepper 'offers' \"today\"")
         XCTAssertEqual(HeaderText.decode("&lt;b&gt;Literal&lt;/b&gt; &copy; &eacute; &rsquo;"), "<b>Literal</b> © é ’")
