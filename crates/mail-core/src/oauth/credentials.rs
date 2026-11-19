@@ -1,5 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use security_framework::base::{Error, Result};
+use serde::Serialize;
 use serde_json::json;
 use std::{
     io::Write,
@@ -11,7 +12,20 @@ static HELPER: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 const NOT_AVAILABLE: i32 = -25291;
 const RULE: &str = "=identifier \"com.finwarman.squaremail.credentials\" and certificate leaf = H\"E9EDA8C68084E31D00019CB550FCB9294D486364\"";
 
-fn request(operation: &str, service: &str, account: &str, data: Option<&[u8]>) -> Result<Vec<u8>> {
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Operation {
+    Get,
+    Set,
+    Delete,
+}
+
+fn request(
+    operation: Operation,
+    service: &str,
+    account: &str,
+    data: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let error = || Error::from_code(NOT_AVAILABLE);
     let mut helper = HELPER.lock().map_err(|_| error())?;
     if helper.is_none() {
@@ -62,11 +76,11 @@ fn request(operation: &str, service: &str, account: &str, data: Option<&[u8]>) -
     }
 }
 pub(super) fn get_generic_password(service: &str, account: &str) -> Result<Vec<u8>> {
-    request("get", service, account, None)
+    request(Operation::Get, service, account, None)
 }
 pub(super) fn set_generic_password(service: &str, account: &str, value: &[u8]) -> Result<()> {
-    request("set", service, account, Some(value)).map(|_| ())
+    request(Operation::Set, service, account, Some(value)).map(|_| ())
 }
 pub(super) fn delete_generic_password(service: &str, account: &str) -> Result<()> {
-    request("delete", service, account, None).map(|_| ())
+    request(Operation::Delete, service, account, None).map(|_| ())
 }
