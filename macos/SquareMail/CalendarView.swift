@@ -733,9 +733,9 @@ private final class AgendaSummaryCell: NSTableCellView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let progress else { return }
-        ClassicTheme.grid.setFill()
+        (backgroundStyle == .emphasized ? NSColor.white.withAlphaComponent(0.3) : ClassicTheme.grid).setFill()
         NSRect(x: 8, y: bounds.height - 3, width: max(0, bounds.width - 16), height: 2).fill()
-        ClassicTheme.timeMarker.setFill()
+        (backgroundStyle == .emphasized ? NSColor.white : ClassicTheme.timeMarker).setFill()
         NSRect(x: 8, y: bounds.height - 3, width: max(0, bounds.width - 16) * progress, height: 2).fill()
     }
     private func updateColors() {
