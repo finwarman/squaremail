@@ -32,6 +32,8 @@
 | INV-MAIL-row-reuse | Revisiting the same rows does not allocate more row views after warm-up. | native reader self-test and 1,000-switch heap probe |
 | INV-MAIL-header-window | Older/Newer navigation retains only the current page, at most 250 summaries. | generated 512-message native paging probe |
 | INV-CALENDAR-bounded-grid | Period/date changes reuse 42 native date targets. | ClassicKit calendar range/lifecycle test |
+| INV-CALENDAR-month-regions | Month dates, event rows and overflow counts occupy separate regions, including short cells and dense days. | Month geometry contract and hidden dense renders |
+| INV-CALENDAR-agenda-layout | Calendar agenda resizing/orientation preserves selected date/event, cached marks and separate Mail layout; cold reopening retains calendar proportions. No layout action loads events. | hidden agenda resize/orientation/selection and release/reopen probes |
 | INV-CALENDAR-lazy-release | Calendar views are absent during mail startup, reused during rapid toggles and released after five idle seconds in Mail. | native calendar probe |
 
 | INV-SYNC-batch-feedback | Progress spans due pages/lanes, manual refresh wakes only idle waits, retries/offline/pause stop busy feedback, and stale workers cannot change replacements. | scheduler fixture, queue-readiness contract and hidden native action probe |

@@ -157,6 +157,7 @@ public final class ClassicCalendar: NSView {
         if dirty { updateDays() }
         NSColor.white.setFill(); bounds.fill()
         hits.removeAll(keepingCapacity: true)
+        guard bounds.width > 0, bounds.height > headingHeight else { return }
         if period == .month { drawMonth() } else { drawTimeGrid() }
     }
 
@@ -184,9 +185,11 @@ public final class ClassicCalendar: NSView {
             let today = calendar.isDateInToday(day)
             if today {
                 ClassicTheme.navy.setFill()
-                NSRect(x: rect.minX + 1, y: rect.minY + 1, width: rect.width - 2, height: density == .compact ? rect.height - 2 : 24).fill()
+                NSRect(x: rect.minX + 1, y: rect.minY + 1, width: rect.width - 2, height: density == .compact ? rect.height - 2 : min(20, rect.height - 2)).fill()
             }
-            let number = density == .compact ? rect.insetBy(dx: 1, dy: 4) : NSRect(x: rect.minX + 6, y: rect.minY + 5, width: rect.width - 12, height: 19)
+            let number = density == .compact ? rect.insetBy(dx: 1, dy: 4) : NSRect(x: rect.minX + 6, y: rect.minY + 4, width: rect.width - 12, height: 17)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1)).addClip()
             ClassicTheme.text(dayNumber, in: number, size: density == .compact ? 10 : 12,
                               color: today ? .white : (inMonth ? ClassicTheme.ink : ClassicTheme.muted),
                               weight: today ? .bold : .regular, alignment: density == .compact ? .center : .left)
@@ -194,16 +197,17 @@ public final class ClassicCalendar: NSView {
                 ClassicTheme.focus.setStroke()
                 let selection = NSBezierPath(rect: rect.insetBy(dx: 2, dy: 2)); selection.lineWidth = 2; selection.stroke()
             }
+            NSGraphicsContext.restoreGraphicsState()
             if density == .compact { continue }
             let marks = marksOn(day)
-            let capacity = max(0, Int((rect.height - 27) / 19))
-            for (offset, item) in marks.prefix(capacity).enumerated() {
-                let event = NSRect(x: rect.minX + 4, y: rect.minY + 26 + CGFloat(offset) * 19, width: rect.width - 8, height: 17)
+            let layout = MonthCellLayout(rect, count: marks.count)
+            for (offset, item) in marks.prefix(layout.eventCount).enumerated() {
+                let event = layout.eventRect(offset)
                 let title = item.span == .allDay ? item.title : timeFormat.string(from: item.start) + " " + item.title
                 drawMark(item, title, event)
             }
-            if marks.count > capacity {
-                ClassicTheme.text("+\(marks.count - capacity) more", in: NSRect(x: rect.minX + 6, y: rect.maxY - 17, width: rect.width - 12, height: 16), size: 9, color: ClassicTheme.muted)
+            if layout.moreCount > 0 {
+                ClassicTheme.text("+\(layout.moreCount)" + (layout.morePlacement == .below ? " more" : ""), in: layout.moreRect, size: 9, color: today && layout.morePlacement == .header ? .white : ClassicTheme.muted, alignment: layout.morePlacement == .below ? .left : .right)
             }
         }
     }

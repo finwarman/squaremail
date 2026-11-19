@@ -50,6 +50,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private enum LayoutSave { case save, transient }
     private let splitButton = ClassicButton("Side by side", style: .toggle)
     private var layoutItems: [ReadingLayout: NSMenuItem] = [:]
+    private var agendaItems: [AgendaLayout: NSMenuItem] = [:]
+    private static let agendaKey = "calendarAgendaLayout"
+    private static let agendaBelowKey = "calendarAgendaBelowRatio"
+    private static let agendaRightKey = "calendarAgendaRightRatio"
     private var pendingAppearance = ClassicTheme.appearance
     private var current: Mail?
     private enum ListPhase { case ready, loading }
@@ -111,6 +115,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if Self.offlineArgs.isDisjoint(with: arguments), let value = UserDefaults.standard.string(forKey: Self.layoutKey) {
             readingLayout = ReadingLayout(rawValue: value) ?? .below
         }
+        if Self.offlineArgs.isDisjoint(with: arguments) {
+            calendarState.agendaLayout = AgendaLayout(rawValue: UserDefaults.standard.string(forKey: Self.agendaKey) ?? "") ?? .below
+            calendarState.belowRatio = UserDefaults.standard.object(forKey: Self.agendaBelowKey) as? Double ?? 0.7
+            calendarState.rightRatio = UserDefaults.standard.object(forKey: Self.agendaRightKey) as? Double ?? 0.6
+        }
         if arguments.contains("--side-by-side") { readingLayout = .right }
         layout.setReadingLayout(readingLayout)
         buildSidebar()
@@ -152,7 +161,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         layout.reader.onImageState = { [weak self] permission in
             guard let self else { return }
             self.layout.header.images = permission
-            if self.readerMode == .html { self.layout.statusReader.stringValue = permission == .loaded ? "HTML · IMAGES LOADED" : "HTML · REMOTE OFF" }
+            self.updateFooter()
         }
         layout.search.delegate = self
         layout.clearSearch.onPress = { [weak self] in self?.clearSearch() }
@@ -219,7 +228,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             guard let self, self.mailbox == .live else { return }
             let regained = !self.networkAvailable && connectivity == .online
             self.networkAvailable = connectivity == .online
-            self.layout.statusMode.stringValue = connectivity == .online ? "LOCAL CACHE" : "OFFLINE CACHE"
+            self.updateFooter()
             if regained, self.networkReady, self.section == .mail, self.current?.text == nil {
                 self.tableViewSelectionDidChange(Notification(name: NSTableView.selectionDidChangeNotification))
             }
@@ -271,7 +280,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             self.remoteFolder = nil
             self.folder = folder
             self.sidebar.select(folder)
-            self.layout.folderLabel.stringValue = folder.title
+            self.layout.folderTitle = folder.title
             self.layout.titleBar.title = "Square Mail - \(folder.title)"
             self.layout.titleBar.needsDisplay = true
             self.setSearchText("")
@@ -283,7 +292,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             self.account = folder.accountId
             for item in self.sidebar.accounts.itemArray where item.representedObject as? String == folder.accountId { self.sidebar.accounts.select(item) }
             self.remoteFolder = folder
-            self.layout.folderLabel.stringValue = folder.name
+            self.layout.folderTitle = folder.name
             self.layout.titleBar.title = "Square Mail - " + folder.name
             self.layout.titleBar.needsDisplay = true
             self.setSearchText("")
@@ -314,11 +323,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
         layout.toolbar.addItem(draftsButton, width: 145)
         layout.toolbar.addItem(splitButton, width: 110)
-        layout.filter.addSubview(newButton)
-        newButton.frame = NSRect(x: 130, y: 4, width: 95, height: 32)
+        layout.setComposeButton(newButton)
         textButton.onPress = { [weak self] in self?.setReader(.text) }; htmlButton.onPress = { [weak self] in self?.setReader(.html) }
         splitButton.toolTip = "Switch the reading pane between below and right"
-        splitButton.onPress = { [weak self] in guard let self else { return }; setReadingLayout(readingLayout == .below ? .right : .below) }
+        splitButton.onPress = { [weak self] in self?.togglePaneLayout() }
         readButton.onPress = { [weak self] in self?.toggleRead() }; flagButton.onPress = { [weak self] in self?.toggleFlag() }; pinButton.onPress = { [weak self] in self?.togglePin() }
         draftsButton.onPress = { [weak self] in self?.showMailWorkspace() }
         for (button, width) in [(replyButton, 78.0), (replyAllButton, 90.0), (forwardButton, 92.0), (archiveButton, 90.0), (trashButton, 80.0)] {
@@ -539,9 +547,32 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     private func updateLayoutButtons() {
-        splitButton.state = readingLayout == .right ? .on : .off
+        let sideBySide = section == .mail ? readingLayout == .right : (calendarView?.state.agendaLayout ?? calendarState.agendaLayout) == .right
+        splitButton.state = sideBySide ? .on : .off
+        splitButton.toolTip = section == .mail ? "Switch the reading pane between below and right" : "Switch the selected-day agenda between below and right. Drag the divider to resize."
         splitButton.needsDisplay = true
         for (value, item) in layoutItems { item.state = value == readingLayout ? .on : .off }
+        for (value, item) in agendaItems { item.state = value == (calendarView?.state.agendaLayout ?? calendarState.agendaLayout) ? .on : .off }
+    }
+
+    private func togglePaneLayout() {
+        if section == .mail { setReadingLayout(readingLayout == .below ? .right : .below); return }
+        guard let view = calendarView else { return }
+        view.setAgendaLayout(view.state.agendaLayout == .below ? .right : .below)
+    }
+    private func saveAgendaLayout(_ state: CalendarState) {
+        calendarState = state
+        if !WindowPresentation.isBackground {
+            UserDefaults.standard.set(state.agendaLayout.rawValue, forKey: Self.agendaKey)
+            UserDefaults.standard.set(state.belowRatio, forKey: Self.agendaBelowKey)
+            UserDefaults.standard.set(state.rightRatio, forKey: Self.agendaRightKey)
+        }
+        updateLayoutButtons()
+    }
+    private func updateFooter() {
+        let context = section == .calendar ? "Calendar" : readerMode == .text ? "Text" : "HTML · " + (layout.header.images == .loaded ? "Images loaded" : "Images blocked")
+        layout.statusReader.stringValue = (mailbox == .demo ? "Demo · " : "") + context
+        layout.statusReader.toolTip = section == .calendar ? "Calendar events cached on this Mac. Refresh updates connected accounts." : "Message view: " + context + ". Cached messages remain readable offline."
     }
 
     private func loadAccounts() async throws {
@@ -560,7 +591,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         sidebar.connect.setAccessibilityLabel("Manage accounts")
         sidebar.demo.title = mailbox == .demo ? "My mailbox" : "Demo mailbox"
         sidebar.demo.setAccessibilityLabel(sidebar.demo.title)
-        layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
+        updateFooter()
     }
 
     private func loadFolders() async {
@@ -776,7 +807,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         textButton.state = mode == .text ? .on : .off
         htmlButton.state = mode == .html ? .on : .off
         layout.header.mode = mode
-        layout.statusReader.stringValue = mode == .text ? "PLAIN TEXT" : "HTML · REMOTE OFF"
+        updateFooter()
         guard bodyPhase == .ready else { return }
         if let current { layout.reader.display(current, mode: mode) }
     }
@@ -825,7 +856,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 mailbox = .live; account = "local"; folder = .inbox
                 setSection(.mail)
                 sidebar.select(folder)
-                layout.folderLabel.stringValue = folder.title
+                layout.folderTitle = folder.title
                 setSearchText("")
                 try await loadAccounts()
                 await loadList()
@@ -1022,6 +1053,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             item.target = self
             layoutItems[value] = item
         }
+        for (value, title, action) in [(AgendaLayout.below, "Calendar agenda below", #selector(agendaBelow)), (.right, "Calendar agenda on right", #selector(agendaRight))] {
+            let item = view.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self; agendaItems[value] = item
+        }
         let appearance = NSMenu(title: "Appearance")
         addItem(appearance, "Classic", #selector(classicAppearance), "")
         addItem(appearance, "Pink", #selector(pinkAppearance), "")
@@ -1088,6 +1123,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         case #selector(showCalendar): item.state = section == .calendar ? .on : .off
         case #selector(showMail): item.state = section == .mail ? .on : .off
         case #selector(paneBelow), #selector(paneRight): return section == .mail
+        case #selector(agendaBelow), #selector(agendaRight): return section == .calendar
         case #selector(importMail): return section == .mail
         case #selector(connectAccount): return connectTask == nil
         case #selector(newCalendarEvent), #selector(showCalendarChanges): return mailbox == .live && accounts.contains { $0.provider != .local }
@@ -1098,6 +1134,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func showNotices() { noticeService().show() }
     @objc private func newCalendarEvent() { setSection(.calendar); openEditor(nil, date: calendarState.date) }
     @objc private func showCalendarChanges() { setSection(.calendar); showPending() }
+    @objc private func agendaBelow() { calendarView?.setAgendaLayout(.below) }
+    @objc private func agendaRight() { calendarView?.setAgendaLayout(.right) }
 
     @objc private func focusSearch() { layout.window?.makeFirstResponder(layout.search) }
     @objc private func classicAppearance() { chooseAppearance(.classic) }
@@ -1122,7 +1160,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         section = next
         updateMailButtons()
         calendarView?.setClock(.stopped)
-        splitButton.isEnabled = next == .mail
+        splitButton.isEnabled = true
         if next == .calendar {
             calendarIdleTask?.cancel()
             calendarIdleTask = nil
@@ -1146,6 +1184,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             view.onEdit = { [weak self] key in self?.openEditor(key, date: Date()) }
             view.onClockTick = { [weak side] in side?.redrawToday() }
             view.onPending = { [weak self] in self?.showPending() }
+            view.onLayoutChange = { [weak self] state in self?.saveAgendaLayout(state) }
             side.onDate = { [weak view] date in view?.selectDate(date) }
             side.onFeeds = { [weak view] feeds in view?.setFeeds(feeds) }
             side.onMail = { [weak self] in self?.setSection(.mail) }
@@ -1163,14 +1202,12 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             calendarView = view
             view.setClock(.running)
             calendarSidebar = side
-            layout.folderLabel.stringValue = "Calendar"
+            layout.folderTitle = "Calendar"
             layout.titleBar.title = "Square Mail - Calendar"
             setSearchText(calendarState.query)
             layout.search.placeholderString = mailbox == .demo ? "Search sample events (⌘F)" : "Search cached events (⌘F)"
             layout.statusText.stringValue = mailbox == .demo ? "Sample calendars · not connected" : (accounts.contains(where: { $0.connected == true }) ? "Cached calendars · updates while online" : "Offline calendars · reconnect an account to update")
-            layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
             scheduleCalendar()
-            layout.statusReader.stringValue = "CALENDAR"
         } else {
             calendarTask?.cancel()
             calendarRevision += 1
@@ -1186,12 +1223,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             }
             layout.split.isHidden = false
             sidebar.isHidden = false
-            layout.folderLabel.stringValue = folderTitle
+            layout.folderTitle = folderTitle
             layout.titleBar.title = "Square Mail - \(folderTitle)"
             setSearchText(mailSearch)
             layout.search.placeholderString = searchScope == .allFolders ? "Search all folders (⌘F)" : "Search this folder (⌘F)"
             layout.statusText.stringValue = "\(messages.count) messages shown · Cached on this Mac"
-            layout.statusMode.stringValue = mailbox == .demo ? "LOCAL DEMO" : "LOCAL CACHE"
             setReader(readerMode)
             if reload == .refresh {
                 let revision = listRevision
@@ -1202,6 +1238,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             }
         }
         updateClearSearch()
+        updateLayoutButtons()
+        updateFooter()
         layout.titleBar.needsDisplay = true
         layout.search.setAccessibilityLabel(next == .calendar ? (mailbox == .demo ? "Search sample events" : "Search cached events") : "Search this folder")
         calendarButton.setAccessibilityLabel(calendarButton.title)
@@ -1267,7 +1305,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 account = notice.account; remoteFolder = nil; folder = .all
                 setSearchText("")
                 sidebar.select(.all)
-                layout.folderLabel.stringValue = folder.title
+                layout.folderTitle = folder.title
                 try await loadAccounts()
                 await loadList()
                 let revision = bodyRevision
@@ -1394,7 +1432,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard pendingAppearance != appearance, ClassicTheme.appearance == appearance else { throw MailError(message: "Appearance choice did not remain pending until restart") }
         chooseAppearance(appearance)
         await loadList(); await finishSelection()
-        layout.folderLabel.stringValue = folder.title; sidebar.select(folder)
+        layout.folderTitle = folder.title; sidebar.select(folder)
         try WindowPresentation.snapshot(layout, name: "mail-actions")
         guard section == .mail, mailButton.state == .on, calendarButton.state == .off, !NSApp.isActive, layout.window?.isVisible != true else { throw MailError(message: "Mail navigation or background isolation failed") }
         print("MAIL ACTIONS verified native toolbar/context dispatch, read/flag/pin, offline archive/trash, compose autosave/close, reply-all/forward, outbox cancellation and spacing preservation. No provider writes, sends or consent requests.")
@@ -1546,6 +1584,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let events: [CalendarEvent] = try await core.request(["command": CoreCommand.events.rawValue,
             "start": Int64(range.0.timeIntervalSince1970), "end": Int64(range.1.timeIntervalSince1970), "offset": 0, "limit": 2000], mode: .live)
         guard events.count == 2000 else { throw MailError(message: "Bounded calendar events were not loaded") }
+        try calendarView?.verifyAgendaLayout()
         for _ in 0..<5 {
             let retired = NSHashTable<AnyObject>.weakObjects()
             if let view = calendarView { retired.add(view) }
@@ -1617,7 +1656,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func checkCalendar(_ mode: CalendarProbe = .validate) async throws {
         if mode == .preview { setSection(.calendar); return }
         guard calendarView == nil else { throw MailError(message: "Calendar was created during mail startup") }
+        let mailLayout = readingLayout
         setSection(.calendar)
+        splitButton.performClick(nil)
+        guard calendarView?.state.agendaLayout == .right, splitButton.state == .on, layout.statusReader.stringValue == "Demo · Calendar" else { throw MailError(message: "Calendar layout toggle or footer has the wrong context") }
         try calendarView?.selfTest()
         for _ in 0..<20 {
             let retired = NSHashTable<AnyObject>.weakObjects()
@@ -1627,18 +1669,24 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             try await Task.sleep(for: .milliseconds(20))
             setSection(.calendar)
             guard retired.allObjects.contains(where: { $0 === calendarView }) else { throw MailError(message: "Warm calendar view was rebuilt") }
+            guard calendarView?.state.agendaLayout == .right, readingLayout == mailLayout else { throw MailError(message: "Calendar layout was reset or changed Mail's orientation") }
             layout.layoutSubtreeIfNeeded()
             layout.window?.displayIfNeeded()
         }
         let retired = NSHashTable<AnyObject>.weakObjects()
         if let view = calendarView { retired.add(view) }
         if let side = calendarSidebar { retired.add(side) }
+        let saved = calendarView!.state
         setSection(.mail)
         await calendarIdleTask?.value
         await Task.yield()
         guard retired.allObjects.isEmpty else {
             throw MailError(message: "Idle calendar view was retained: " + retired.allObjects.map { String(describing: type(of: $0)) }.joined(separator: ", "))
         }
+        setSection(.calendar)
+        guard let restored = calendarView?.state, restored.agendaLayout == saved.agendaLayout,
+              abs(restored.belowRatio - saved.belowRatio) < 0.001, abs(restored.rightRatio - saved.rightRatio) < 0.001,
+              restored.date == saved.date else { throw MailError(message: "Cold calendar reopen lost agenda layout or date") }
     }
 
     func measureCalendar() async throws -> [String: Any] {
@@ -1816,11 +1864,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let divider = layout.split.isVertical ? layout.listPane.frame.width : layout.listPane.frame.height
         let selection = current?.id
         let size = layout.window!.contentView!.bounds.size
+        let title = layout.folderTitle
         defer {
             layout.window?.setContentSize(size)
             layout.layoutSubtreeIfNeeded()
             setReadingLayout(original, save: .transient)
             layout.split.setPosition(divider, ofDividerAt: 0)
+            layout.folderTitle = title
         }
         for value in [ReadingLayout.right, .below, .right, .below] {
             setReadingLayout(value, save: .transient)
@@ -1839,6 +1889,11 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             for size in [NSSize(width: 1060, height: 730), NSSize(width: 1400, height: 920)] {
                 layout.window?.setContentSize(size)
                 layout.layoutSubtreeIfNeeded()
+                for title in ["Inbox", "A longer nested account folder"] {
+                    layout.folderTitle = title; layout.layoutSubtreeIfNeeded()
+                    guard abs(newButton.frame.minX - layout.folderLabel.frame.maxX - 12) < 1,
+                          newButton.frame.maxX + 6 <= layout.searchScope.frame.minX else { throw MailError(message: "Compose action floats or overlaps search controls") }
+                }
                 for position: CGFloat in value == .below ? [180, 480, 250] : [300, 480, 350] {
                     layout.split.setPosition(position, ofDividerAt: 0)
                     layout.layoutSubtreeIfNeeded()

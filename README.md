@@ -41,7 +41,7 @@ Help / App updates opens the installed f1nb0 Apps launcher, or [its download pag
 - Five-second idle release of the HTML renderer after returning to text.
 - Native bell history with a 50-entry limit, per-account preferences and opt-in macOS alerts/reminders.
 - Provider-aware calendar creation/editing with separate write consent, bounded offline queue, local drafts and conditional patches.
-- Lazy native calendar UI with today highlights, month/week/day, source filters, search and agenda. One warm view pair is kept for five seconds; a bounded event snapshot survives view release. Demo mode remains separate from provider data.
+- Lazy native calendar UI with today highlights, month/week/day, source filters, search and a resizable agenda below or on the right. One warm view pair is kept for five seconds; a bounded event snapshot survives view release. Demo mode remains separate from provider data.
 
 See [mail actions and drafts](docs/mail-actions.md), [design/themes](docs/design.md), [account setup](docs/accounts.md), [architecture](docs/architecture.md), [contracts](docs/invariants.md), [performance](docs/performance.md) and [roadmap](docs/roadmap.md).
 
