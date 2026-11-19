@@ -394,6 +394,12 @@ fn seed_mail_actions_fixture() {
     original.reply = None;
     original.preview = "Hi both,\n\nThe review is complete.\n\nNext steps are attached.".into();
     store.save(&original, Folder::Inbox).unwrap();
+    let mut other = original.clone();
+    other.remote_id = "other-unread".into();
+    other.id = crate::mime::message_id("fixture", &other.remote_id);
+    other.timestamp -= 60;
+    other.subject = "Another unread message".into();
+    store.save(&other, Folder::Archive).unwrap();
     store
         .pause_account("fixture", DisconnectMode::KeepCache)
         .unwrap();

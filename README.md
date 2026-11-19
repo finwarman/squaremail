@@ -28,6 +28,7 @@ Help / App updates opens the installed f1nb0 Apps launcher, or [its download pag
 - Side by side toolbar toggle and View menu choices for a reading pane below or on the right. The choice survives restart; the right-pane list shows sender, date, subject and preview.
 - Older/Newer paging retains at most 250 message headers.
 - Global Mail/Calendar, sync, accounts and workspace navigation. Reply, Forward, Archive, Trash, Move, read/flag/pin and text/HTML controls live in the selected message pane, with More overflow in narrow layouts. Right-click actions remain available. Delete moves to Trash; there is no permanent-delete command.
+- Automatic read after two seconds of visible ready content, with a saved manual-reading option and Keep unread for the selected viewing session. Offline read flags queue without reloading the body.
 - Native reply/reply-all/forward and To/CC/BCC composition, bounded local autosaving drafts and an offline outbox with explicit send review.
 - Optional plain-text compact spacing preserves quote nesting, bullets and separators. Calendar shows current date/time and a day/week time marker with separate today/selection highlights.
 - Readable plain-text links condense email/Markdown links and long URLs, with full hover targets and copy. Compact spacing also removes invisible newsletter padding. See [reader behavior](docs/reader-text.md).

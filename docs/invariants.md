@@ -6,6 +6,7 @@
 | INV-MAIL-draft-revision | Bounded drafts retain their text across restart; stale revisions cannot overwrite or queue them. | SQLite draft/outbox contracts |
 | INV-MAIL-send-uncertain | An interrupted or ambiguously accepted send cannot be automatically retried. | synthetic HTTP send and crash-lease contracts |
 | INV-MAIL-reply-metadata | Reply-all respects Reply-To, removes self/duplicates and excludes BCC; provider threading is preserved. | MIME/provider fixtures and native compose probe |
+| INV-MAIL-read-dwell | A ready unread body in the active visible reader starts one cancellable2second delay. Keep/manual-unread suppresses that selection; hidden/loading/other views cancel. Local queued writes preserve body/scroll and never auto-advance the Unread list. | timer lifetime/selection contracts and hidden offline dwell/override/refresh probe |
 | INV-MAIL-pin | Pins are local and indexed; provider header updates retain them. | SQLite pin/query contract |
 | INV-MAIL-spacing | Compact spacing removes long invisible layout padding while preserving structured indentation, short language joiners, quotes and separators; stored mail stays unchanged. | MessageText and native reader probes |
 | INV-MAIL-readable-links | Shortened links retain full original targets for copy/click, make no hover request and reject active/local schemes. | MessageText and private-pasteboard native probes |
@@ -68,7 +69,7 @@
 | INV-NOTICE-replay | Baselines suppress old mail; read/clear state and deduplication survive restart. | SQLite replay/native probes |
 | INV-NOTICE-permission | The bell works without permission; system permission is requested only on explicit enable. | native action boundary and offline probe |
 
-The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Mail changes/sending require separate consent and explicit queued user actions. Calendar writes require their own consent and a user-queued edit.
+The native reader defaults to text and creates WebKit only on first HTML use. Tokens live in Keychain. Mail cache is local plaintext with user-only permissions. Mail changes/sending require separate consent and queued user actions. Enabled automatic reading queues read status after a visible dwell. Calendar writes require their own consent and a user-queued edit.
 
 The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. A long-paragraph workload exposed large TextKit 2 graphics surfaces. The native text path preserves selection, copy and scrolling. Measurement details remain in `docs/performance.md`.
 
