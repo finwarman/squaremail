@@ -81,3 +81,5 @@ The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. 
 | INV-MAIL-action-selection | Successful placement actions advance in current visible order, with previous-row/page fallback. New arrivals do not select the head; newer selection/scope wins. Failed/cancelled actions keep selection. Unread automatic-read clearing stays separate. | hidden260message offline repeated-action and navigation probe |
 
 | INV-MAIL-queued-feedback | Queueing closes compose before focusing the outbox on the correct send/account. Refresh retains the selected error/status. Bounded accepted receipts omit bodies and cannot be retried as pending sends. | native queued-focus/refresh probe and receipt bound contract |
+
+| INV-MAIL-outbox-signin | Outbox sign-in names its account/access, survives refresh/reopen, shares one cancellable task with the toolbar, and recovers on completion/error/cancel without changing queued mail or accepted-send status. No extra polling. | hidden sign-in banner/control and cancellation probes |

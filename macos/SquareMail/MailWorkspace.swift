@@ -11,8 +11,15 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         }
     }
     private let core: MailCore
-    private let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 470), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+    private let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 530), styleMask: [.titled, .closable], backing: .buffered, defer: false)
     private let table = NSTableView()
+    private let scroll = NSScrollView()
+    private let signInPanel = ClassicPanel()
+    private let signInTitle = NSTextField(labelWithString: "")
+    private let signInAccount = NSTextField(labelWithString: "")
+    private let signInHint = NSTextField(labelWithString: "")
+    private let cancelSignIn = ClassicButton("Cancel sign-in")
+    private var signIn = MailSignIn.idle
     private let account = NSPopUpButton(frame: .zero)
     private let changes = ClassicButton("Enable mail changes…")
     private let sending = ClassicButton("Enable sending…")
@@ -29,19 +36,33 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
     private var generation = 0
     private var opened = false
     private var busy = false
-    private var authorizing = false
     var onOpen: ((String) -> Void)?
     var onChange: (() -> Void)?
     var onConsent: ((String, MailAccess) -> Void)?
+    var onCancelSignIn: (() -> Void)?
     init(core: MailCore) {
         self.core = core; super.init()
         window.title = "Mail drafts / outbox"; window.isReleasedWhenClosed = false; window.delegate = self
-        let scroll = NSScrollView(frame: NSRect(x: 10, y: 125, width: 760, height: 335)); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
+        scroll.frame = NSRect(x: 10, y: 125, width: 760, height: 395); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("mail-work")); column.width = 740; table.addTableColumn(column)
         table.headerView = nil; table.rowHeight = 46; table.style = .plain; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.dataSource = self; table.delegate = self; table.target = self; table.doubleAction = #selector(openSelected)
         table.setAccessibilityLabel("Local mail drafts and queued work")
         window.contentView?.addSubview(scroll)
+        signInPanel.frame = NSRect(x: 10, y: 440, width: 760, height: 80)
+        signInPanel.edge = .sunken; signInPanel.isHidden = true
+        signInTitle.frame = NSRect(x: 10, y: 8, width: 570, height: 18)
+        signInAccount.frame = NSRect(x: 10, y: 29, width: 570, height: 18)
+        signInHint.frame = NSRect(x: 10, y: 51, width: 570, height: 18)
+        for field in [signInTitle, signInAccount, signInHint] {
+            field.font = ClassicTheme.font(11); field.textColor = ClassicTheme.ink
+            field.lineBreakMode = .byTruncatingTail; signInPanel.addSubview(field)
+        }
+        signInTitle.font = ClassicTheme.font(11, weight: .bold)
+        cancelSignIn.frame = NSRect(x: 600, y: 26, width: 148, height: 27)
+        cancelSignIn.toolTip = "Stop this sign-in. This does not cancel queued mail or undo an accepted send."
+        cancelSignIn.onPress = { [weak self] in self?.onCancelSignIn?() }
+        signInPanel.addSubview(cancelSignIn); window.contentView?.addSubview(signInPanel)
         for (index, button) in [openButton, remove, retry, cancel, recover, refreshButton].enumerated() {
             button.frame = NSRect(x: 10 + index * 126, y: 91, width: 120, height: 27); window.contentView?.addSubview(button)
         }
@@ -63,12 +84,35 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         account.removeAllItems()
         for value in accounts where value.provider != .local { account.addItem(withTitle: value.email); account.lastItem?.representedObject = value.id }
         if let index = account.itemArray.firstIndex(where: { $0.representedObject as? String == selected }) { account.selectItem(at: index) }
-        opened = true; window.center(); WindowPresentation.show(window); refresh()
+        opened = true; setSignIn(signIn); window.center(); WindowPresentation.show(window); refresh()
     }
     func close() { opened = false; generation += 1; task?.cancel(); task = nil; window.close() }
     func windowWillClose(_ notification: Notification) { opened = false; generation += 1; task?.cancel(); task = nil }
-    func setAuthorizing(_ value: CommandPhase) { authorizing = value == .busy; updateButtons() }
-    enum CommandPhase { case ready, busy }
+    func setSignIn(_ value: MailSignIn) {
+        signIn = value
+        signInPanel.isHidden = value == .idle
+        scroll.frame.size.height = value == .idle ? 395 : 305
+        if let context = value.context {
+            signInAccount.stringValue = "Account: " + context.account
+            switch value {
+            case .waiting:
+                signInTitle.stringValue = "Waiting for browser: " + context.purpose.title
+                signInHint.stringValue = "Finish consent in your browser, or cancel this sign-in."
+            case .cancelling:
+                signInTitle.stringValue = "Cancelling sign-in: " + context.purpose.title
+                signInHint.stringValue = "Stopping the sign-in request. This does not cancel queued mail."
+            case .failed(_, let message):
+                signInTitle.stringValue = "Sign-in needs attention: " + context.purpose.title
+                signInHint.stringValue = message
+            case .idle: break
+            }
+            for field in [signInTitle, signInAccount, signInHint] { field.toolTip = field.stringValue; field.setAccessibilityLabel(field.stringValue) }
+        }
+        cancelSignIn.title = value.active ? "Cancel sign-in" : "Dismiss"
+        cancelSignIn.isEnabled = value.canCancel || !value.active
+        signInPanel.setAccessibilityLabel("Account sign-in status")
+        updateButtons()
+    }
     func showStatus(_ value: String) { status.stringValue = value }
     func refresh() {
         guard opened, !busy else { return }
@@ -102,8 +146,8 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         cancel.isEnabled = ready && [MailWorkState.pending, .retry, .blocked].contains(work?.state) && (work?.attempts == 0 || (work?.kind == .outbox && work?.remote == nil))
         recover.isEnabled = ready && [MailWorkState.uncertain, .blocked].contains(work?.state)
         refreshButton.isEnabled = ready
-        changes.isEnabled = ready && !authorizing && account.numberOfItems > 0; sending.isEnabled = changes.isEnabled
-        account.isEnabled = ready && !authorizing
+        changes.isEnabled = ready && !signIn.active && account.numberOfItems > 0; sending.isEnabled = changes.isEnabled
+        account.isEnabled = ready && !signIn.active
     }
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateButtons()
@@ -115,7 +159,7 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
     }
     @objc private func openSelected() { guard !busy, case .draft(let value) = selection else { return }; onOpen?(value.id) }
     private func consent(_ access: MailAccess) {
-        guard !authorizing, let id = account.selectedItem?.representedObject as? String else { return }
+        guard !signIn.active, let id = account.selectedItem?.representedObject as? String else { return }
         onConsent?(id, access)
     }
     private func deleteDraft() {
@@ -173,6 +217,29 @@ extension MailWorkspacePanel {
         guard case .work(let saved) = selection, saved.id == queued.id else { throw MailError(message: "Outbox refresh hid the selected send state") }
         close()
     }
+    private func verifySignIn(accounts: [Account]) async throws {
+        let context = SignInContext(account: "fin@example.test", purpose: .mail(.send))
+        let originalRows = rows.map(\.key); let originalStatus = status.stringValue
+        setSignIn(.waiting(context))
+        guard status.stringValue == originalStatus, !signInPanel.isHidden, signInAccount.stringValue.contains(context.account), signInTitle.stringValue.contains("Enable sending"),
+              cancelSignIn.isEnabled, !changes.isEnabled, !sending.isEnabled, !scroll.frame.intersects(signInPanel.frame) else { throw MailError(message: "Outbox hid or overlapped the account sign-in state") }
+        refresh(); await task?.value
+        guard signIn == .waiting(context) else { throw MailError(message: "Outbox refresh cleared the sign-in state") }
+        close(); open(accounts: accounts); await task?.value
+        guard signIn == .waiting(context), !signInPanel.isHidden else { throw MailError(message: "Reopening outbox lost the pending account") }
+        var cancellations = 0
+        onCancelSignIn = { [weak self] in cancellations += 1; self?.setSignIn(.cancelling(context)) }
+        cancelSignIn.performClick(nil); cancelSignIn.performClick(nil)
+        guard cancellations == 1, signIn == .cancelling(context), !cancelSignIn.isEnabled,
+              rows.map(\.key) == originalRows else { throw MailError(message: "Sign-in cancellation duplicated work or changed queued mail") }
+        try WindowPresentation.snapshot(window.contentView!, name: "outbox-signin-cancelling")
+        setSignIn(.waiting(context)); try WindowPresentation.snapshot(window.contentView!, name: "outbox-signin-waiting")
+        setSignIn(.failed(context, "Synthetic sign-in error"))
+        guard cancelSignIn.title == "Dismiss", signInHint.stringValue == "Synthetic sign-in error", changes.isEnabled, sending.isEnabled else { throw MailError(message: "Failed sign-in left outbox controls blocked") }
+        onCancelSignIn = { [weak self] in self?.setSignIn(.idle) }; cancelSignIn.performClick(nil)
+        guard signInPanel.isHidden, scroll.frame.maxY == 520, changes.isEnabled, sending.isEnabled else { throw MailError(message: "Sign-in completion left a gap or disabled controls") }
+        showStatus(originalStatus)
+    }
     func verifyControls(accounts: [Account]) async throws {
         precondition(WindowPresentation.isBackground)
         open(accounts: accounts); await task?.value
@@ -186,7 +253,7 @@ extension MailWorkspacePanel {
         var access: [MailAccess] = []; onConsent = { _, value in access.append(value) }
         changes.performClick(nil); sending.performClick(nil)
         guard access == [.changes, .send] else { throw MailError(message: "Mail consent controls did not dispatch separate access modes") }
-        setAuthorizing(.busy); guard !changes.isEnabled, !sending.isEnabled else { throw MailError(message: "Repeated consent remained enabled") }; setAuthorizing(.ready)
+        try await verifySignIn(accounts: accounts)
         close()
     }
 }

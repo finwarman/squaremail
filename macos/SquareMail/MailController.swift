@@ -54,6 +54,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private let media: MessageMedia
     private var noticeTask: Task<Void, Never>?
     private var connectTask: Task<Void, Never>?
+    private var signIn = MailSignIn.idle
     private var refreshTask: Task<Void, Never>?
     private var calendarTask: Task<Void, Never>?
     private var folderTask: Task<Void, Never>?
@@ -378,7 +379,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         htmlButton.toolTip = "HTML (⌘2). Read passive HTML; remote content remains blocked."
         layout.reader.setModeButtons(textButton, html: htmlButton)
         cancelLogin.frame = NSRect(x: 810, y: 6, width: 175, height: 26); cancelLogin.isHidden = true
-        cancelLogin.onPress = { [weak self] in self?.connectTask?.cancel(); self?.cancelLogin.isEnabled = false; self?.layout.statusText.stringValue = "Cancelling sign-in…" }
+        cancelLogin.onPress = { [weak self] in self?.cancelSignIn() }
         layout.toolbar.addSubview(cancelLogin)
         textButton.state = .on
         for (index, button) in [more, newer].enumerated() {
@@ -608,22 +609,42 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             value.onOpen = { [weak self] id in guard let self else { return }; mailComposer().openDraft(id, accounts: accounts) }
             value.onChange = { [weak self] in self?.coordinator.kick(); Task { await self?.refreshList() } }
             value.onConsent = { [weak self] id, access in self?.mailConsent(id, access: access) }
+            value.onCancelSignIn = { [weak self] in self?.cancelSignIn() }
             workspace = value
         }
         workspace?.open(accounts: accounts, queued: queued)
+        workspace?.setSignIn(signIn)
+    }
+    private func setSignIn(_ value: MailSignIn) {
+        signIn = value; workspace?.setSignIn(value)
+        cancelLogin.isHidden = !value.active; cancelLogin.isEnabled = value.canCancel
+        cancelLogin.title = value.canCancel ? "Cancel sign-in" : "Cancelling…"
+        cancelLogin.toolTip = value.context.map { $0.purpose.title + ": " + $0.account }
+    }
+    private func cancelSignIn() {
+        if case .failed = signIn { setSignIn(.idle); return }
+        guard case .waiting(let context) = signIn, let connectTask else { return }
+        setSignIn(.cancelling(context)); connectTask.cancel()
+        layout.statusText.stringValue = "Cancelling sign-in for " + context.account + ". This does not cancel queued mail."
+    }
+    private func finishSignIn() {
+        connectTask = nil
+        if case .failed = signIn { setSignIn(signIn) } else { setSignIn(.idle) }
     }
     private func mailConsent(_ id: String, access: MailAccess) {
-        guard connectTask == nil else { workspace?.showStatus("Another sign-in is pending. Use Cancel sign-in to stop it."); return }
-        workspace?.setAuthorizing(.busy); cancelLogin.isHidden = false
-        layout.statusText.stringValue = "Waiting for separate mail consent in your browser."
+        guard connectTask == nil else { workspace?.setSignIn(signIn); return }
+        let context = SignInContext(account: accounts.first(where: { $0.id == id })?.email ?? "Unknown account", purpose: .mail(access))
+        setSignIn(.waiting(context))
+        layout.statusText.stringValue = "Waiting for browser consent: " + context.purpose.title + " for " + context.account
         connectTask = Task { [weak self] in
             guard let self else { return }
-            defer { connectTask = nil; cancelLogin.isHidden = true; cancelLogin.isEnabled = true; workspace?.setAuthorizing(.ready) }
+            defer { finishSignIn() }
             do {
                 let _: EmptyReply = try await core.request(["command": CoreCommand.mailConsent.rawValue, "account": id, "access": access.rawValue], mode: .live, queue: .login)
                 try await loadAccounts(); startSync(); coordinator.requestRefresh(); workspace?.refresh()
                 layout.statusText.stringValue = "Mail consent saved. Queued work will resume."
-            } catch { workspace?.showStatus(error.localizedDescription); layout.statusText.stringValue = error.localizedDescription }
+            } catch is CancellationError { layout.statusText.stringValue = "Sign-in cancelled. Queued mail was not cancelled." }
+            catch { setSignIn(.failed(context, error.localizedDescription)); layout.statusText.stringValue = error.localizedDescription }
         }
     }
     private enum MailButtonPhase { case ready, busy }
@@ -1163,14 +1184,15 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         case .setup: configureClient(dialog)
         case .disconnect(let id): disconnectAccount(id)
         case .add:
+            setSignIn(.idle)
             connectTask = Task {
-                defer { connectTask = nil; cancelLogin.isHidden = true; cancelLogin.isEnabled = true; sidebar.connect.isEnabled = true }
+                defer { finishSignIn(); sidebar.connect.isEnabled = true }
                 do {
                     let gmail: ClientConfig = try await core.request(["command": CoreCommand.clientConfig.rawValue, "provider": Provider.gmail.rawValue], mode: .live, queue: .login)
                     let outlook: ClientConfig = try await core.request(["command": CoreCommand.clientConfig.rawValue, "provider": Provider.outlook.rawValue], mode: .live, queue: .login)
                     guard let input = dialog.run([.gmail: gmail, .outlook: outlook]) else { return }
+                    setSignIn(.waiting(SignInContext(account: "Account chosen in your browser", purpose: .connect(input.provider))))
                     layout.statusText.stringValue = "Waiting for browser consent. Cancel sign-in to stop."
-                    cancelLogin.isHidden = false
                     sidebar.connect.isEnabled = false
                     let command: [String: Any] = ["command": CoreCommand.connect.rawValue, "provider": input.provider.rawValue,
                         "client_id": input.clientId, "client_secret": input.clientSecret]
@@ -1182,7 +1204,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                     startSync()
                     coordinator.requestRefresh()
                 } catch is CancellationError { layout.statusText.stringValue = "Sign-in cancelled." }
-                catch { showError(error) }
+                catch {
+                    if let context = signIn.context { setSignIn(.failed(context, error.localizedDescription)) }
+                    layout.statusText.stringValue = error.localizedDescription
+                }
             }
         }
     }
@@ -1782,9 +1807,30 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         print("Action navigation passed: repeated Trash, Move, All mail, previous row/page, cancellation, failure and newer user selection")
     }
 
+    private func verifySignInCancel() async throws {
+        guard WindowPresentation.isBackground, connectTask == nil else { throw MailError(message: "Use the hidden sign-in fixture") }
+        let previous = workspace
+        defer { workspace?.close(); workspace = previous; setSignIn(.idle) }
+        let context = SignInContext(account: "fin@example.test", purpose: .mail(.send))
+        var cancelled = false
+        connectTask = Task { [weak self] in
+            defer { self?.finishSignIn() }
+            do { try await Task.sleep(for: .seconds(1)) } catch { cancelled = true }
+        }
+        let operation = connectTask
+        setSignIn(.waiting(context)); openMailWorkspace()
+        guard cancelLogin.isEnabled else { throw MailError(message: "Toolbar lost the shared sign-in") }
+        workspace?.onCancelSignIn?()
+        guard signIn == .cancelling(context), !cancelLogin.isEnabled else { throw MailError(message: "Outbox did not cancel the shared sign-in task") }
+        cancelLogin.performClick(nil)
+        await operation?.value
+        guard cancelled, connectTask == nil, signIn == .idle, cancelLogin.isHidden else { throw MailError(message: "Cancelled sign-in retained a task or blocked controls") }
+    }
+
     func checkMailActions() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test", accounts.first?.connected == false, let original = selectedMail?.id else { throw MailError(message: "Use the disconnected mail-actions fixture") }
         try await SyncCoordinator.verifyFlow()
+        try await verifySignInCancel()
         try await verifyBodyCache()
         await finishSelection(); try await layout.reader.verifySpacing()
         try checkHeaderText()
