@@ -8,6 +8,7 @@ mod search;
 mod sync;
 
 pub(crate) const PAGE_LIMIT: usize = 250;
+const SCHEMA_VERSION: i64 = 6;
 
 #[derive(Clone, Copy)]
 pub(crate) struct MailScope<'a> {
@@ -40,7 +41,7 @@ impl Store {
         search::register(&connection)?;
         let schema_version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;")?;
-        if schema_version < search::SCHEMA_VERSION {
+        if schema_version < search::INDEX_VERSION {
             connection.execute_batch(include_str!("schema.sql"))?;
         }
         if schema_version < 2 {
@@ -92,16 +93,23 @@ impl Store {
                 CREATE INDEX messages_account_pins ON messages(account_id,pinned DESC,timestamp DESC,id);
                 PRAGMA user_version=3; COMMIT;")?;
         }
-        if schema_version < search::SCHEMA_VERSION {
+        if schema_version < SCHEMA_VERSION {
             let tx = rusqlite::Transaction::new_unchecked(
                 &connection,
                 rusqlite::TransactionBehavior::Immediate,
             )?;
             let current: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-            if current < search::SCHEMA_VERSION {
+            if current < search::INDEX_VERSION {
                 tx.execute_batch(include_str!("search-schema.sql"))?;
-                tx.pragma_update(None, "user_version", search::SCHEMA_VERSION)?;
             }
+            let has_hold: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name='keep_unread')", [], |r|r.get(0))?;
+            if !has_hold {
+                tx.execute(
+                    "ALTER TABLE messages ADD COLUMN keep_unread INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )?;
+            }
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }
         Ok(Self { connection })
@@ -162,7 +170,7 @@ impl Store {
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
              ON CONFLICT(id) DO UPDATE SET sender=excluded.sender,sender_address=excluded.sender_address,
              recipient=excluded.recipient,subject=excluded.subject,preview=excluded.preview,
-             timestamp=excluded.timestamp,unread=excluded.unread,starred=excluded.starred,
+             timestamp=excluded.timestamp,unread=CASE WHEN messages.keep_unread=1 THEN 1 ELSE excluded.unread END,starred=excluded.starred,
              has_attachments=excluded.has_attachments,text=COALESCE(excluded.text,messages.text),
              html=COALESCE(excluded.html,messages.html)",
             params![message.id,message.account_id,message.remote_id,message.sender,
@@ -237,7 +245,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT m.id,m.account_id,m.remote_id,m.sender,m.sender_address,m.recipient,
-            m.subject,m.preview,m.timestamp,m.unread,m.starred,m.has_attachments,NULL,NULL,m.pinned
+            m.subject,m.preview,m.timestamp,m.unread,m.starred,m.has_attachments,NULL,NULL,m.pinned,m.keep_unread
             FROM messages m {join} WHERE {account_filter} AND {folder_filter}
             {search} ORDER BY m.pinned DESC,m.timestamp DESC,m.id LIMIT ?3 OFFSET ?4"
         );
@@ -257,7 +265,7 @@ impl Store {
 
     pub(crate) fn message(&self, id: &str) -> Result<Message> {
         Ok(self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,
-            subject,preview,timestamp,unread,starred,has_attachments,text,html,pinned FROM messages WHERE id=?1",
+            subject,preview,timestamp,unread,starred,has_attachments,text,html,pinned,keep_unread FROM messages WHERE id=?1",
             [id], Self::read_row)?)
     }
 
@@ -271,6 +279,7 @@ impl Store {
 
     fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         Ok(Message {
+            keep_unread: row.get(15)?,
             pinned: row.get(14)?,
             reply: None,
             id: row.get(0)?,
@@ -308,6 +317,148 @@ mod tests {
                 provider: Provider::Local,
             })
             .unwrap();
+    }
+
+    #[test]
+    fn held_unread_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cache.sqlite");
+        let path = file.to_str().unwrap();
+        let store = Store::open(path).unwrap();
+        account(&store, "a");
+        account(&store, "b");
+        let message = mail("a");
+        let other = mail("b");
+        store.save(&message, Folder::Inbox).unwrap();
+        store.save(&other, Folder::Inbox).unwrap();
+        store
+            .queue_read("keep-1", message.clone(), ReadChoice::KeepUnread)
+            .unwrap();
+        assert!(store.action_message(&message.id).unwrap().keep_unread);
+        assert!(
+            store
+                .next_mail_work(MailWorkKind::Action)
+                .unwrap()
+                .is_none()
+        );
+        drop(store);
+        let store = Store::open(path).unwrap();
+        // A stale timer snapshot cannot override a committed explicit hold.
+        store
+            .queue_read("auto-1", message.clone(), ReadChoice::Automatic)
+            .unwrap();
+        let mut remote = message.clone();
+        remote.unread = false;
+        store.save(&remote, Folder::Inbox).unwrap();
+        assert!(store.message(&message.id).unwrap().unread);
+        assert!(!store.message(&other.id).unwrap().keep_unread);
+        store
+            .queue_read("read-1", message.clone(), ReadChoice::Read)
+            .unwrap();
+        let saved = store.action_message(&message.id).unwrap();
+        assert!(!saved.keep_unread && !saved.unread && saved.text.is_none());
+        assert!(
+            store
+                .next_mail_work(MailWorkKind::Action)
+                .unwrap()
+                .is_some()
+        );
+        // Old queued JSON remains readable after the DTO gains the local field.
+        let mut legacy = serde_json::to_value(message).unwrap();
+        legacy.as_object_mut().unwrap().remove("keep_unread");
+        assert!(
+            !serde_json::from_value::<Message>(legacy)
+                .unwrap()
+                .keep_unread
+        );
+    }
+
+    #[test]
+    fn provider_refresh_keeps_hold() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .save_account(&Account {
+                id: "a".into(),
+                email: "a@example.test".into(),
+                provider: Provider::Gmail,
+            })
+            .unwrap();
+        let mut message = mail("a");
+        store.save(&message, Folder::Inbox).unwrap();
+        store
+            .queue_read("keep-1", message.clone(), ReadChoice::KeepUnread)
+            .unwrap();
+        store.ensure_job("a", JobKind::RecentMail, "", 0).unwrap();
+        let job = SyncJob {
+            account_id: "a".into(),
+            kind: JobKind::RecentMail,
+            resource: String::new(),
+            window: 0,
+            state: serde_json::json!({}),
+            failures: 0,
+        };
+        message.unread = false;
+        store
+            .apply_mail(
+                &job,
+                &[(message.clone(), vec!["label:INBOX".into()])],
+                &[],
+                &serde_json::json!({}),
+                60,
+            )
+            .unwrap();
+        let saved = store.message(&message.id).unwrap();
+        assert!(saved.unread && saved.keep_unread);
+        let membership: bool = store.connection.query_row("SELECT EXISTS(SELECT 1 FROM mail_membership WHERE account_id='a' AND remote_id=?1 AND folder_id='label:UNREAD')", [&message.remote_id], |r|r.get(0)).unwrap();
+        assert!(membership);
+        store.queue_read("read-1", saved, ReadChoice::Read).unwrap();
+        // In-flight conflicts roll back the local hold together with the action.
+        store
+            .claim_mail_work(MailWorkKind::Action, "read-1")
+            .unwrap();
+        assert!(
+            store
+                .queue_read("keep-2", message.clone(), ReadChoice::KeepUnread)
+                .is_err()
+        );
+        assert!(!store.message(&message.id).unwrap().keep_unread);
+    }
+
+    #[test]
+    fn unread_migration_keeps_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cache.sqlite");
+        let path = file.to_str().unwrap();
+        let store = Store::open(path).unwrap();
+        account(&store, "a");
+        let message = mail("a");
+        store.save(&message, Folder::Inbox).unwrap();
+        let schema = |store: &Store| -> Vec<(String, i64, Option<String>)> {
+            store.connection.prepare("SELECT name,rootpage,sql FROM sqlite_master WHERE name LIKE 'message_search%' ORDER BY name").unwrap()
+                .query_map([], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        };
+        let before = schema(&store);
+        store
+            .connection
+            .execute_batch("ALTER TABLE messages DROP COLUMN keep_unread; PRAGMA user_version=5;")
+            .unwrap();
+        drop(store);
+        let store = Store::open(path).unwrap();
+        assert_eq!(schema(&store), before);
+        let saved = store.message(&message.id).unwrap();
+        assert!(!saved.keep_unread && saved.text == message.text);
+        assert_eq!(
+            store
+                .list(Some("a"), Folder::Inbox, "engine", 0, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        let version: i64 = store
+            .connection
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]

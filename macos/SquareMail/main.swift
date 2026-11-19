@@ -151,6 +151,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 catch { fputs("MEDIA FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
             }
             if arguments.contains("--calendar") { try? await controller.checkCalendar(.preview) }
+            if let index = arguments.firstIndex(of: "--check-read-hold") {
+                do {
+                    guard arguments.indices.contains(index + 1), let probe = ReadHoldProbe(rawValue: arguments[index + 1]) else { throw MailError(message: "Expected a read-hold probe") }
+                    try await controller.checkReadHold(probe); NSApp.terminate(nil)
+                } catch { fputs("READ HOLD FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
             if arguments.contains("--check-mail-actions") {
                 do { try await controller.checkMailActions(); NSApp.terminate(nil) }
                 catch { fputs("MAIL ACTIONS FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }

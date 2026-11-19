@@ -6,11 +6,11 @@
 | INV-MAIL-draft-revision | Bounded drafts retain their text across restart; stale revisions cannot overwrite or queue them. | SQLite draft/outbox contracts |
 | INV-MAIL-send-uncertain | An interrupted or ambiguously accepted send cannot be automatically retried. | synthetic HTTP send and crash-lease contracts |
 | INV-MAIL-reply-metadata | Reply-all respects Reply-To, removes self/duplicates and excludes BCC; provider threading is preserved. | MIME/provider fixtures and native compose probe |
-| INV-MAIL-read-dwell | A ready unread body in the active visible reader starts one cancellable2second delay. Keep/manual-unread suppresses that selection; hidden/loading/other views cancel. Local queued writes preserve body/scroll and never auto-advance the Unread list. | timer lifetime/selection contracts and hidden offline dwell/override/refresh probe |
+| INV-MAIL-read-dwell | A ready unread body in the active visible reader starts one cancellable2second delay. Keep/manual-unread persists per email until explicit Mark read, including across restarts and provider refreshes; hidden/loading/other views cancel. Local queued writes preserve body/scroll and never auto-advance the Unread list. | timer lifetime/selection contracts and hidden offline dwell/override/refresh probe |
 | INV-MAIL-pin | Pins are local and indexed; provider header updates retain them. | SQLite pin/query contract |
 | INV-MAIL-spacing | Compact spacing removes long invisible layout padding while preserving structured indentation, short language joiners, quotes and separators; stored mail stays unchanged. | MessageText and native reader probes |
 | INV-MAIL-readable-links | Shortened links retain full original targets for copy/click, make no hover request and reject active/local schemes. | MessageText and private-pasteboard native probes |
-| INV-CALENDAR-clock | Clock replacement cancels its previous task and does not change the selected date; leaving Calendar stops the clock. | hidden native calendar/action probes |
+| INV-CALENDAR-clock | Clock replacement cancels its previous task and does not change the selected date; leaving Calendar stops the clock. The right agenda shows a nonselectable Now divider only for today and progress for ongoing events without losing event selection. | hidden native calendar/action probes |
 | INV-MAIL-account-isolation | Provider IDs collide safely across accounts. | store contract tests |
 | INV-MAIL-restart | Imported mail and full-text results survive reopening. | store contract tests |
 | INV-MAIL-upsert | Header refresh preserves an already cached body. | store contract tests |

@@ -89,6 +89,8 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let mode: MailboxMode
     private var hiddenSources: Set<String>
     private var agendaItems: [SampleEvent] = []
+    private var nowRow: Int?
+    private var agendaNow = Date()
     private let dateFormat = DateFormatter()
     private let timeFormat = DateFormatter()
     private let captionFormat = DateFormatter()
@@ -147,7 +149,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         grid.onSelectDate = { [weak self] date in self?.selectDate(date) }
         grid.onSelectItem = { [weak self] id in
             guard let self, let index = self.agendaItems.firstIndex(where: { $0.mark.id == id }) else { return }
-            self.agenda.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            self.agenda.selectRowIndexes(IndexSet(integer: self.agendaRow(index)), byExtendingSelection: false)
         }
         newEvent.onPress = { [weak self] in guard let self else { return }; onNew?(grid.date) }
         editEvent.onPress = { [weak self] in self?.editSelected() }
@@ -217,15 +219,15 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
 
     func setAgendaLayout(_ value: AgendaLayout) {
         guard value != agendaLayout else { return }
-        let selected = agendaItems.indices.contains(agenda.selectedRow) ? agendaItems[agenda.selectedRow].mark.id : nil
+        let selected = selectedEvent?.mark.id
         layingOut = true
         agendaLayout = value; split.isVertical = value == .right
         configureAgenda()
         layingOut = false
         needsLayout = true; layoutSubtreeIfNeeded()
         if let index = agendaItems.firstIndex(where: { $0.mark.id == selected }) {
-            agenda.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-            agenda.scrollRowToVisible(index)
+            agenda.selectRowIndexes(IndexSet(integer: agendaRow(index)), byExtendingSelection: false)
+            agenda.scrollRowToVisible(agendaRow(index))
         }
         onLayoutChange?(state)
     }
@@ -249,12 +251,13 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         setPeriod(.week); try WindowPresentation.snapshot(self, name: "calendar-week")
         setPeriod(.month); try WindowPresentation.snapshot(self, name: "calendar-month")
         try verifyAgendaLayout()
+        try verifyAgendaClock()
     }
     func verifyAgendaLayout() throws {
         guard WindowPresentation.isBackground else { throw MailError(message: "Use a hidden generated calendar") }
         let saved = state; let frame = self.frame
         let marks = grid.items.map(\.id); let selectedDate = grid.date
-        if !agendaItems.isEmpty { agenda.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
+        if !agendaItems.isEmpty { agenda.selectRowIndexes(IndexSet(integer: agendaRow(0)), byExtendingSelection: false) }
         let selected = agendaItems.first?.mark.id
         defer {
             belowRatio = saved.belowRatio; rightRatio = saved.rightRatio
@@ -276,11 +279,11 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
                           !dayCaption.frame.intersects(agendaActions.frame) else { throw MailError(message: "Agenda divider left stale or overlapping content") }
                     guard grid.date == selectedDate, grid.items.map(\.id) == marks, dateCallbacks == 0 else { throw MailError(message: "Agenda layout reloaded events or changed date") }
                     if let selected {
-                        guard agendaItems.indices.contains(agenda.selectedRow), agendaItems[agenda.selectedRow].mark.id == selected else { throw MailError(message: "Agenda layout lost the selected event") }
+                        guard selectedEvent?.mark.id == selected else { throw MailError(message: "Agenda layout lost the selected event") }
                     }
                     if orientation == .right {
                         guard agenda.tableColumns.count == 1, agenda.rowHeight == 65 else { throw MailError(message: "Right agenda lost its compact rows") }
-                        if !agendaItems.isEmpty, let cell = agenda.view(atColumn: 0, row: 0, makeIfNecessary: true) {
+                        if !agendaItems.isEmpty, let cell = agenda.view(atColumn: 0, row: agendaRow(0), makeIfNecessary: true) {
                             guard cell is AgendaSummaryCell else { throw MailError(message: "Right agenda has no reusable summary cell") }
                         }
                     }
@@ -292,7 +295,64 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
             try WindowPresentation.snapshot(self, name: "agenda-" + orientation.rawValue)
         }
     }
-    private func tickClock() { clock.stringValue = clockFormat.string(from: Date()); grid.needsDisplay = true; onClockTick?() }
+    private func verifyAgendaClock() throws {
+        guard WindowPresentation.isBackground else { throw MailError(message: "Use a hidden calendar fixture") }
+        let saved = state; let items = agendaItems
+        defer { grid.date = saved.date; agendaItems = items; setAgendaLayout(saved.agendaLayout); updateAgendaClock(Date()) }
+        grid.date = Date(); setAgendaLayout(.right)
+        let day = Calendar.current.startOfDay(for: grid.date)
+        let start = day.addingTimeInterval(12 * 3600)
+        let mark = ClassicCalendarMark(id: "clock-fixture", title: "Ongoing event", start: start, end: start.addingTimeInterval(3600), color: .blue, span: .timed)
+        agendaItems = [SampleEvent(key: nil, mark: mark, feed: nil, sourceKey: "clock", sourceName: "Fixture", location: "", notes: "")]
+        updateAgendaClock(start.addingTimeInterval(1800))
+        guard nowRow == 0, numberOfRows(in: agenda) == 2, eventProgress(agendaItems[0]) == 0.5,
+              !tableView(agenda, shouldSelectRow: 0) else { throw MailError(message: "Agenda clock lost time or event progress") }
+        agenda.selectRowIndexes(IndexSet(integer: agendaRow(0)), byExtendingSelection: false)
+        updateAgendaClock(start.addingTimeInterval(3600))
+        guard nowRow == 1, selectedEvent?.mark.id == mark.id, eventProgress(agendaItems[0]) == nil else { throw MailError(message: "Agenda clock rollover lost selection") }
+        updateAgendaClock(start.addingTimeInterval(1800))
+        needsLayout = true; layoutSubtreeIfNeeded()
+        try WindowPresentation.snapshot(self, name: "agenda-now")
+        setAgendaLayout(.below)
+        guard nowRow == nil, selectedEvent?.mark.id == mark.id else { throw MailError(message: "Agenda layout retained an invalid clock row") }
+        setAgendaLayout(.right); grid.date = day.addingTimeInterval(-86400); updateAgendaClock(start)
+        guard nowRow == nil else { throw MailError(message: "Agenda clock appeared on a different day") }
+    }
+    private func tickClock() {
+        let now = Date()
+        clock.stringValue = clockFormat.string(from: now)
+        updateAgendaClock(now)
+        grid.needsDisplay = true; onClockTick?()
+    }
+    private var selectedEvent: SampleEvent? {
+        eventIndex(agenda.selectedRow).map { agendaItems[$0] }
+    }
+    private func eventIndex(_ row: Int) -> Int? {
+        guard row >= 0, row != nowRow else { return nil }
+        let index = row - (nowRow.map { row > $0 ? 1 : 0 } ?? 0)
+        return agendaItems.indices.contains(index) ? index : nil
+    }
+    private func agendaRow(_ index: Int) -> Int {
+        index + (nowRow.map { index >= $0 ? 1 : 0 } ?? 0)
+    }
+    private func updateAgendaClock(_ now: Date) {
+        let selected = selectedEvent?.mark.id
+        let origin = agendaScroll.contentView.bounds.origin
+        agendaNow = now
+        nowRow = agendaLayout == .right && Calendar.current.isDate(grid.date, inSameDayAs: now)
+            ? agendaItems.firstIndex { $0.mark.span == .timed && $0.mark.end > now } ?? agendaItems.count : nil
+        agenda.reloadData(); agenda.deselectAll(nil)
+        if let index = agendaItems.firstIndex(where: { $0.mark.id == selected }) {
+            agenda.selectRowIndexes(IndexSet(integer: agendaRow(index)), byExtendingSelection: false)
+        }
+        agendaScroll.contentView.scroll(to: origin)
+        agendaScroll.reflectScrolledClipView(agendaScroll.contentView)
+    }
+    private func eventProgress(_ event: SampleEvent) -> Double? {
+        guard agendaLayout == .right, Calendar.current.isDate(grid.date, inSameDayAs: agendaNow),
+              event.mark.span == .timed, event.mark.start <= agendaNow, event.mark.end > agendaNow else { return nil }
+        return agendaNow.timeIntervalSince(event.mark.start) / event.mark.end.timeIntervalSince(event.mark.start)
+    }
     deinit { clockTask?.cancel() }
 
     func selectDate(_ date: Date) {
@@ -343,6 +403,8 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 
     private func refresh() {
+        let selected = selectedEvent?.mark.id
+        agenda.deselectAll(nil)
         let visible = visibleEvents()
         grid.items = visible.map(\.mark)
         captionFormat.dateFormat = grid.period == .month ? "MMMM yyyy" : "d MMMM yyyy"
@@ -356,7 +418,10 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         let start = calendar.startOfDay(for: grid.date)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!
         agendaItems = visible.filter { $0.mark.start < end && $0.mark.end > start }.sorted { $0.mark.start < $1.mark.start }
-        agenda.reloadData()
+        updateAgendaClock(Date())
+        if let index = agendaItems.firstIndex(where: { $0.mark.id == selected }) {
+            agenda.selectRowIndexes(IndexSet(integer: agendaRow(index)), byExtendingSelection: false)
+        }
         detail.stringValue = agendaItems.isEmpty ? mode == .demo ? "No sample events on this day." : "No cached events on this day. Sync while online to download this month." : "Select an event for details."
     }
 
@@ -391,10 +456,12 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         agenda.rowHeight = agendaLayout == .right ? 65 : 25
         agenda.headerView = agendaLayout == .right ? nil : agendaHeader
         agendaScroll.hasHorizontalScroller = agendaLayout == .below
-        agenda.reloadData()
+        updateAgendaClock(Date())
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { agendaItems.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { agendaItems.count + (nowRow == nil ? 0 : 1) }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { row == nowRow ? 24 : agenda.rowHeight }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { eventIndex(row) != nil }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let view = (tableView.makeView(withIdentifier: Self.rowID, owner: self) as? ClassicRow) ?? ClassicRow()
@@ -403,13 +470,19 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard agendaItems.indices.contains(row), let column = tableColumn else { return nil }
-        let event = agendaItems[row]
+        if row == nowRow {
+            let id = NSUserInterfaceItemIdentifier("agenda-now")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? AgendaNowCell) ?? AgendaNowCell()
+            cell.identifier = id; cell.configure("Now " + timeFormat.string(from: agendaNow))
+            return cell
+        }
+        guard let index = eventIndex(row), let column = tableColumn else { return nil }
+        let event = agendaItems[index]
         let time = event.mark.span == .allDay ? "All day" : timeFormat.string(from: event.mark.start) + " - " + timeFormat.string(from: event.mark.end)
         if agendaLayout == .right {
             let cell = (tableView.makeView(withIdentifier: column.identifier, owner: self) as? AgendaSummaryCell) ?? AgendaSummaryCell()
             cell.identifier = column.identifier
-            cell.configure(event.mark.title, time: time, source: event.sourceName + (event.location.isEmpty ? "" : " · " + event.location))
+            cell.configure(event.mark.title, time: time, source: event.sourceName + (event.location.isEmpty ? "" : " · " + event.location), progress: eventProgress(event))
             return cell
         }
         let cell = (tableView.makeView(withIdentifier: column.identifier, owner: self) as? ClassicTableCell) ?? ClassicTableCell()
@@ -424,13 +497,13 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        editEvent.isEnabled = mode == .live && agendaItems.indices.contains(agenda.selectedRow)
-        guard agendaItems.indices.contains(agenda.selectedRow) else { return }
-        detail.stringValue = agendaItems[agenda.selectedRow].notes
+        editEvent.isEnabled = mode == .live && selectedEvent?.key != nil
+        guard let event = selectedEvent else { return }
+        detail.stringValue = event.notes
     }
 
     @objc private func editSelected() {
-        guard agendaItems.indices.contains(agenda.selectedRow), let key = agendaItems[agenda.selectedRow].key else { return }
+        guard let key = selectedEvent?.key else { return }
         onEdit?(key)
     }
 
@@ -641,6 +714,7 @@ private final class AgendaSummaryCell: NSTableCellView {
     private let time = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let source = NSTextField(labelWithString: "")
+    private var progress: Double?
     override var isFlipped: Bool { true }
     override var backgroundStyle: NSView.BackgroundStyle { didSet { updateColors() } }
     override init(frame: NSRect) {
@@ -650,10 +724,19 @@ private final class AgendaSummaryCell: NSTableCellView {
         updateColors()
     }
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
-    func configure(_ value: String, time: String, source: String) {
+    func configure(_ value: String, time: String, source: String, progress: Double?) {
+        self.progress = progress; needsDisplay = true
         title.stringValue = value; self.time.stringValue = time; self.source.stringValue = source
         toolTip = [time, value, source].joined(separator: " · ")
         setAccessibilityLabel(toolTip); needsLayout = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let progress else { return }
+        ClassicTheme.grid.setFill()
+        NSRect(x: 8, y: bounds.height - 3, width: max(0, bounds.width - 16), height: 2).fill()
+        ClassicTheme.timeMarker.setFill()
+        NSRect(x: 8, y: bounds.height - 3, width: max(0, bounds.width - 16) * progress, height: 2).fill()
     }
     private func updateColors() {
         title.textColor = backgroundStyle == .emphasized ? .white : ClassicTheme.ink
@@ -664,5 +747,25 @@ private final class AgendaSummaryCell: NSTableCellView {
         for (field, y, height) in [(time, 5.0, 16.0), (title, 23.0, 19.0), (source, 45.0, 16.0)] {
             field.frame = NSRect(x: 8, y: y, width: max(0, bounds.width - 16), height: height)
         }
+    }
+}
+
+private final class AgendaNowCell: NSTableCellView {
+    private let label = NSTextField(labelWithString: "")
+    override var isFlipped: Bool { true }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        label.font = ClassicTheme.font(10, weight: .bold)
+        label.textColor = ClassicTheme.timeMarker; addSubview(label)
+    }
+    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
+    func configure(_ text: String) {
+        label.stringValue = text; setAccessibilityLabel(text); needsDisplay = true
+    }
+    override func layout() { super.layout(); label.frame = NSRect(x: 8, y: 4, width: 76, height: 17) }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        ClassicTheme.timeMarker.setFill()
+        NSRect(x: 86, y: 12, width: max(0, bounds.width - 94), height: 2).fill()
     }
 }

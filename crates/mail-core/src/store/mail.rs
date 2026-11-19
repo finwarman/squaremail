@@ -6,10 +6,14 @@ const ACTION_LIMIT: i64 = 100;
 const DRAFT_LIMIT: i64 = 100;
 const OUTBOX_LIMIT: i64 = 50;
 const RECEIPT_LIMIT: i64 = 200;
+enum ReadWrite {
+    Manual,
+    Automatic,
+}
 
 impl Store {
     pub(crate) fn action_message(&self, id: &str) -> Result<Message> {
-        self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,subject,preview,timestamp,unread,starred,has_attachments,NULL,NULL,pinned FROM messages WHERE id=?1",[id],Self::read_row).optional()?.ok_or_else(|| "This message changed during sync. Refresh the list and select it again.".into())
+        self.connection.query_row("SELECT id,account_id,remote_id,sender,sender_address,recipient,subject,preview,timestamp,unread,starred,has_attachments,NULL,NULL,pinned,keep_unread FROM messages WHERE id=?1",[id],Self::read_row).optional()?.ok_or_else(|| "This message changed during sync. Refresh the list and select it again.".into())
     }
     pub(crate) fn reply_headers(&self, id: &str) -> Result<Option<ReplyHeaders>> {
         let data: Option<String> = self
@@ -44,6 +48,28 @@ impl Store {
         message: Message,
         action: MailAction,
     ) -> Result<()> {
+        self.queue_mail_mode(operation, message, action, ReadWrite::Manual)
+    }
+    pub(crate) fn queue_read(
+        &self,
+        operation: &str,
+        message: Message,
+        choice: ReadChoice,
+    ) -> Result<()> {
+        let (unread, mode) = match choice {
+            ReadChoice::Automatic => (false, ReadWrite::Automatic),
+            ReadChoice::Read => (false, ReadWrite::Manual),
+            ReadChoice::KeepUnread => (true, ReadWrite::Manual),
+        };
+        self.queue_mail_mode(operation, message, MailAction::Read { unread }, mode)
+    }
+    fn queue_mail_mode(
+        &self,
+        operation: &str,
+        message: Message,
+        action: MailAction,
+        mode: ReadWrite,
+    ) -> Result<()> {
         let tx = self.write_tx()?;
         let existing: Option<String> = tx
             .query_row(
@@ -58,6 +84,27 @@ impl Store {
                 return Err("Operation ID belongs to a different mail change".into());
             }
             return Ok(());
+        }
+        if let MailAction::Read { unread } = action {
+            let (held, current): (bool, bool) = tx.query_row(
+                "SELECT keep_unread,unread FROM messages WHERE id=?1",
+                [&message.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if matches!(mode, ReadWrite::Automatic) && (held || !current) {
+                return Ok(());
+            }
+            if matches!(mode, ReadWrite::Manual) {
+                tx.execute(
+                    "UPDATE messages SET keep_unread=?2 WHERE id=?1",
+                    params![message.id, unread],
+                )?;
+                let pending_read: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions WHERE message_id=?1 AND state<>'done' AND json_extract(data,'$.action.kind')='read')", [&message.id], |r|r.get(0))?;
+                if current == unread && !pending_read {
+                    tx.commit()?;
+                    return Ok(());
+                }
+            }
         }
         let pending:Option<(String,String,i64)>=tx.query_row("SELECT data,state,attempts FROM mail_actions WHERE message_id=?1 AND state<>'done' AND CASE WHEN json_extract(data,'$.action.kind') IN('read','flag') THEN json_extract(data,'$.action.kind') ELSE 'placement' END=?2 LIMIT 1",params![message.id,action.lane().as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
         if let Some((data, state, attempts)) = pending {
@@ -375,16 +422,25 @@ fn snapshot(db: &Connection, message: &Message) -> Result<MailSnapshot> {
             .collect::<rusqlite::Result<_>>()?,
     })
 }
+fn read_membership(db: &Connection, message: &Message) -> Result<()> {
+    let unread: bool = db.query_row(
+        "SELECT unread FROM messages WHERE id=?1",
+        [&message.id],
+        |r| r.get(0),
+    )?;
+    flag_membership(db, message, "label:UNREAD", unread.into())
+}
+
 fn restore_action(db: &Connection, work: &QueuedMail) -> Result<()> {
     let m = &work.message;
     let before = &work.before;
     match work.action {
         MailAction::Read { .. } => {
             db.execute(
-                "UPDATE messages SET unread=?2 WHERE id=?1",
+                "UPDATE messages SET unread=CASE WHEN keep_unread=1 THEN 1 ELSE ?2 END WHERE id=?1",
                 params![m.id, before.unread],
             )?;
-            flag_membership(db, m, "label:UNREAD", (before.unread).into())?;
+            read_membership(db, m)?;
         }
         MailAction::Flag { .. } => {
             db.execute(
@@ -450,10 +506,10 @@ fn project(db: &Connection, work: &QueuedMail) -> Result<()> {
     match action {
         MailAction::Read { unread } => {
             db.execute(
-                "UPDATE messages SET unread=?2 WHERE id=?1",
+                "UPDATE messages SET unread=CASE WHEN keep_unread=1 THEN 1 ELSE ?2 END WHERE id=?1",
                 params![m.id, unread],
             )?;
-            flag_membership(db, m, "label:UNREAD", (*unread).into())?;
+            read_membership(db, m)?;
             return Ok(());
         }
         MailAction::Flag { flagged } => {

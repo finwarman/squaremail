@@ -67,6 +67,11 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
             store.pin_mail(&id, pinned.into())?;
             Ok(json!({}))
         }
+        Command::ReadMail {
+            operation,
+            id,
+            choice,
+        } => mailops::read_mail(&store, &operation, &id, choice),
         Command::Compose {
             account,
             original,

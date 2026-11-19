@@ -1,9 +1,11 @@
 import Foundation
 
+enum ReadHoldProbe: String { case create, reopen }
+
 enum AutomaticRead: String { case afterDelay, manual }
 enum ReadExposure { case viewing, hidden }
 enum UnreadHold { case keep, automatic }
-enum MailReadState { case read, unread }
+enum MailReadState: String { case read, unread = "keep_unread", automatic }
 
 @MainActor
 final class ReadDwell {
@@ -69,14 +71,11 @@ final class ReadDwell {
 }
 
 extension Mail {
-    func applying(_ state: MailReadState) -> Mail {
-        copyRead(state, body: self)
-    }
     func keepingBody(_ body: Mail) -> Mail {
         copyRead(unread ? .unread : .read, body: body)
     }
     private func copyRead(_ state: MailReadState, body: Mail) -> Mail {
-        Mail(id: id, pinned: pinned, accountId: accountId, remoteId: remoteId, sender: sender, senderAddress: senderAddress,
+        Mail(id: id, pinned: pinned, keepUnread: keepUnread, accountId: accountId, remoteId: remoteId, sender: sender, senderAddress: senderAddress,
              recipient: recipient, subject: subject, preview: preview, timestamp: timestamp, unread: state == .unread,
              starred: starred, hasAttachments: hasAttachments, text: body.text, html: body.html)
     }

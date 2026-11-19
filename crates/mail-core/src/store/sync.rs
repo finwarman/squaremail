@@ -360,6 +360,9 @@ impl Store {
                     params![job.account_id, job.resource, message.remote_id],
                 )?;
             }
+            if gmail {
+                tx.execute("INSERT OR IGNORE INTO mail_membership(account_id,remote_id,folder_id) SELECT account_id,remote_id,'label:UNREAD' FROM messages WHERE id=?1 AND keep_unread=1", [&message.id])?;
+            }
             self.rebase_mail(&message.id)?;
             super::notices::observe_mail(
                 &tx,
@@ -929,6 +932,7 @@ mod qualification {
                 let body =
                     (i >= 9900).then(|| format!("Offline message for {key}. ") + &"x".repeat(8192));
                 let message = Message {
+                    keep_unread: false,
                     pinned: false,
                     reply: None,
                     id,

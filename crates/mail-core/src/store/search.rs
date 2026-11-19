@@ -5,7 +5,7 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 #[cfg(test)]
 mod tests;
 
-pub(super) const SCHEMA_VERSION: i64 = 5;
+pub(super) const INDEX_VERSION: i64 = 5;
 const QUERY_BYTES: usize = 1024;
 const QUERY_PARTS: usize = 12;
 const FUZZY_WORDS: usize = 6;

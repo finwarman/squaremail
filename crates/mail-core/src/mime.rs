@@ -41,6 +41,7 @@ pub(crate) fn parse(raw: &[u8], account: &str, remote: &str) -> Result<Message> 
         .map(|v| clean_html(&v))
         .unwrap_or_default();
     Ok(Message {
+        keep_unread: false,
         pinned: false,
         reply: Some(reply_headers(raw, "")?),
         id: message_id(account, remote),

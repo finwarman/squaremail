@@ -79,6 +79,8 @@ pub(crate) struct Account {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Message {
     #[serde(default)]
+    pub(crate) keep_unread: bool,
+    #[serde(default)]
     pub(crate) pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reply: Option<ReplyHeaders>,
@@ -105,6 +107,14 @@ pub(crate) enum BodyMode {
     Fetch,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReadChoice {
+    Automatic,
+    Read,
+    KeepUnread,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum Command {
@@ -123,6 +133,11 @@ pub(crate) enum Command {
     PinMail {
         id: String,
         pinned: bool,
+    },
+    ReadMail {
+        operation: String,
+        id: String,
+        choice: ReadChoice,
     },
     Compose {
         account: String,

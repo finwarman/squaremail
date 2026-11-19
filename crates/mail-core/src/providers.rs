@@ -178,6 +178,7 @@ fn gmail_message(value: &Value, account: &Account) -> Result<Message> {
     let from = header("From");
     let (sender, address) = split_address(&from);
     Ok(Message {
+        keep_unread: false,
         pinned: false,
         reply: Some(writes::gmail_headers(value)?),
         id: mime::message_id(&account.id, remote),
@@ -207,6 +208,7 @@ fn outlook_message(value: &Value, account: &Account) -> Result<Message> {
         .ok_or("Provider returned a message without an ID")?;
     let from = &value["from"]["emailAddress"];
     Ok(Message {
+        keep_unread: false,
         pinned: false,
         reply: value["internetMessageId"]
             .as_str()

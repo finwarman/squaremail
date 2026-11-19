@@ -89,6 +89,18 @@ pub(crate) fn queue(
     store.queue_mail(operation, message, action)?;
     Ok(json!({}))
 }
+pub(crate) fn read_mail(
+    store: &Store,
+    operation: &str,
+    id: &str,
+    choice: ReadChoice,
+) -> Result<Value> {
+    valid_id(operation)?;
+    let message = store.action_message(id)?;
+    account(store, &message.account_id)?;
+    store.queue_read(operation, message, choice)?;
+    Ok(serde_json::to_value(store.action_message(id)?)?)
+}
 pub(crate) fn compose(
     store: &Store,
     account_id: &str,

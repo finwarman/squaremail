@@ -37,6 +37,7 @@ struct Account: Decodable {
 struct Mail: Decodable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, pinned
+        case keepUnread = "keep_unread"
         case accountId = "account_id"
         case remoteId = "remote_id"
         case sender
@@ -54,6 +55,7 @@ struct Mail: Decodable, Equatable {
 
     let id: String
     let pinned: Bool?
+    let keepUnread: Bool?
     let accountId: String
     let remoteId: String
     let sender: String
@@ -189,6 +191,7 @@ enum CoreCommand: String {
     case compose
     case moveFolders = "move_folders"
     case queueMail = "queue_mail"
+    case readMail = "read_mail"
     case pinMail = "pin_mail"
     case saveMailDraft = "save_mail_draft"
     case mailDraft = "mail_draft"

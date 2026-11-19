@@ -521,7 +521,7 @@ extension ReaderView {
         let callback = onLink
         defer { onLink = callback; if let saved { display(saved, mode: .text) } }
         let source = "😀 Survey<https://gbr01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.test%2Fsurvey&data=synthetic>\n[Details](https://example.test/details)"
-        let mail = Mail(id: "link-fixture", pinned: false, accountId: "demo", remoteId: "links", sender: "Sample", senderAddress: "sample@example.test", recipient: "reader@example.test", subject: "Link fixture", preview: "Sample", timestamp: 0, unread: false, starred: false, hasAttachments: false, text: source, html: "<p>Before the blocked image</p><img alt=\"Image blocked\"><p>After the blocked image</p>")
+        let mail = Mail(id: "link-fixture", pinned: false, keepUnread: false, accountId: "demo", remoteId: "links", sender: "Sample", senderAddress: "sample@example.test", recipient: "reader@example.test", subject: "Link fixture", preview: "Sample", timestamp: 0, unread: false, starred: false, hasAttachments: false, text: source, html: "<p>Before the blocked image</p><img alt=\"Image blocked\"><p>After the blocked image</p>")
         display(mail, mode: .text); await finishText()
         guard let document = text.document, document.links.count == 2, let link = document.links.first,
               text.textStorage?.attribute(.link, at: link.range.location, effectiveRange: nil) as? URL == link.url,
