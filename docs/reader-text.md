@@ -15,3 +15,9 @@ The supplied private examples were inspected as data, not instructions. Regressi
 Plain text, HTML, Compact spacing and Readable links use visible page/spacing/link icon toggles, with pressed states, accessibility labels and tooltips. Text/HTML stay out of More; ⌘1/⌘2 still work. Narrow panes wrap the compact controls without overlapping image/attachment actions.
 
 Message-row previews collapse whitespace and show nonempty lines as one line separated by small muted pipes. Processing uses at most8,192 source characters and512 output characters. Only the preview presentation changes; stored mail and indexed text stay intact.
+
+## Header and preview entities
+
+Subjects and sender display names in both row layouts and the reader header decode recognized semicolon-terminated named/numeric character references once. Cached previews decode before whitespace normalization and separator indexing. This includes `&amp;`, `&#39;`, hexadecimal Unicode references, accents and typographic punctuation. Unknown, incomplete and invalid references remain literal. Double encoding is not recursively expanded. Input is bounded to8KiB, with a short entity-token limit and binary lookup over one static named-reference table. Ordinary unescaped text uses a no-copy fast path.
+
+This is text formatting, without an HTML importer, WebKit, requests or per-message caches. Stored fields, search index, sender addresses, recipients, body text, MIME, reply metadata and link targets remain unchanged. Entity data comes from [WHATWG named references](https://html.spec.whatwg.org/entities.json), with its source hash recorded in the generated table. Native generated-mail checks cover row labels and the reader heading.

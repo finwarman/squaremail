@@ -195,10 +195,10 @@ final class MessageHeader: NSView {
             ClassicTheme.text("Reading pane", in: NSRect(x: 16, y: 15, width: 500, height: 24), size: 15, weight: .bold)
             return
         }
-        ClassicTheme.text(message.subject, in: NSRect(x: 16, y: 12, width: bounds.width - 30, height: 25), size: 17, weight: .bold)
+        ClassicTheme.text(message.displaySubject, in: NSRect(x: 16, y: 12, width: bounds.width - 30, height: 25), size: 17, weight: .bold)
         ClassicTheme.text("From:", in: NSRect(x: 16, y: 45, width: 42, height: 18), size: 11, color: ClassicTheme.muted)
         let narrow = bounds.width < 600
-        ClassicTheme.text("\(message.sender) <\(message.senderAddress)>", in: NSRect(x: 61, y: 43, width: bounds.width - (narrow ? 77 : 290), height: 20), size: 12)
+        ClassicTheme.text(message.displayFrom, in: NSRect(x: 61, y: 43, width: bounds.width - (narrow ? 77 : 290), height: 20), size: 12)
         ClassicTheme.text("To:", in: NSRect(x: 16, y: 70, width: 42, height: 18), size: 11, color: ClassicTheme.muted)
         ClassicTheme.text(message.recipient, in: NSRect(x: 61, y: 68, width: bounds.width - (narrow ? 77 : 290), height: 20), size: 12)
         ClassicTheme.text(date, in: NSRect(x: narrow ? 16 : bounds.width - 255, y: narrow ? 96 : 44, width: narrow ? bounds.width - 32 : 236, height: 18), size: 11, color: ClassicTheme.muted, alignment: narrow ? .left : .right)

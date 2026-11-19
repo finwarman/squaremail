@@ -27,14 +27,14 @@ final class MessageSummaryCell: NSTableCellView {
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
     func configure(_ mail: Mail, date value: String) {
-        sender.stringValue = mail.sender.isEmpty ? mail.senderAddress : mail.sender
+        sender.stringValue = mail.displaySender
         sender.font = ClassicTheme.font(11, weight: mail.unread ? .bold : .regular)
-        subject.stringValue = (mail.pinned == true ? "Pinned · " : "") + mail.subject
+        subject.stringValue = (mail.pinned == true ? "Pinned · " : "") + mail.displaySubject
         subject.font = ClassicTheme.font(12, weight: mail.unread ? .bold : .regular)
         snippet = MessagePreview.render(mail.preview)
         date.stringValue = value
         icon = mail.starred ? .star : (mail.hasAttachments ? .attach : (mail.unread ? .mail : nil))
-        setAccessibilityLabel([sender.stringValue, value, mail.subject, snippet.text].joined(separator: ". "))
+        setAccessibilityLabel([sender.stringValue, value, mail.displaySubject, snippet.text].joined(separator: ". "))
         updateColors()
         needsLayout = true
         needsDisplay = true

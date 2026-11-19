@@ -19,6 +19,7 @@
 | INV-SEARCH-index | Schema4 indexes existing sender addresses atomically; header/body updates and deletions keep the index current without losing drafts or queued work. | legacy migration/index lifecycle contracts |
 | INV-SEARCH-bounds | Input, dictionary probes and expansions are bounded; fuzzy search does not load body text into application memory. | bound/query-plan contracts and100k release benchmark |
 | INV-READER-controls | Rendering/spacing/link toggles remain visible as labelled icon controls, with tooltips and current pressed/disabled states. | hidden layout/control probes |
+| INV-READER-header-entities | Displayed subjects, sender names and previews decode recognized entities once, without parsing HTML or changing raw mail, addresses or targets. Work is bounded. | MessageText contracts and hidden header/row probe |
 | INV-READER-preview | Row previews flatten newlines with separators without changing stored content. | MessageText contracts and native renders |
 | INV-MAIL-plain-text | MIME text and HTML alternatives remain separate. | MIME tests |
 | INV-MAIL-html-passive | Cached HTML excludes scripts, forms and remote resources. | HTML tests and native policy self-test |
