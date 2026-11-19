@@ -45,15 +45,10 @@ impl Store {
     }
 
     pub(crate) fn backfill_counts(&self, account: &str) -> Result<(i64, i64)> {
-        let total: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM messages WHERE account_id=?1",
-            [account],
-            |r| r.get(0),
-        )?;
-        let missing: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM messages WHERE account_id=?1 AND text IS NULL",
-            [account],
-            |r| r.get(0),
+        // Both counts share one read snapshot, including during header imports.
+        let (total, missing): (i64, i64) = self.connection.query_row(
+            "SELECT COUNT(*),(SELECT COUNT(*) FROM messages WHERE account_id=?1 AND text IS NULL) FROM messages WHERE account_id=?1",
+            [account], |r| Ok((r.get(0)?,r.get(1)?)),
         )?;
         Ok((total - missing, total))
     }
