@@ -26,7 +26,7 @@ struct ClassicPalette {
     let captionBlend: CGFloat
 }
 enum SharedClassicTokens {
-    static let digest = "f7964014afad2cb0636bdacf6559d8f7bc1468e259d02221bc808d7c3a2afbbd"
+    static let digest = "c9d729477af79c5a3b558137b788005934512320a9608909f2e3426f7315f0b7"
     static let classic = ClassicPalette(
         face: ClassicTheme.color(0xD4D0C8),
         light: ClassicTheme.color(0xFFFFFF),
@@ -90,18 +90,18 @@ enum SharedClassicTokens {
     static let captionGradientStart: CGFloat = 15
     static let captionGradientMiddle: CGFloat = 70
     static let captionGradientBlend: CGFloat = 40
-    static let captionGlitterPeriod: CGFloat = 160
+    static let captionGlitterPeriod: CGFloat = 128
     static let captionGlitterOpacity: CGFloat = 18
     static let captionGlitter: [(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, alpha: CGFloat)] = [
-        (22, 1, 1, 5, 70),
-        (20, 3, 5, 1, 70),
-        (22, 3, 1, 1, 100),
-        (106, 25, 1, 3, 55),
-        (105, 26, 3, 1, 55),
-        (106, 26, 1, 1, 90),
-        (58, 2, 1, 1, 40),
-        (141, 4, 1, 1, 30),
-        (73, 27, 1, 1, 40),
-        (150, 26, 1, 1, 25),
+        (18, 1, 1, 5, 70),
+        (16, 3, 5, 1, 70),
+        (18, 3, 1, 1, 100),
+        (85, 25, 1, 3, 55),
+        (84, 26, 3, 1, 55),
+        (85, 26, 1, 1, 90),
+        (46, 2, 1, 1, 40),
+        (113, 4, 1, 1, 30),
+        (58, 27, 1, 1, 40),
+        (120, 26, 1, 1, 25),
     ]
 }

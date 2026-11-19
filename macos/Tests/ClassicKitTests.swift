@@ -91,8 +91,8 @@ final class ClassicKitTests: XCTestCase {
             view.title = ""
             let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            let star = bitmap.colorAt(x: 182 * bitmap.pixelsWide / 1000, y: bitmap.pixelsHigh * 2 / 32)!
-            let beside = bitmap.colorAt(x: 181 * bitmap.pixelsWide / 1000, y: bitmap.pixelsHigh * 2 / 32)!
+            let star = bitmap.colorAt(x: 146 * bitmap.pixelsWide / 1000, y: bitmap.pixelsHigh * 2 / 32)!
+            let beside = bitmap.colorAt(x: 145 * bitmap.pixelsWide / 1000, y: bitmap.pixelsHigh * 2 / 32)!
             XCTAssertGreaterThan(star.usingColorSpace(.sRGB)!.redComponent, beside.usingColorSpace(.sRGB)!.redComponent)
             let first = bitmap.representation(using: .png, properties: [:])
             view.cacheDisplay(in: view.bounds, to: bitmap)
