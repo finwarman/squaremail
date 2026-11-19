@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python3 ui/test_generate.py
+python3 ui/generate.py --check
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --target-dir .build/rust -- -D warnings
 cargo test --workspace --target-dir .build/rust

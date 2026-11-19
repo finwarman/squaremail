@@ -5,36 +5,23 @@ public enum ClassicTheme {
     public private(set) static var appearance: Appearance = .classic
     // Configure before constructing views. Existing windows retain stored control colors.
     public static func configure(_ value: Appearance) { appearance = value }
-    private enum Token: CaseIterable { case face, light, shadow, dark, ink, muted, navy, blue, paper, selection, row, focus, todaySurface, selectedSurface, grid, timeMarker }
-    private static let classic = palette(.classic)
-    private static let pink = palette(.pink)
-    private static func palette(_ appearance: Appearance) -> [Token: NSColor] {
-        let hex: [Token: UInt32]
-        switch appearance {
-        case .classic:
-            hex = [.face:0xD4D0C8, .light:0xFFFFFF, .shadow:0x808080, .dark:0x404040, .ink:0x161616, .muted:0x5A5852, .navy:0x0A246A, .blue:0xA6CAF0, .paper:0xFFFFF3, .selection:0x0A246A, .row:0xF5F4EF, .focus:0x356CB4, .todaySurface:0xEFF5FF, .selectedSurface:0xE7EFFB, .grid:0xC8C6C0, .timeMarker:0xBD3345]
-        case .pink:
-            hex = [.face:0xF3D7E4, .light:0xFFFFFF, .shadow:0xA56D89, .dark:0x733953, .ink:0x3B1F2D, .muted:0x735365, .navy:0x7F2450, .blue:0xECA8CA, .paper:0xFFF8FC, .selection:0x7F2450, .row:0xFFF3F8, .focus:0xB02768, .todaySurface:0xFBE1ED, .selectedSurface:0xF6D0E3, .grid:0xD6AFBF, .timeMarker:0xAD204D]
-        }
-        return hex.mapValues(color)
-    }
-    private static func value(_ token: Token) -> NSColor { (appearance == .classic ? classic : pink)[token]! }
-    public static var face: NSColor { value(.face) }
-    public static var light: NSColor { value(.light) }
-    public static var shadow: NSColor { value(.shadow) }
-    public static var dark: NSColor { value(.dark) }
-    public static var ink: NSColor { value(.ink) }
-    public static var muted: NSColor { value(.muted) }
-    public static var navy: NSColor { value(.navy) }
-    public static var blue: NSColor { value(.blue) }
-    public static var paper: NSColor { value(.paper) }
-    public static var selection: NSColor { value(.selection) }
-    public static var row: NSColor { value(.row) }
-    public static var focus: NSColor { value(.focus) }
-    public static var todaySurface: NSColor { value(.todaySurface) }
-    public static var selectedSurface: NSColor { value(.selectedSurface) }
-    public static var grid: NSColor { value(.grid) }
-    public static var timeMarker: NSColor { value(.timeMarker) }
+    private static var palette: ClassicPalette { appearance == .classic ? SharedClassicTokens.classic : SharedClassicTokens.pink }
+    public static var face: NSColor { palette.face }
+    public static var light: NSColor { palette.light }
+    public static var shadow: NSColor { palette.shadow }
+    public static var dark: NSColor { palette.dark }
+    public static var ink: NSColor { palette.ink }
+    public static var muted: NSColor { palette.muted }
+    public static var navy: NSColor { palette.navy }
+    public static var blue: NSColor { palette.blue }
+    public static var paper: NSColor { palette.paper }
+    public static var selection: NSColor { palette.selection }
+    public static var row: NSColor { palette.row }
+    public static var focus: NSColor { palette.focus }
+    public static var todaySurface: NSColor { palette.todaySurface }
+    public static var selectedSurface: NSColor { palette.selectedSurface }
+    public static var grid: NSColor { palette.grid }
+    public static var timeMarker: NSColor { palette.timeMarker }
 
     public enum Weight { case regular, bold }
     public enum Edge { case raised, sunken, flat }

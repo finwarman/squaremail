@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "name": "ClassicKit",
+  "license": "MIT",
+  "palettes": {
+    "classic": {
+      "label": "Classic",
+      "colors": {
+        "face": "D4D0C8",
+        "light": "FFFFFF",
+        "shadow": "808080",
+        "dark": "404040",
+        "ink": "161616",
+        "muted": "5A5852",
+        "navy": "0A246A",
+        "blue": "A6CAF0",
+        "paper": "FFFFF3",
+        "selection": "0A246A",
+        "row": "F5F4EF",
+        "focus": "356CB4",
+        "todaySurface": "EFF5FF",
+        "selectedSurface": "E7EFFB",
+        "grid": "C8C6C0",
+        "timeMarker": "BD3345",
+        "input": "FFFFFF",
+        "titleInk": "FFFFFF"
+      }
+    },
+    "pink": {
+      "label": "Pink",
+      "colors": {
+        "face": "F3D7E4",
+        "light": "FFFFFF",
+        "shadow": "A56D89",
+        "dark": "733953",
+        "ink": "3B1F2D",
+        "muted": "735365",
+        "navy": "7F2450",
+        "blue": "ECA8CA",
+        "paper": "FFF8FC",
+        "selection": "7F2450",
+        "row": "FFF3F8",
+        "focus": "B02768",
+        "todaySurface": "FBE1ED",
+        "selectedSurface": "F6D0E3",
+        "grid": "D6AFBF",
+        "timeMarker": "AD204D",
+        "input": "FFFFFF",
+        "titleInk": "FFFFFF"
+      }
+    }
+  },
+  "metrics": {
+    "borderWidth": 1,
+    "tooltipDelayMs": 220,
+    "controlHeight": 22,
+    "cornerRadius": 0,
+    "captionHeight": 28,
+    "textSize": 12,
+    "gap": 4
+  }
+}

@@ -18,7 +18,7 @@ final class ClassicHelp {
         guard let text, !text.isEmpty, view.window?.isKeyWindow == true else { return }
         owner = view
         pending = Task { [weak self, weak view] in
-            do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(Int64(SharedClassicTokens.tooltipDelayMs))) } catch { return }
             guard let self, let view, owner === view, view.window?.isKeyWindow == true else { return }
             let label = NSTextField(wrappingLabelWithString: String(text.prefix(400)))
             label.font = ClassicTheme.font(11); label.textColor = ClassicTheme.ink
