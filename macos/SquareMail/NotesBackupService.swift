@@ -37,8 +37,16 @@ final class NotesBackupService {
         Task { [weak self] in await self?.refresh() }
     }
     func stop() { started = false; cancelWorker(); panel?.close(); panel = nil }
-    func setOnline(_ value: Bool) { online = value; if value { resume() } else { cancelWorker(); publish("Offline. Encrypted backup resumes when connected.") } }
-    func setAwake(_ value: Bool) { awake = value; if value { resume() } else { cancelWorker() } }
+    func setOnline(_ value: Bool) {
+        online = value
+        if !value { cancelWorker(); publish("Offline. Encrypted backup resumes when connected."); return }
+        if started { Task { [weak self] in await self?.refresh() } }
+    }
+    func setAwake(_ value: Bool) {
+        awake = value
+        if !value { cancelWorker(); return }
+        if started { Task { [weak self] in await self?.refresh() } }
+    }
     func show(note: String? = nil) {
         if let panel { panel.show(note: note); return }
         let view = NotesBackupPanel(service: self)

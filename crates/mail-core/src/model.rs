@@ -127,6 +127,10 @@ pub(crate) enum Command {
         query: String,
     },
     Notes,
+    SearchNotes {
+        query: String,
+    },
+    IndexNotes,
     OpenNote {
         id: String,
     },

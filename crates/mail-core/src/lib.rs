@@ -59,6 +59,18 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
     }
     match &request.command {
         Command::Notes => return Ok(serde_json::to_value(notes::list(&request.database)?)?),
+        Command::SearchNotes { query } => {
+            return Ok(serde_json::to_value(notes::search(
+                &request.database,
+                query,
+            )?)?);
+        }
+        Command::IndexNotes => {
+            return Ok(serde_json::to_value(notes::index_step(
+                &request.database,
+                context,
+            )?)?);
+        }
         Command::OpenNote { id } => {
             return Ok(serde_json::to_value(notes::open(&request.database, id)?)?);
         }
@@ -82,6 +94,8 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
     match request.command {
         Command::NotesBackup { .. }
         | Command::Notes
+        | Command::SearchNotes { .. }
+        | Command::IndexNotes
         | Command::OpenNote { .. }
         | Command::NewNote { .. }
         | Command::SaveNote { .. } => unreachable!("Notes use their file service"),

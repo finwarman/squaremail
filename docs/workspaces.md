@@ -1,12 +1,20 @@
-# Windows and notes
+# Workspaces and notes
 
-Use **Window > Open Calendar in New Window** to keep Calendar beside Mail. Opening it again focuses that window. The selected date, query and agenda layout stay with Calendar. Closing Mail leaves other workspace windows open; Quit closes the app with unsaved-edit prompts. Reopen Mail from Window or the Dock.
+The Mail, Calendar and Notes tabs keep their own selection and search. **Open in window** moves Calendar or Notes into a separate window. **Dock to tabs** moves the same workspace back. Notes keeps its text, selection and Undo history during the move. Calendar keeps its date, query and agenda layout. Mail already owns the main window.
 
-**Notes** in the toolbar or **Command-5** opens local Markdown notes. **Today** opens the daily file. Calendar's **Daily note** opens the selected date. **New note** creates a free note. Edit the first `# heading` to change its title while keeping its daily filename. Heading, checkbox and link buttons insert Markdown source. Native Undo, Redo, Find and Command-S work in the editor.
+Opening an already detached workspace focuses its window. Window menu entries offer the same actions. Closing Mail leaves detached workspaces open; Quit asks about unsaved edits. Reopen Mail from Window or the Dock. Independent message tabs/windows and date-linked task boards remain planned.
 
-Notes autosave after a typing pause. A changed external file blocks replacement and keeps editor text. **Save copy** keeps both versions; **Reload** asks before discarding unsaved text. **Open folder** exposes ordinary UTF-8 `.md` files under Application Support/Square Mail/Notes. Up to50 earlier saved contents remain in its hidden `.history` folder. Back up this folder with your other files.
+## Notes
 
-Notes currently have title/date filtering, a2,000-file list limit and a1MiB document limit. Optional [encrypted backup](notes-backup.md) preserves offline editing and conflict copies. Markdown preview, a full-vault text index, folder choice and a tab strip remain separate work.
+**Notes** or **Command-5** opens Markdown notes. **Today** opens the daily file. Calendar's **Daily note** opens the selected date. **New note** creates a free note. Edit the first `# heading` to rename its displayed title while keeping the daily filename. Heading, checkbox and link buttons insert Markdown source. Native Undo, Redo, Find and Command-S work in the editor. Command-Shift-F searches all notes; Command-F finds within the current note.
+
+**Search all notes** searches titles, filenames and full Markdown content locally. Indexing runs in small batches while Notes is open. The count below the list shows pending work. Results arrive as files become indexed; typing and saves remain usable. Changed, renamed and removed files invalidate old terms. A recursive OS event stream detects in-place edits without polling. Hiding Notes pauses indexing; returning resumes pending work. No network access is needed to search.
+
+The index covers the Notes root and Daily folder, up to 2,000 files and 1 MiB per note. Results contain at most 200 summaries. It stores searchable terms without another full copy of every body. Index and Markdown files are local plaintext, protected by user-only permissions. Oversized, invalid UTF-8 or undownloaded cloud files stay on disk and are marked unavailable. Indexing never downloads placeholders. Folder selection, arbitrary nested vaults and Markdown preview remain planned.
+
+Notes autosave after a typing pause. A changed external file blocks replacement and keeps editor text. **Save copy** preserves both versions; **Reload** asks before discarding unsaved text. **Open folder** exposes ordinary UTF-8 `.md` files under Application Support/Square Mail/Notes. Up to 50 earlier saved contents remain in its hidden `.history` folder. Keep an independent backup.
+
+Optional [encrypted backup](notes-backup.md) preserves offline editing, conflict copies and server history. A password manager can hold the passphrase and concealed recovery account key together. Routine sync uses Keychain, with no password-manager process or network dependency for editing/search. The private server receives encrypted Markdown, not the local search index.
 
 ## Recipient suggestions
 

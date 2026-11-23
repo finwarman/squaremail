@@ -572,6 +572,35 @@ fn apply(
         &remote.revision,
     )
 }
+// Deletion is not propagated in this preview. Restore missing mapped files in bounded steps.
+fn restore_missing(
+    database: &str,
+    db: &Connection,
+    config: &Config,
+    session: &Session,
+    remote: &remote::Remote<'_>,
+    context: &network::Context<'_>,
+    budget: usize,
+) -> Result<(usize, bool)> {
+    let root = super::root(database)?;
+    let rows: Vec<(String, String)> = db
+        .prepare("SELECT id,object FROM state ORDER BY id LIMIT ?1")?
+        .query_map([super::NOTE_LIMIT as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut restored = 0;
+    for (id, object) in rows {
+        context.check()?;
+        if super::note_path(&root, &id)?.exists() {
+            continue;
+        }
+        if restored >= budget {
+            return Ok((restored, true));
+        }
+        apply(database, db, config, session, &remote.get(&object, None)?)?;
+        restored += 1;
+    }
+    Ok((restored, false))
+}
 fn sync(database: &str, context: &network::Context<'_>) -> Result<Status> {
     let config = config(database)?.ok_or("Set up Notes backup first")?;
     let session = session(database)?.ok_or("Unlock Notes backup first")?;
@@ -608,6 +637,19 @@ fn sync(database: &str, context: &network::Context<'_>) -> Result<Status> {
         completed += 1;
     }
     let mut more = changes.more || changes.items.len() > BATCH;
+    if !more {
+        let (restored, pending) = restore_missing(
+            database,
+            &db,
+            &config,
+            &session,
+            &remote,
+            context,
+            BATCH - completed,
+        )?;
+        completed += restored;
+        more = pending;
+    }
     if !more {
         // No body or network work enters the UI queue. Each step uploads at most four notes.
         let ids = super::note_ids(database)?;
@@ -688,18 +730,8 @@ fn sync(database: &str, context: &network::Context<'_>) -> Result<Status> {
 }
 
 fn file_stamp(database: &str, id: &str) -> Result<String> {
-    use std::os::unix::fs::MetadataExt;
     let path = super::note_path(&super::root(database)?, id)?;
-    let info = fs::metadata(path)?;
-    Ok(format!(
-        "{}:{}:{}:{}:{}:{}",
-        info.ino(),
-        info.len(),
-        info.mtime(),
-        info.mtime_nsec(),
-        info.ctime(),
-        info.ctime_nsec()
-    ))
+    Ok(super::stamp(&fs::metadata(path)?))
 }
 #[cfg(test)]
 fn fixture_endpoint() -> Option<String> {

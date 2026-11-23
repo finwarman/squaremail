@@ -175,6 +175,12 @@ fn backup_two_device_http() {
     )
     .unwrap();
     run(b, Command::Sync, &context()).unwrap();
+    fs::remove_file(super::super::root(b).unwrap().join(&note.id)).unwrap();
+    run(b, Command::Sync, &context()).unwrap();
+    assert_eq!(
+        super::super::open(b, &note.id).unwrap().text,
+        "# Mac A edits"
+    );
     run(b, Command::Disconnect, &context()).unwrap();
     assert_eq!(
         run(b, Command::Status, &context()).unwrap()["phase"],

@@ -7,7 +7,7 @@ A native macOS mail and calendar client with a Visual Basic-era interface. Swift
 - Gmail and Outlook.com/Live/Microsoft 365 accounts, folders and a unified inbox.
 - Offline reading, fuzzy search, gradual body caching and on-demand attachments.
 - Calendars, reminders, drafts, replies and reversible mail actions.
-- Separate Calendar windows, daily Markdown notes, optional encrypted Notes backup and cached recipient suggestions.
+- Mail/Calendar/Notes tabs, detachable workspaces, offline full-note search, optional encrypted Notes backup and cached recipient suggestions.
 
 Preview software for macOS 14+. Apple Silicon is qualified; broader provider and live write testing remains open. Gmail preview sign-in requires the test audience. Mail is cached locally in plaintext; tokens use Keychain. Remote images are blocked by default.
 

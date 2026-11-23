@@ -34,7 +34,7 @@ public final class ClassicCheckbox: NSButton {
 public final class ClassicButton: NSButton {
     public override var title: String { didSet { setAccessibilityLabel(title); needsDisplay = true } }
     public override var isEnabled: Bool { didSet { if !isEnabled { hovered = false; highlight(false) }; needsDisplay = true } }
-    public enum Style { case normal, toolbar, navigation, toggle, iconToggle, segment, title, menu }
+    public enum Style { case normal, toolbar, navigation, toggle, iconToggle, segment, tab, title, menu }
     private var helpText: String?
     public override var toolTip: String? { get { helpText } set { helpText = newValue; setAccessibilityHelp(newValue) } }
     public var onPress: (() -> Void)?
@@ -86,9 +86,10 @@ public final class ClassicButton: NSButton {
         ClassicTheme.face.setFill(); bounds.fill()
         let down = isHighlighted || state == .on
         if (!isToolbar && style != .menu) || hovered || down {
-            ClassicTheme.bevel(bounds, edge: down ? .sunken : .raised)
+            ClassicTheme.bevel(bounds, edge: style == .tab ? .raised : down ? .sunken : .raised)
         }
-        let shift: CGFloat = down ? 1 : 0
+        if style == .tab, state == .on { ClassicTheme.face.setFill(); NSRect(x: 1, y: bounds.height - 2, width: bounds.width - 2, height: 2).fill() }
+        let shift: CGFloat = (style == .tab ? isHighlighted : down) ? 1 : 0
         let ink = isEnabled ? ClassicTheme.ink : ClassicTheme.muted
         if style == .segment && state == .on {
             ClassicTheme.selection.withAlphaComponent(0.12).setFill(); bounds.insetBy(dx: 2, dy: 2).fill()

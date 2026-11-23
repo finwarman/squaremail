@@ -5,6 +5,8 @@ final class MailLayout: NSView, NSSplitViewDelegate {
     let titleBar = ClassicTitleBar()
     let menus = NSView()
     let toolbar = ClassicActionBar()
+    let tabs = ClassicTabs()
+    let notesHost = NSView()
     let messageActions = ClassicActionBar()
     let sidebar = ClassicPanel()
     let filter = ClassicPanel()
@@ -42,7 +44,8 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        for view in [titleBar, menus, toolbar, sidebar, filter, split, status] { addSubview(view) }
+        for view in [titleBar, menus, toolbar, tabs, sidebar, filter, split, notesHost, status] { addSubview(view) }
+        notesHost.isHidden = true
         sidebar.edge = .sunken
         filter.edge = .flat
         split.isVertical = false
@@ -122,9 +125,11 @@ final class MailLayout: NSView, NSSplitViewDelegate {
         titleBar.frame = NSRect(x: 3, y: 3, width: width - 6, height: 32)
         menus.frame = NSRect(x: 5, y: 36, width: width - 10, height: 25)
         toolbar.frame = NSRect(x: 4, y: 62, width: width - 8, height: toolbar.fittingHeight(width - 8))
-        let contentTop = toolbar.frame.maxY + 4
+        tabs.frame = NSRect(x: 4, y: toolbar.frame.maxY + 4, width: width - 8, height: 30)
+        let contentTop = tabs.frame.maxY + 3
         let statusTop = height - 46
         let left: CGFloat = 210
+        notesHost.frame = NSRect(x: 4, y: contentTop, width: width - 8, height: max(0,statusTop - contentTop - 3))
         sidebar.frame = NSRect(x: 4, y: contentTop, width: left - 8, height: max(0, statusTop - contentTop - 3))
         filter.frame = NSRect(x: left, y: contentTop, width: width - left - 4, height: 40)
         searchBorder.frame = NSRect(x: max(245, filter.bounds.width - 365), y: 5, width: 355, height: 28)

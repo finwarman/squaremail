@@ -43,6 +43,7 @@ final class WorkspaceWindow: NSObject, NSWindowDelegate {
     func setTitle(_ title: String) { window.title = title; caption.title = title; caption.needsDisplay = true }
     func show() { isOpen = true; WindowPresentation.show(window); updateExposure() }
     func close() { guard isOpen else { return }; window.close(); finishClose() }
+    func hideForDock() { guard isOpen else { return }; isOpen = false; onExposure?(.hidden); window.close() }
     func requestClose() { if let onCloseRequest { onCloseRequest() } else { close() } }
     func windowWillClose(_ notification: Notification) { finishClose() }
     private func finishClose() {
@@ -68,6 +69,7 @@ final class CalendarWindow: NSObject, NSTextFieldDelegate {
     let shell = WorkspaceWindow(title: "Square Mail - Calendar", size: NSSize(width: 1200, height: 800), minimum: NSSize(width: 900, height: 620))
     private let search = NSTextField()
     private let content: CalendarWindowBody
+    var onDock: (() -> Void)?
     var isOpen: Bool { shell.isOpen }
     init(view: CalendarView, sidebar: CalendarSidebar) {
         content = CalendarWindowBody(view: view, sidebar: sidebar, search: search)
@@ -76,6 +78,7 @@ final class CalendarWindow: NSObject, NSTextFieldDelegate {
         search.placeholderString = "Search events (⌘F)"; search.stringValue = view.state.query
         search.setAccessibilityLabel("Search calendar window")
         content.frame = shell.body.bounds; content.autoresizingMask = [.width, .height]; shell.body.addSubview(content)
+        content.dock.onPress = { [weak self] in self?.onDock?() }
     }
     func show() { shell.show(); content.needsLayout = true; content.layoutSubtreeIfNeeded() }
     func close() { shell.close() }
@@ -84,20 +87,22 @@ final class CalendarWindow: NSObject, NSTextFieldDelegate {
 }
 private final class CalendarWindowBody: NSView {
     let calendar: CalendarView
+    let dock = ClassicButton("Dock to tabs")
     private let sidebar: CalendarSidebar
     private let search: NSTextField
     override var isFlipped: Bool { true }
     init(view: CalendarView, sidebar: CalendarSidebar, search: NSTextField) {
         calendar = view; self.sidebar = sidebar; self.search = search
         super.init(frame: .zero)
-        for child in [sidebar, view, search] { addSubview(child) }
+        for child in [sidebar, view, search, dock] { addSubview(child) }
     }
     required init?(coder: NSCoder) { fatalError("Use init(view:sidebar:search:)") }
     override func layout() {
         super.layout()
         let side: CGFloat = 210
         sidebar.frame = NSRect(x: 0, y: 0, width: side, height: bounds.height)
-        search.frame = NSRect(x: side + 8, y: 6, width: bounds.width - side - 16, height: 28)
+        search.frame = NSRect(x: side + 8, y: 6, width: bounds.width - side - 144, height: 28)
+        dock.frame = NSRect(x: bounds.width - 128, y: 6, width: 120, height: 28)
         calendar.frame = NSRect(x: side + 4, y: 40, width: bounds.width - side - 8, height: max(0, bounds.height - 44))
     }
 }

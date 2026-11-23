@@ -1,4 +1,5 @@
 pub(crate) mod backup;
+mod index;
 use crate::Result;
 use chrono::NaiveDate;
 use rand::RngCore;
@@ -23,6 +24,7 @@ pub(crate) struct NoteSummary {
     id: String,
     title: String,
     modified: u64,
+    available: bool,
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct NoteDocument {
@@ -34,6 +36,7 @@ pub(crate) struct NoteDocument {
 pub(crate) struct NoteList {
     directory: String,
     notes: Vec<NoteSummary>,
+    pending: usize,
 }
 
 fn root(database: &str) -> Result<PathBuf> {
@@ -45,14 +48,17 @@ fn root(database: &str) -> Result<PathBuf> {
     Ok(root)
 }
 fn ensure_dir(path: &Path) -> Result<()> {
-    if path.exists() {
-        let info = fs::symlink_metadata(path)?;
-        if !info.is_dir() || info.file_type().is_symlink() {
-            return Err("Notes folders cannot be symbolic links".into());
+    if !path.exists() {
+        match fs::DirBuilder::new().mode(0o700).create(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
         }
-        return Ok(());
     }
-    fs::DirBuilder::new().mode(0o700).create(path)?;
+    let info = fs::symlink_metadata(path)?;
+    if !info.is_dir() || info.file_type().is_symlink() {
+        return Err("Notes folders cannot be symbolic links".into());
+    }
     Ok(())
 }
 fn note_path(root: &Path, id: &str) -> Result<PathBuf> {
@@ -82,6 +88,9 @@ fn note_path(root: &Path, id: &str) -> Result<PathBuf> {
     Ok(path)
 }
 fn read_text(path: &Path) -> Result<String> {
+    if !readable(&fs::metadata(path)?) {
+        return Err("This note is too large or not downloaded. Check it in Finder; the file was not changed.".into());
+    }
     let mut bytes = Vec::new();
     fs::File::open(path)?
         .take((NOTE_BYTES + 1) as u64)
@@ -140,29 +149,55 @@ fn note_ids(database: &str) -> Result<Vec<String>> {
     Ok(ids)
 }
 pub(crate) fn list(database: &str) -> Result<NoteList> {
-    let root = root(database)?;
-    let mut notes = Vec::new();
-    for id in note_ids(database)? {
-        let path = note_path(&root, &id)?;
-        let info = fs::metadata(&path)?;
-        let mut bytes = Vec::new();
-        fs::File::open(&path)?
-            .take(TITLE_BYTES)
-            .read_to_end(&mut bytes)?;
-        notes.push(NoteSummary {
-            title: title(&String::from_utf8_lossy(&bytes), &id),
-            id,
-            modified: info
-                .modified()?
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-        });
-    }
-    notes.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.id.cmp(&b.id)));
-    Ok(NoteList {
-        directory: root.to_string_lossy().into_owned(),
-        notes,
-    })
+    index::list(database)
+}
+#[derive(Serialize)]
+pub(crate) struct NoteMatches {
+    notes: Vec<NoteSummary>,
+    pending: usize,
+    total: usize,
+}
+#[derive(Serialize)]
+pub(crate) struct IndexProgress {
+    pending: usize,
+    indexed: usize,
+    skipped: usize,
+}
+pub(crate) fn search(database: &str, query: &str) -> Result<NoteMatches> {
+    index::search(database, query)
+}
+pub(crate) fn index_step(
+    database: &str,
+    context: &crate::network::Context<'_>,
+) -> Result<IndexProgress> {
+    index::step(database, context)
+}
+fn stamp(info: &fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        info.ino(),
+        info.len(),
+        info.mtime(),
+        info.mtime_nsec(),
+        info.ctime(),
+        info.ctime_nsec(),
+        file_flags(info)
+    )
+}
+#[cfg(target_os = "macos")]
+fn file_flags(info: &fs::Metadata) -> u32 {
+    use std::os::darwin::fs::MetadataExt;
+    info.st_flags()
+}
+#[cfg(not(target_os = "macos"))]
+fn file_flags(_: &fs::Metadata) -> u32 {
+    0
+}
+fn readable(info: &fs::Metadata) -> bool {
+    // SF_DATALESS from the macOS SDK: never hydrate cloud placeholders during indexing.
+    const SF_DATALESS: u32 = 0x40000000;
+    info.len() <= NOTE_BYTES as u64 && file_flags(info) & SF_DATALESS == 0
 }
 pub(crate) fn open(database: &str, id: &str) -> Result<NoteDocument> {
     let path = note_path(&root(database)?, id)?;
