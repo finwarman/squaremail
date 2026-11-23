@@ -246,10 +246,17 @@ impl Store {
                 _ => "EXISTS(SELECT 1 FROM folders f WHERE f.message_id=m.id AND f.folder=?2)",
             }
         };
+        let trash_filter = if remote.is_some() {
+            "(NOT EXISTS(SELECT 1 FROM folders t WHERE t.message_id=m.id AND t.folder='trash') OR ?2='label:TRASH' OR EXISTS(SELECT 1 FROM mail_folders t WHERE t.account_id=m.account_id AND t.id=?2 AND t.system='trash'))"
+        } else if matches!(folder, Folder::All | Folder::Trash) {
+            "1"
+        } else {
+            "NOT EXISTS(SELECT 1 FROM folders t WHERE t.message_id=m.id AND t.folder='trash')"
+        };
         let sql = format!(
             "SELECT m.id,m.account_id,m.remote_id,m.sender,m.sender_address,m.recipient,
             m.subject,m.preview,m.timestamp,m.unread,m.starred,m.has_attachments,NULL,NULL,m.pinned,m.keep_unread
-            FROM messages m {join} WHERE {account_filter} AND {folder_filter}
+            FROM messages m {join} WHERE {account_filter} AND {folder_filter} AND {trash_filter}
             {search} ORDER BY m.pinned DESC,m.timestamp DESC,m.id LIMIT ?3 OFFSET ?4"
         );
         let mut statement = self.connection.prepare(&sql)?;

@@ -29,6 +29,9 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
     private let cancel = ClassicButton("Cancel queued")
     private let recover = ClassicButton("Resolve stopped…")
     private let refreshButton = ClassicButton("Refresh")
+    private let history = ClassicButton("Sent history", style: .toggle)
+    private let emptyState = NSTextField(wrappingLabelWithString: "")
+    private var snapshot: MailWorkspace?
     private let status = NSTextField(wrappingLabelWithString: "Local drafts, queued changes and sends. Nothing is permanently deleted at the provider.")
     private var rows: [Row] = []
     private var queuedFocus: QueuedSend?
@@ -43,6 +46,8 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
     init(core: MailCore) {
         self.core = core; super.init()
         window.title = "Mail drafts / outbox"; window.isReleasedWhenClosed = false; window.delegate = self
+        window.backgroundColor = ClassicTheme.face
+        window.contentView?.wantsLayer = true; window.contentView?.layer?.backgroundColor = ClassicTheme.face.cgColor
         scroll.frame = NSRect(x: 10, y: 125, width: 760, height: 395); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("mail-work")); column.width = 740; table.addTableColumn(column)
         table.headerView = nil; table.rowHeight = 46; table.style = .plain; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
@@ -68,8 +73,17 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         }
         account.frame = NSRect(x: 10, y: 56, width: 315, height: 26)
         changes.frame = NSRect(x: 335, y: 56, width: 210, height: 27); sending.frame = NSRect(x: 555, y: 56, width: 210, height: 27)
-        status.frame = NSRect(x: 10, y: 5, width: 755, height: 44); status.font = ClassicTheme.font(10)
-        for view in [account, changes, sending, status] { window.contentView?.addSubview(view) }
+        status.frame = NSRect(x: 10, y: 5, width: 580, height: 44); status.font = ClassicTheme.font(10); status.textColor = ClassicTheme.ink
+        history.frame = NSRect(x: 610, y: 12, width: 155, height: 27)
+        history.toolTip = "Show or hide completed provider-accepted sends. These are not queued or waiting."
+        history.onPress = { [weak self] in
+            guard let self, let snapshot else { return }
+            apply(snapshot, selected: selection?.key)
+        }
+        emptyState.frame = NSRect(x: 30, y: 270, width: 720, height: 70)
+        emptyState.font = ClassicTheme.font(13); emptyState.textColor = ClassicTheme.muted; emptyState.alignment = .center
+        emptyState.setAccessibilityLabel("Outbox status")
+        for view in [account, changes, sending, status, history, emptyState] { window.contentView?.addSubview(view) }
         openButton.onPress = { [weak self] in self?.openSelected() }
         remove.onPress = { [weak self] in self?.deleteDraft() }
         refreshButton.onPress = { [weak self] in self?.refresh() }
@@ -123,17 +137,27 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
             do {
                 let values: MailWorkspace = try await core.request(["command": CoreCommand.mailWorkspace.rawValue], mode: .live)
                 guard generation == revision else { return }
-                rows = values.drafts.map(Row.draft) + values.work.map(Row.work) + (values.receipts ?? []).map(Row.work)
-                table.deselectAll(nil); table.reloadData()
+                if let selected, (values.receipts ?? []).contains(where: { Key.work(.outbox, $0.id) == selected }) { history.state = .on }
                 busy = false; queuedFocus = nil
-                status.stringValue = "\(values.drafts.count) local drafts · \(values.work.count) queued/stopped · \(values.receipts?.count ?? 0) recent accepted sends"
-                if let index = rows.firstIndex(where: { $0.key == selected }) {
-                    table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                    table.scrollRowToVisible(index)
-                }
-                updateButtons()
+                apply(values, selected: selected)
             } catch { guard generation == revision else { return }; busy = false; updateButtons(); status.stringValue = error.localizedDescription }
         }
+    }
+    private func apply(_ values: MailWorkspace, selected: Key?) {
+        snapshot = values
+        let receipts = values.receipts ?? []
+        rows = values.drafts.map(Row.draft) + values.work.map(Row.work) + (history.state == .on ? receipts.map(Row.work) : [])
+        table.deselectAll(nil); table.reloadData()
+        history.title = "Sent history (\(receipts.count))"
+        history.isEnabled = !busy && !receipts.isEmpty
+        emptyState.isHidden = !rows.isEmpty
+        emptyState.stringValue = "No queued work.\n" + (receipts.isEmpty ? "New drafts and pending changes will appear here." : "Recent sends are complete. Use Sent history to view their receipts.")
+        status.stringValue = values.work.isEmpty ? "No pending work · \(values.drafts.count) local drafts · \(receipts.count) completed send(s)" : "\(values.work.count) queued/stopped · \(values.drafts.count) local drafts · provider updates run in the background"
+        if let index = rows.firstIndex(where: { $0.key == selected }) {
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            table.scrollRowToVisible(index)
+        }
+        updateButtons()
     }
     private var selection: Row? { rows.indices.contains(table.selectedRow) ? rows[table.selectedRow] : nil }
     private func updateButtons() {
@@ -146,6 +170,7 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         cancel.isEnabled = ready && [MailWorkState.pending, .retry, .blocked].contains(work?.state) && (work?.attempts == 0 || (work?.kind == .outbox && work?.remote == nil))
         recover.isEnabled = ready && [MailWorkState.uncertain, .blocked].contains(work?.state)
         refreshButton.isEnabled = ready
+        history.isEnabled = ready && !(snapshot?.receipts ?? []).isEmpty
         changes.isEnabled = ready && !signIn.active && account.numberOfItems > 0; sending.isEnabled = changes.isEnabled
         account.isEnabled = ready && !signIn.active
     }
@@ -153,8 +178,13 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         updateButtons()
         if case .work(let value) = selection {
             if let index = account.itemArray.firstIndex(where: { $0.representedObject as? String == value.account }) { account.selectItem(at: index) }
-            let waiting = value.kind == .outbox ? "Queued, not yet sent. Waiting for connectivity and sending permission." : "Queued change. Waiting for connectivity and mail-change permission."
-            status.stringValue = value.state == .done ? "Accepted by the provider. Sent folder updates on sync; acceptance is not delivery confirmation." : (value.error ?? waiting)
+            switch value.state {
+            case .done: status.stringValue = "Completed. Accepted by the provider, not queued. Sent folder updates on sync; delivery is not confirmed."
+            case .pending: status.stringValue = value.kind == .outbox ? "Queued, not yet sent. Delivery runs in the background while the app is open and online." : "Saved on this Mac. Waiting for provider sync while the app is open and online."
+            case .sending: status.stringValue = value.kind == .outbox ? "Sending to the provider…" : "Updating the provider… The local change is already saved."
+            case .retry: status.stringValue = "Waiting to retry. " + (value.error ?? "The provider retry delay is preserved.")
+            case .blocked, .uncertain: status.stringValue = value.error ?? "Needs attention. Select Resolve stopped to review this operation."
+            }
         }
     }
     @objc private func openSelected() { guard !busy, case .draft(let value) = selection else { return }; onOpen?(value.id) }
@@ -201,7 +231,7 @@ final class MailWorkspacePanel: NSObject, NSTableViewDataSource, NSTableViewDele
         guard rows.indices.contains(row), let id = tableColumn?.identifier else { return nil }
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? ClassicTableCell) ?? ClassicTableCell(); cell.identifier = id
         let title: String
-        switch rows[row] { case .draft(let value): title = "Draft: " + value.subject; case .work(let value): title = (value.kind == .outbox && value.state == .done ? "Send · Accepted" : value.kind.rawValue.capitalized + " · " + value.state.rawValue.capitalized) + ": " + value.subject }
+        switch rows[row] { case .draft(let value): title = "Draft: " + value.subject; case .work(let value): title = (value.kind == .outbox && value.state == .done ? "✓ Completed · Provider accepted" : value.kind.rawValue.capitalized + " · " + value.state.rawValue.capitalized) + ": " + value.subject }
         cell.configure(title.isEmpty ? "(Untitled)" : title); return cell
     }
 }
@@ -240,6 +270,19 @@ extension MailWorkspacePanel {
         guard signInPanel.isHidden, scroll.frame.maxY == 520, changes.isEnabled, sending.isEnabled else { throw MailError(message: "Sign-in completion left a gap or disabled controls") }
         showStatus(originalStatus)
     }
+    private func verifyReceipts(accounts: [Account]) throws {
+        let saved = snapshot
+        let receipt = MailWorkSummary(id: "accepted-fixture", account: accounts[0].id, state: .done, error: nil, attempts: 1, remote: nil, subject: "Completed synthetic send", kind: .outbox)
+        history.state = .off
+        apply(MailWorkspace(drafts: [], work: [], receipts: [receipt]), selected: nil)
+        guard rows.isEmpty, !emptyState.isHidden, status.stringValue.contains("No pending work") else { throw MailError(message: "Accepted sends looked like pending work") }
+        try WindowPresentation.snapshot(window.contentView!, name: "outbox-empty-complete")
+        history.performClick(nil); table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        guard rows.count == 1, !retry.isEnabled, !cancel.isEnabled, status.stringValue.contains("not queued") else { throw MailError(message: "Completed history exposed queued-send actions") }
+        try WindowPresentation.snapshot(window.contentView!, name: "outbox-sent-history")
+        history.performClick(nil)
+        if let saved { apply(saved, selected: nil) }
+    }
     func verifyControls(accounts: [Account]) async throws {
         precondition(WindowPresentation.isBackground)
         open(accounts: accounts); await task?.value
@@ -254,6 +297,7 @@ extension MailWorkspacePanel {
         changes.performClick(nil); sending.performClick(nil)
         guard access == [.changes, .send] else { throw MailError(message: "Mail consent controls did not dispatch separate access modes") }
         try await verifySignIn(accounts: accounts)
+        try verifyReceipts(accounts: accounts)
         close()
     }
 }

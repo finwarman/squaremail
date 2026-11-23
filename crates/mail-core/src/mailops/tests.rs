@@ -156,7 +156,9 @@ fn offline_merge_and_cancel() {
 }
 #[test]
 fn sync_does_not_erase_pending() {
-    let store = Store::open(":memory:").unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("replay.sqlite");
+    let store = Store::open(path.to_str().unwrap()).unwrap();
     let message = seed(&store);
     queue(
         &store,
@@ -222,10 +224,12 @@ fn sync_does_not_erase_pending() {
                 10
             )
             .unwrap()
-            .iter()
-            .any(|m| m.id == message.id)
+            .is_empty()
     );
+    let cache = rusqlite::Connection::open(path).unwrap();
+    assert!(cache.query_row("SELECT EXISTS(SELECT 1 FROM mail_membership WHERE account_id='fixture' AND remote_id=?1 AND folder_id='label:project')",[&message.remote_id],|r|r.get::<_,bool>(0)).unwrap());
 }
+
 #[test]
 fn reply_all_threads() {
     let store = Store::open(":memory:").unwrap();
@@ -1349,4 +1353,75 @@ fn bulk_undo_coalesced_sync() {
             matches!(work.action,MailAction::Restore { snapshot } if snapshot.folders.contains(&"inbox".into()))
         );
     }
+}
+
+#[test]
+fn trash_leaves_smart_views() {
+    let store = Store::open(":memory:").unwrap();
+    let mut message = seed(&store);
+    message.starred = true;
+    store.save(&message, Folder::Sent).unwrap();
+    let ids = std::slice::from_ref(&message.id);
+    batch(
+        &store,
+        "project-before-operation",
+        ids,
+        MailEdit::Action {
+            action: MailAction::Move {
+                destination: "label:project".into(),
+                source: None,
+            },
+        },
+    )
+    .unwrap();
+    batch(
+        &store,
+        "smart-trash-operation",
+        ids,
+        MailEdit::Action {
+            action: MailAction::Trash,
+        },
+    )
+    .unwrap();
+    for folder in [Folder::Starred, Folder::Unread, Folder::Sent] {
+        for query in ["", "Notes"] {
+            assert!(store.list(None, folder, query, 0, 10).unwrap().is_empty());
+        }
+        let scope = crate::store::MailScope {
+            account: None,
+            folder,
+            remote: None,
+        };
+        assert!(
+            store
+                .search_folder(scope, "Ntoes", SearchMode::Smart, 0, 10)
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+    }
+    assert!(
+        store
+            .list_folder(None, Folder::All, Some("label:project"), "", 0, 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_folder(None, Folder::All, Some("label:TRASH"), "", 0, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store.list(None, Folder::All, "Notes", 0, 10).unwrap().len(),
+        1
+    );
+    assert_eq!(store.list(None, Folder::Trash, "", 0, 10).unwrap().len(), 1);
+    store.undo_mail("smart-trash-operation").unwrap();
+    assert_eq!(
+        store.list(None, Folder::Starred, "", 0, 10).unwrap().len(),
+        1
+    );
+    assert!(store.message(&message.id).unwrap().starred);
 }

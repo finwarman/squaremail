@@ -8,6 +8,9 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private let layout: MailLayout
     private let table = MailTable()
     private var mailUndo: [MailUndo] = []
+    private var pendingMailIDs: Set<String> = []
+    private static let pendingOpacity: CGFloat = 0.45
+    private static let localSaveHint = "Saving this change on this Mac…"
     private static let batchLimit = 100
     private static let undoLimit = 20
     private var tableHeader: NSTableHeaderView?
@@ -566,15 +569,25 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         }
         runBatch(["kind": MailEditKind.action.rawValue, "action": action], title: title, advance: [.trash, .archive, .move].contains(kind) ? actionAnchor() : nil)
     }
+    private func showPendingMail(_ ids: Set<String>) {
+        pendingMailIDs = ids
+        for row in messages.indices {
+            guard let view = table.rowView(atRow: row, makeIfNecessary: false) else { continue }
+            view.alphaValue = ids.contains(messages[row].id) ? Self.pendingOpacity : 1
+            view.toolTip = ids.contains(messages[row].id) ? Self.localSaveHint : nil
+        }
+        let shown = messages.isEmpty ? "0" : "\(pageOffset + 1)-\(pageOffset + messages.count)"
+        layout.listCaption.stringValue = ids.isEmpty ? "\(listTitle.uppercased()) · \(shown) SHOWN" : "\(listTitle.uppercased()) · SAVING \(ids.count) CHANGES…"
+    }
     private func runBatch(_ edit: [String: Any], title: String, advance: MailAdvance? = nil) {
         guard batchReady else { return }
         let ids = selectedMails.map(\.id)
         let operation = UUID().uuidString.lowercased()
         layout.statusText.stringValue = title + " · updating " + String(ids.count) + " message(s) on this Mac…"
-        updateMailButtons(.busy)
+        updateMailButtons(.busy); showPendingMail(Set(ids))
         mailTask = Task { [weak self] in
             guard let self else { return }
-            defer { mailTask = nil; updateMailButtons() }
+            defer { mailTask = nil; showPendingMail([]); updateMailButtons() }
             do {
                 let receipt: MailBatchReceipt = try await core.request(["command": CoreCommand.batchMail.rawValue, "operation": operation, "ids": ids, "edit": edit], mode: .live)
                 mailUndo.append(MailUndo(operation: receipt.operation, title: title)); if mailUndo.count > Self.undoLimit { mailUndo.removeFirst() }
@@ -606,7 +619,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         updateMailButtons(.busy)
         mailTask = Task { [weak self] in
             guard let self else { return }
-            defer { mailTask = nil; updateMailButtons() }
+            defer { mailTask = nil; showPendingMail([]); updateMailButtons() }
             do {
                 let folders: [MailFolder] = try await core.request(["command": CoreCommand.moveFolders.rawValue, "account": value.accountId], mode: .live)
                 let targets = folders
@@ -618,6 +631,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
                 guard WindowPresentation.runAlert(alert) == .alertFirstButtonReturn, targets.indices.contains(picker.indexOfSelectedItem) else { return }
                 let target = targets[picker.indexOfSelectedItem]
                 let action: [String: Any] = target.system == Folder.trash.rawValue ? ["kind": MailActionKind.trash.rawValue] : ["kind": MailActionKind.move.rawValue, "destination": target.id, "source": source as Any? ?? NSNull()]
+                showPendingMail(Set(ids))
                 let receipt: MailBatchReceipt = try await core.request(["command": CoreCommand.batchMail.rawValue, "operation": UUID().uuidString.lowercased(), "ids": ids, "edit": ["kind": MailEditKind.action.rawValue, "action": action]], mode: .live)
                 mailUndo.append(MailUndo(operation: receipt.operation, title: "Move")); if mailUndo.count > Self.undoLimit { mailUndo.removeFirst() }
                 await refreshList(after: advance); coordinator.kick(); workspace?.refresh()
@@ -918,6 +932,8 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             view.identifier = Self.rowReuseID
             rowViewsMade += 1
         }
+        view.alphaValue = pendingMailIDs.contains(messages[row].id) ? Self.pendingOpacity : 1
+        view.toolTip = pendingMailIDs.contains(messages[row].id) ? Self.localSaveHint : nil
         view.backgroundColor = row % 2 == 0 ? .white : ClassicTheme.row
         return view
     }
@@ -944,6 +960,10 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         default: break
         }
         return cell
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        messages.indices.contains(row) && !pendingMailIDs.contains(messages[row].id)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -1827,10 +1847,23 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         table.selectRowIndexes(IndexSet(integersIn: 2...4), byExtendingSelection: false)
         let deleted = Set(selectedMails.map(\.id)); let next = messages[5].id
         guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: layout.window?.windowNumber ?? 0, context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51) else { throw MailError(message: "Could not build local Delete event") }
-        table.keyDown(with: event); await mailTask?.value
+        table.keyDown(with: event)
+        guard pendingMailIDs == deleted, layout.listCaption.stringValue.contains("SAVING"), !tableView(table, shouldSelectRow: 2) else { throw MailError(message: "Delete did not expose immediate pending feedback") }
+        await mailTask?.value
+        guard pendingMailIDs.isEmpty else { throw MailError(message: "Completed delete retained pending row state") }
         guard selectedMail?.id == next, messages.allSatisfy({ !deleted.contains($0.id) }) else { throw MailError(message: "Bulk Delete lost the next message or did not Trash the range") }
         undoMail(nil); await mailTask?.value
         guard messages.map(\.id) == original else { throw MailError(message: "Bulk Undo did not restore the offline page") }
+        table.selectRowIndexes(IndexSet(integersIn: 0...3), byExtendingSelection: false)
+        flagButton.performClick(nil); await mailTask?.value
+        folder = .starred; await loadList()
+        guard messages.count == 4 else { throw MailError(message: "Starred action fixture is incomplete") }
+        table.selectAll(nil); table.keyDown(with: event); await mailTask?.value
+        guard messages.isEmpty, pendingMailIDs.isEmpty else { throw MailError(message: "Trash left completed messages in Starred") }
+        undoMail(nil); await mailTask?.value
+        guard messages.count == 4 else { throw MailError(message: "Undo did not restore starred messages") }
+        undoMail(nil); await mailTask?.value
+        folder = .inbox; await loadList()
         table.selectRowIndexes(IndexSet(integersIn: 0...100), byExtendingSelection: false)
         guard !trashButton.isEnabled, !replyButton.isEnabled else { throw MailError(message: "Oversized selection left batch actions active") }
         setReadingLayout(.below, save: .transient)

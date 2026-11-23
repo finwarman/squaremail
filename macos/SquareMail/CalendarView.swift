@@ -305,8 +305,8 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         let mark = ClassicCalendarMark(id: "clock-fixture", title: "Ongoing event", start: start, end: start.addingTimeInterval(3600), color: .blue, span: .timed)
         agendaItems = [SampleEvent(key: nil, mark: mark, feed: nil, sourceKey: "clock", sourceName: "Fixture", location: "", notes: "")]
         updateAgendaClock(start.addingTimeInterval(1800))
-        guard nowRow == 0, numberOfRows(in: agenda) == 2, eventProgress(agendaItems[0]) == 0.5,
-              !tableView(agenda, shouldSelectRow: 0) else { throw MailError(message: "Agenda clock lost time or event progress") }
+        guard nowRow == 1, numberOfRows(in: agenda) == 2, eventProgress(agendaItems[0]) == 0.5,
+              !tableView(agenda, shouldSelectRow: 1) else { throw MailError(message: "Agenda clock lost time or event progress") }
         agenda.selectRowIndexes(IndexSet(integer: agendaRow(0)), byExtendingSelection: false)
         updateAgendaClock(start.addingTimeInterval(3600))
         guard nowRow == 1, selectedEvent?.mark.id == mark.id, eventProgress(agendaItems[0]) == nil else { throw MailError(message: "Agenda clock rollover lost selection") }
@@ -317,6 +317,15 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         guard nowRow == nil, selectedEvent?.mark.id == mark.id else { throw MailError(message: "Agenda layout retained an invalid clock row") }
         setAgendaLayout(.right); grid.date = day.addingTimeInterval(-86400); updateAgendaClock(start)
         guard nowRow == nil else { throw MailError(message: "Agenda clock appeared on a different day") }
+        grid.date = day; refresh(); setAgendaLayout(.right)
+        let long = ClassicCalendarMark(id: "long", title: "Overnight on-call", start: day.addingTimeInterval(-15 * 3600), end: day.addingTimeInterval(33 * 3600), color: .blue, span: .timed)
+        let past = ClassicCalendarMark(id: "past", title: "Earlier short event", start: day.addingTimeInterval(9 * 3600), end: day.addingTimeInterval(10 * 3600), color: .blue, span: .timed)
+        let future = ClassicCalendarMark(id: "future", title: "Later event", start: day.addingTimeInterval(14 * 3600), end: day.addingTimeInterval(15 * 3600), color: .blue, span: .timed)
+        agendaItems = [long, past, mark, future].map { SampleEvent(key: nil, mark: $0, feed: nil, sourceKey: "clock", sourceName: "Fixture", location: "", notes: "") }
+        updateAgendaClock(start.addingTimeInterval(1800))
+        guard nowRow == 3, eventProgress(agendaItems[0]) != nil, eventProgress(agendaItems[1]) == nil, eventProgress(agendaItems[2]) == 0.5,
+              agendaTime(long) != timeFormat.string(from: long.start) + " - " + timeFormat.string(from: long.end) else { throw MailError(message: "Agenda Now split past starts or hid overlapping progress") }
+        try WindowPresentation.snapshot(self, name: "agenda-overlap-now")
     }
     private func tickClock() {
         let now = Date()
@@ -340,7 +349,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         let origin = agendaScroll.contentView.bounds.origin
         agendaNow = now
         nowRow = agendaLayout == .right && Calendar.current.isDate(grid.date, inSameDayAs: now)
-            ? agendaItems.firstIndex { $0.mark.span == .timed && $0.mark.end > now } ?? agendaItems.count : nil
+            ? agendaItems.firstIndex { $0.mark.span == .timed && $0.mark.start > now } ?? agendaItems.count : nil
         agenda.reloadData(); agenda.deselectAll(nil)
         if let index = agendaItems.firstIndex(where: { $0.mark.id == selected }) {
             agenda.selectRowIndexes(IndexSet(integer: agendaRow(index)), byExtendingSelection: false)
@@ -459,6 +468,14 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         updateAgendaClock(Date())
     }
 
+    private let spanFormat: DateFormatter = {
+        let value = DateFormatter(); value.dateFormat = "d MMM HH:mm"; return value
+    }()
+    private func agendaTime(_ mark: ClassicCalendarMark) -> String {
+        if mark.span == .allDay { return "All day" }
+        if Calendar.current.isDate(mark.start, inSameDayAs: mark.end) { return timeFormat.string(from: mark.start) + " - " + timeFormat.string(from: mark.end) }
+        return spanFormat.string(from: mark.start) + " - " + spanFormat.string(from: mark.end)
+    }
     func numberOfRows(in tableView: NSTableView) -> Int { agendaItems.count + (nowRow == nil ? 0 : 1) }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { row == nowRow ? 24 : agenda.rowHeight }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { eventIndex(row) != nil }
@@ -478,7 +495,7 @@ final class CalendarView: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         }
         guard let index = eventIndex(row), let column = tableColumn else { return nil }
         let event = agendaItems[index]
-        let time = event.mark.span == .allDay ? "All day" : timeFormat.string(from: event.mark.start) + " - " + timeFormat.string(from: event.mark.end)
+        let time = agendaTime(event.mark)
         if agendaLayout == .right {
             let cell = (tableView.makeView(withIdentifier: column.identifier, owner: self) as? AgendaSummaryCell) ?? AgendaSummaryCell()
             cell.identifier = column.identifier
