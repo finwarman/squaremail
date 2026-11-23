@@ -7,6 +7,8 @@ const DRAFT_LIMIT: i64 = 100;
 const OUTBOX_LIMIT: i64 = 50;
 const RECEIPT_LIMIT: i64 = 200;
 const VISIBLE_SEND_RECEIPTS: i64 = 20;
+mod bulk;
+
 enum ReadWrite {
     Manual,
     Automatic,
@@ -72,6 +74,18 @@ impl Store {
         mode: ReadWrite,
     ) -> Result<()> {
         let tx = self.write_tx()?;
+        self.queue_mail_in(&tx, operation, message, action, mode)?;
+        tx.commit()?;
+        Ok(())
+    }
+    fn queue_mail_in(
+        &self,
+        tx: &Connection,
+        operation: &str,
+        message: Message,
+        action: MailAction,
+        mode: ReadWrite,
+    ) -> Result<()> {
         let existing: Option<String> = tx
             .query_row(
                 "SELECT data FROM mail_actions WHERE id=?1",
@@ -102,7 +116,6 @@ impl Store {
                 )?;
                 let pending_read: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_actions WHERE message_id=?1 AND state<>'done' AND json_extract(data,'$.action.kind')='read')", [&message.id], |r|r.get(0))?;
                 if current == unread && !pending_read {
-                    tx.commit()?;
                     return Ok(());
                 }
             }
@@ -121,15 +134,14 @@ impl Store {
             {
                 *source = old.clone();
             }
-            restore_action(&tx, &work)?;
+            restore_action(tx, &work)?;
             work.action = action;
-            project(&tx, &work)?;
+            project(tx, &work)?;
             tx.execute(
                 "UPDATE mail_actions SET data=?2,state='pending',due=0,error=NULL WHERE id=?1",
                 params![work.operation, serde_json::to_string(&work)?],
             )?;
             self.project_mail(&message.account_id)?;
-            tx.commit()?;
             return Ok(());
         }
         let count: i64 = tx.query_row(
@@ -140,16 +152,15 @@ impl Store {
         if count >= ACTION_LIMIT {
             return Err("Mail actions are full. Resolve older changes first.".into());
         }
-        let before = snapshot(&tx, &message)?;
+        let before = snapshot(tx, &message)?;
         let work = QueuedMail {
             operation: operation.into(),
             message,
             action,
             before,
         };
-        project(&tx, &work)?;
+        project(tx, &work)?;
         tx.execute("INSERT INTO mail_actions(id,account,message_id,data,state,created) VALUES(?1,?2,?3,?4,?5,unixepoch())",params![operation,work.message.account_id,work.message.id,serde_json::to_string(&work)?,MailWorkState::Pending.as_str()])?;
-        tx.commit()?;
         Ok(())
     }
     pub(crate) fn keep_mail(&self, account: &str, remote: &str) -> Result<bool> {
@@ -410,9 +421,10 @@ impl Store {
     }
 }
 fn snapshot(db: &Connection, message: &Message) -> Result<MailSnapshot> {
-    let mut folders = db.prepare("SELECT folder FROM folders WHERE message_id=?1 LIMIT 2000")?;
+    let mut folders =
+        db.prepare("SELECT folder FROM folders WHERE message_id=?1 ORDER BY folder LIMIT 2000")?;
     let mut memberships = db.prepare(
-        "SELECT folder_id FROM mail_membership WHERE account_id=?1 AND remote_id=?2 LIMIT 2000",
+        "SELECT folder_id FROM mail_membership WHERE account_id=?1 AND remote_id=?2 ORDER BY folder_id LIMIT 2000",
     )?;
     Ok(MailSnapshot {
         unread: message.unread,
@@ -507,6 +519,11 @@ fn project(db: &Connection, work: &QueuedMail) -> Result<()> {
     let m = &work.message;
     let action = &work.action;
     match action {
+        MailAction::Restore { snapshot } => {
+            let mut restored = work.clone();
+            restored.before = snapshot.clone();
+            return restore_action(db, &restored);
+        }
         MailAction::Read { unread } => {
             db.execute(
                 "UPDATE messages SET unread=CASE WHEN keep_unread=1 THEN 1 ELSE ?2 END WHERE id=?1",

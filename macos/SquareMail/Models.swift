@@ -201,6 +201,8 @@ enum CoreCommand: String {
     case searchMail = "search_mail"
     case compose
     case moveFolders = "move_folders"
+    case batchMail = "batch_mail"
+    case undoMail = "undo_mail"
     case queueMail = "queue_mail"
     case bodyBackfill = "body_backfill"
     case readMail = "read_mail"

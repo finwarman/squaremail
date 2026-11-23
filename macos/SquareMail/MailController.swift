@@ -3,10 +3,13 @@ import ClassicKit
 import MessageText
 
 @MainActor
-final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation, NSMenuDelegate {
+final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let core: MailCore
     private let layout: MailLayout
-    private let table = NSTableView()
+    private let table = MailTable()
+    private var mailUndo: [MailUndo] = []
+    private static let batchLimit = 100
+    private static let undoLimit = 20
     private var tableHeader: NSTableHeaderView?
     private let sidebar = Sidebar()
     private var messages: [Mail] = []
@@ -131,6 +134,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.coordinator = SyncCoordinator(core: core)
         self.media = MessageMedia(core: core, reader: layout.reader)
         super.init()
+        nextResponder = layout.nextResponder; layout.nextResponder = self
         let arguments = ProcessInfo.processInfo.arguments
         cursorTrail.attach(to: layout)
         if !WindowPresentation.isBackground { cursorTrail.mode = UserDefaults.standard.bool(forKey: Self.sparkleKey) ? .enabled : .disabled }
@@ -267,6 +271,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
+    required init?(coder: NSCoder) { fatalError("Use init(core:layout:)") }
+
     func start() async {
         do {
             let live: [Account] = try await core.request(["command": CoreCommand.accounts.rawValue], mode: .live)
@@ -390,7 +396,15 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         updateMailButtons()
     }
 
-    private var selectedMail: Mail? { messages.indices.contains(table.selectedRow) ? messages[table.selectedRow] : nil }
+    private var selectedMails: [Mail] { table.selectedRowIndexes.compactMap { messages.indices.contains($0) ? messages[$0] : nil } }
+    private var selectedMail: Mail? { table.numberOfSelectedRows == 1 ? selectedMails.first : nil }
+    private var batchReady: Bool {
+        section == .mail && mailbox == .live && listPhase == .ready && mailTask == nil && readTask == nil && !readClosing && !selectedMails.isEmpty && selectedMails.count <= Self.batchLimit
+    }
+    private var allUnread: Bool { selectedMails.allSatisfy(\.unread) }
+    private var allFlagged: Bool { selectedMails.allSatisfy(\.starred) }
+    private var allPinned: Bool { selectedMails.allSatisfy { $0.pinned == true } }
+
     private func composeMail(_ kind: ComposeKind) {
         guard mailbox == .live, section == .mail else { return }
         let selected = selectedMail
@@ -424,18 +438,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc private func forwardMail() { composeMail(.forward) }
     @objc private func trashMail() { changeMail(["kind": MailActionKind.trash.rawValue]) }
     @objc private func archiveMail() { changeMail(["kind": MailActionKind.archive.rawValue]) }
-    @objc private func toggleRead() {
-        guard let value = selectedMail else { return }
-        readDwell.setHold(value.unread ? .automatic : .keep)
-        _ = queueRead(value.id, state: value.unread ? .read : .unread)
-        updateMailButtons()
-    }
-    @objc private func toggleKeepUnread() {
-        guard let value = selectedMail else { return }
-        readDwell.setHold(.keep)
-        _ = queueRead(value.id, state: .unread)
-        updateMailButtons()
-    }
+    @objc private func toggleRead() { changeMail(["kind": MailActionKind.read.rawValue, "unread": !allUnread]) }
+    @objc private func toggleKeepUnread() { changeMail(["kind": MailActionKind.read.rawValue, "unread": true]) }
     @objc private func toggleBodyCache() {
         guard backfillTask == nil else { return }
         let mode: BackfillMode = backfillMode == .enabled ? .paused : .enabled
@@ -458,7 +462,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private var readExposure: ReadExposure {
         guard section == .mail, mailbox == .live, listPhase == .ready, bodyPhase == .ready,
-              mailTask == nil, readTask == nil, !readSleeping, !readStopped, !readClosing,
+              mailTask == nil, readTask == nil, table.numberOfSelectedRows == 1, !readSleeping, !readStopped, !readClosing,
               let mail = current, mail.unread, mail.keepUnread != true, selectedMail?.unread == true, selectedMail?.id == mail.id, layout.reader.readyID == mail.id,
               accounts.contains(where: { $0.id == mail.accountId && $0.provider != .local }) else { return .hidden }
         if WindowPresentation.isBackground, let readExposureOverride { return readExposureOverride }
@@ -545,40 +549,58 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
         updateMailButtons()
     }
-    @objc private func toggleFlag() { guard let value = selectedMail else { return }; changeMail(["kind": MailActionKind.flag.rawValue, "flagged": !value.starred]) }
-    @objc private func togglePin() {
-        guard let value = selectedMail, value.id == current?.id else { return }
-        runMailCommand(["command": CoreCommand.pinMail.rawValue, "id": value.id, "pinned": value.pinned != true], message: "Pin updated on this Mac.")
-    }
+    @objc private func toggleFlag() { changeMail(["kind": MailActionKind.flag.rawValue, "flagged": !allFlagged]) }
+    @objc private func togglePin() { runBatch(["kind": MailEditKind.pin.rawValue, "pinned": !allPinned], title: allPinned ? "Unpin" : "Pin") }
     private func actionAnchor() -> MailAdvance? {
-        MailAdvance(messages.map(\.id), id: current?.id, revision: listRevision, selection: selectionRevision)
+        MailAdvance(messages.map(\.id), ids: Set(selectedMails.map(\.id)), revision: listRevision, selection: selectionRevision)
     }
     private func changeMail(_ action: [String: Any]) {
-        guard let value = selectedMail, value.id == current?.id, mailbox == .live else { return }
-        let kind = (action["kind"] as? String).flatMap(MailActionKind.init(rawValue:))
-        let anchor: MailAdvance?
+        guard let kind = (action["kind"] as? String).flatMap(MailActionKind.init(rawValue:)) else { return }
+        let title: String
         switch kind {
-        case .trash, .archive, .move: anchor = actionAnchor()
-        default: anchor = nil
+        case .trash: title = "Move to Trash"
+        case .archive: title = "Archive"
+        case .move: title = "Move"
+        case .read: title = action["unread"] as? Bool == true ? "Mark unread" : "Mark read"
+        case .flag: title = action["flagged"] as? Bool == true ? "Flag" : "Unflag"
         }
-        runMailCommand(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], message: "Change queued. Drafts / outbox shows sync and consent status.", advance: anchor)
+        runBatch(["kind": MailEditKind.action.rawValue, "action": action], title: title, advance: [.trash, .archive, .move].contains(kind) ? actionAnchor() : nil)
     }
-    private func runMailCommand(_ command: [String: Any], message: String, advance: MailAdvance? = nil) {
-        guard mailTask == nil, section == .mail else { return }
-        let mode = mailbox
+    private func runBatch(_ edit: [String: Any], title: String, advance: MailAdvance? = nil) {
+        guard batchReady else { return }
+        let ids = selectedMails.map(\.id)
+        let operation = UUID().uuidString.lowercased()
+        layout.statusText.stringValue = title + " · updating " + String(ids.count) + " message(s) on this Mac…"
         updateMailButtons(.busy)
         mailTask = Task { [weak self] in
             guard let self else { return }
             defer { mailTask = nil; updateMailButtons() }
             do {
-                let _: EmptyReply = try await core.request(command, mode: mode)
+                let receipt: MailBatchReceipt = try await core.request(["command": CoreCommand.batchMail.rawValue, "operation": operation, "ids": ids, "edit": edit], mode: .live)
+                mailUndo.append(MailUndo(operation: receipt.operation, title: title)); if mailUndo.count > Self.undoLimit { mailUndo.removeFirst() }
                 await refreshList(after: advance); workspace?.refresh(); coordinator.kick()
-                layout.statusText.stringValue = message
-            } catch { showError(error) }
+                layout.statusText.stringValue = title + " · " + String(receipt.count) + " message(s). Undo with ⌘Z. Syncs when online and authorised."
+            } catch { layout.statusText.stringValue = error.localizedDescription }
+        }
+    }
+    @objc(undo:) private func undoMail(_ sender: Any?) {
+        if let editor = layout.window?.firstResponder as? NSTextView, editor.isEditable { editor.undoManager?.undo(); return }
+        guard section == .mail, mailbox == .live, listPhase == .ready, mailTask == nil, readTask == nil, let entry = mailUndo.last else { return }
+        layout.statusText.stringValue = "Undoing " + entry.title + "…"
+        updateMailButtons(.busy)
+        mailTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mailTask = nil; updateMailButtons() }
+            do {
+                let _: EmptyReply = try await core.request(["command": CoreCommand.undoMail.rawValue, "operation": entry.operation], mode: .live)
+                mailUndo.removeLast(); await refreshList(); workspace?.refresh(); coordinator.kick()
+                layout.statusText.stringValue = "Undid " + entry.title + ". Reversals sync when online and authorised."
+            } catch { layout.statusText.stringValue = error.localizedDescription }
         }
     }
     @objc private func moveMail() {
-        guard mailTask == nil, let value = selectedMail, value.id == current?.id, mailbox == .live else { return }
+        guard batchReady, let value = selectedMails.first, selectedMails.allSatisfy({ $0.accountId == value.accountId }) else { return }
+        let ids = selectedMails.map(\.id)
         let source = remoteFolder?.id
         let advance = actionAnchor()
         updateMailButtons(.busy)
@@ -591,12 +613,13 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 guard !targets.isEmpty else { throw MailError(message: "Sync this account's folders first.") }
                 let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 27))
                 for folder in targets { picker.addItem(withTitle: folder.name) }
-                let alert = NSAlert(); alert.messageText = "Move this message"; alert.informativeText = "Choose a folder in the same account. Gmail keeps unrelated labels."
+                let alert = NSAlert(); alert.messageText = "Move \(ids.count) message(s)"; alert.informativeText = "Choose a folder in the same account. Gmail keeps unrelated labels."
                 alert.accessoryView = picker; alert.addButton(withTitle: "Move"); alert.addButton(withTitle: "Cancel")
                 guard WindowPresentation.runAlert(alert) == .alertFirstButtonReturn, targets.indices.contains(picker.indexOfSelectedItem) else { return }
                 let target = targets[picker.indexOfSelectedItem]
                 let action: [String: Any] = target.system == Folder.trash.rawValue ? ["kind": MailActionKind.trash.rawValue] : ["kind": MailActionKind.move.rawValue, "destination": target.id, "source": source as Any? ?? NSNull()]
-                let _: EmptyReply = try await core.request(["command": CoreCommand.queueMail.rawValue, "operation": UUID().uuidString.lowercased(), "id": value.id, "action": action], mode: .live)
+                let receipt: MailBatchReceipt = try await core.request(["command": CoreCommand.batchMail.rawValue, "operation": UUID().uuidString.lowercased(), "ids": ids, "edit": ["kind": MailEditKind.action.rawValue, "action": action]], mode: .live)
+                mailUndo.append(MailUndo(operation: receipt.operation, title: "Move")); if mailUndo.count > Self.undoLimit { mailUndo.removeFirst() }
                 await refreshList(after: advance); coordinator.kick(); workspace?.refresh()
                 layout.statusText.stringValue = "Move queued. Cached mail remains available offline."
             } catch { showError(error) }
@@ -650,20 +673,24 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private enum MailButtonPhase { case ready, busy }
     private func updateMailButtons(_ phase: MailButtonPhase = .ready) {
         let selected = selectedMail
-        let active = section == .mail && mailbox == .live && phase == .ready && listPhase == .ready && mailTask == nil && !readClosing && selected?.id == current?.id
-        let provider = accounts.contains { $0.id == selected?.accountId && $0.provider != .local }
+        let active = phase == .ready && batchReady
+        let single = selected != nil && selected?.id == current?.id
+        let provider = selectedMails.allSatisfy { mail in accounts.contains { $0.id == mail.accountId && $0.provider != .local } }
         newButton.isEnabled = section == .mail && mailbox == .live && accounts.contains { $0.provider != .local }
         newButton.isHidden = section != .mail
         layout.searchScope.isHidden = section != .mail
         layout.fuzzy.isHidden = section != .mail
-        for button in [replyButton, replyAllButton, forwardButton, trashButton, archiveButton, moveButton, readButton, flagButton, pinButton] { button.isEnabled = active && selected != nil && provider }
-        pinButton.isEnabled = active && selected != nil
-        readButton.title = selected?.unread == true ? "Mark read" : "Mark unread"
-        keepUnread.isEnabled = active && selected != nil && provider
+        for button in [trashButton, archiveButton, moveButton, readButton, flagButton, pinButton] { button.isEnabled = active && provider }
+        for button in [replyButton, replyAllButton, forwardButton] { button.isEnabled = active && single && provider }
+        moveButton.isEnabled = active && provider && Set(selectedMails.map(\.accountId)).count == 1
+        moveButton.toolTip = "Move selected messages to a folder in the same account. Select one account for a batch move."
+        pinButton.isEnabled = active
+        readButton.title = allUnread ? "Mark read" : "Mark unread"
+        keepUnread.isEnabled = active && provider
         keepUnread.state = selected?.keepUnread == true || (selected?.id == readDwell.heldID && selected != nil) ? .on : .off
         keepUnread.toolTip = "Keep this email unread across reopening and restarts on this Mac. Choose Mark read to clear."
-        flagButton.title = selected?.starred == true ? "Unflag" : "Flag / star"
-        pinButton.title = selected?.pinned == true ? "Unpin" : "Pin"
+        flagButton.title = allFlagged ? "Unflag" : "Flag / star"
+        pinButton.title = allPinned ? "Unpin" : "Pin"
         draftsButton.isEnabled = mailbox == .live
         textButton.isEnabled = section == .mail && selected != nil && listPhase == .ready && bodyPhase == .ready
         htmlButton.isEnabled = textButton.isEnabled
@@ -676,7 +703,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === messageMenu else { return }
-        if messages.indices.contains(table.clickedRow) { table.selectRowIndexes(IndexSet(integer: table.clickedRow), byExtendingSelection: false) }
+        if messages.indices.contains(table.clickedRow), !table.selectedRowIndexes.contains(table.clickedRow) { table.selectRowIndexes(IndexSet(integer: table.clickedRow), byExtendingSelection: false) }
         for item in menu.items { item.isEnabled = validateMenuItem(item) }
     }
 
@@ -693,7 +720,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.style = .plain
         table.selectionHighlightStyle = .regular
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        table.allowsMultipleSelection = false
+        table.allowsMultipleSelection = true
+        table.onTrash = { [weak self] in self?.trashMail() }
+        trashButton.toolTip = "Move selected messages to Trash. Delete/Backspace in the list; ⌘Z to undo."
+        table.setAccessibilityHelp("Shift-click selects a range. Command-click toggles messages. Command-A selects this page; actions accept up to 100 messages.")
         table.allowsEmptySelection = true
         table.dataSource = self
         table.delegate = self
@@ -726,15 +756,15 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func setReadingLayout(_ value: ReadingLayout, save: LayoutSave = .save) {
         guard value != readingLayout else { return }
-        let selected = table.selectedRow
+        let selected = table.selectedRowIndexes
         readingLayout = value
         if save == .save { UserDefaults.standard.set(value.rawValue, forKey: Self.layoutKey) }
         layout.setReadingLayout(value)
         configureColumns()
         table.reloadData()
-        if messages.indices.contains(selected) {
-            table.selectRowIndexes(IndexSet(integer: selected), byExtendingSelection: false)
-            table.scrollRowToVisible(selected)
+        if !selected.isEmpty {
+            table.selectRowIndexes(selected, byExtendingSelection: false)
+            table.scrollRowToVisible(selected.first!)
         }
         updateLayoutButtons()
     }
@@ -922,12 +952,20 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         readDwell.cancel()
         updateMailButtons()
         guard section == .mail else { return }
-        guard messages.indices.contains(table.selectedRow) else {
-            readDwell.select(nil)
-            current = nil; layout.header.display(nil); layout.reader.showNotice("Select a message to read it.")
-            return
+        guard let selectedMail else {
+            showSelection(); return
         }
-        readMessage(messages[table.selectedRow])
+        readMessage(selectedMail)
+    }
+
+    private func showSelection() {
+        bodyRevision += 1; readingTask?.cancel(); readDwell.select(nil)
+        current = nil; layout.header.display(nil)
+        let count = table.numberOfSelectedRows
+        if count > 1 { layout.header.displaySelection(count) }
+        let message = count > 1 ? "\(count) messages selected\n\n" + (count > Self.batchLimit ? "Choose up to 100 messages per action." : "Use Trash, Archive, Read, Flag or Pin. Reply and Forward require one message.") : "Select a message to read it."
+        layout.reader.showNotice(message); updateMailButtons()
+        if count > 1 { layout.statusText.stringValue = "\(count) selected on this page. ⌘-click to toggle, Shift-click for a range." }
     }
 
     private func readMessage(_ summary: Mail) {
@@ -1140,6 +1178,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 if changedKind { layout.statusText.stringValue = matchCaption + String(rows.count) + " messages shown" }
                 return
             }
+            let selection = Set(selectedMails.map(\.id))
             let previous = current
             let selected = previous?.id
             let neighbour = MailAdvance(messages.map(\.id), id: selected, revision: revision, selection: selectionRevision)
@@ -1155,7 +1194,9 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             else if let selected, let index = rows.firstIndex(where: { $0.id == selected }) { target = index }
             else if folder != .unread || recentlyReadID == nil { target = neighbour?.next(in: rows.map(\.id)) }
             else { target = nil }
-            if let target { table.selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false) }
+            let retained = IndexSet(rows.indices.filter { selection.contains(rows[$0].id) })
+            if !advancing, selection.count > 1 { table.selectRowIndexes(retained, byExtendingSelection: false) }
+            else if let target { table.selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false) }
             if let origin, let scroll = table.enclosingScrollView {
                 scroll.contentView.scroll(to: origin); scroll.reflectScrolledClipView(scroll.contentView)
             }
@@ -1167,9 +1208,8 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                     current = row.keepingBody(previous); layout.header.display(current)
                 } else { readMessage(row) }
             } else {
-                bodyRevision += 1; readingTask?.cancel(); readDwell.select(nil)
-                current = nil; layout.header.display(nil)
-                layout.reader.showNotice(rows.isEmpty ? "No cached messages in this view." : (advancing ? "Select another message to continue." : "Select a message to read it."))
+                showSelection()
+                if rows.isEmpty { layout.reader.showNotice("No cached messages in this view.") }
             }
             updateMailButtons()
             layout.statusText.stringValue = matchCaption + "Cache updated · " + String(rows.count) + " messages shown"
@@ -1293,6 +1333,10 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         addItem(file, "Connect account…", #selector(connectAccount), ",")
         addItem(file, "Switch demo / my mailbox", #selector(toggleDemo), "d")
         let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "Redo", action: NSSelectorFromString("redo:"), keyEquivalent: "z"); redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Select all", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
@@ -1382,14 +1426,22 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
+        case #selector(undoMail(_:)):
+            if let editor = layout.window?.firstResponder as? NSTextView, editor.isEditable {
+                item.title = editor.undoManager?.undoMenuItemTitle ?? "Undo"; return editor.undoManager?.canUndo == true
+            }
+            item.title = mailUndo.last.map { "Undo " + $0.title } ?? "Undo"
+            return section == .mail && mailbox == .live && listPhase == .ready && mailTask == nil && readTask == nil && !mailUndo.isEmpty
         case #selector(newMail): return mailbox == .live && section == .mail && accounts.contains { $0.provider != .local }
         case #selector(showMailWorkspace): return mailbox == .live
         case #selector(replyMail), #selector(replyAllMail), #selector(forwardMail), #selector(trashMail), #selector(archiveMail), #selector(moveMail), #selector(toggleRead), #selector(toggleKeepUnread), #selector(toggleFlag), #selector(togglePin):
-            if item.action == #selector(toggleRead) { item.title = selectedMail?.unread == true ? "Mark as read" : "Mark as unread" }
-            if item.action == #selector(toggleFlag) { item.title = selectedMail?.starred == true ? "Unflag / unstar" : "Flag / star" }
-            if item.action == #selector(togglePin) { item.title = selectedMail?.pinned == true ? "Unpin on this Mac" : "Pin on this Mac" }
+            if item.action == #selector(toggleRead) { item.title = allUnread ? "Mark as read" : "Mark as unread" }
+            if item.action == #selector(toggleFlag) { item.title = allFlagged ? "Unflag / unstar" : "Flag / star" }
+            if item.action == #selector(togglePin) { item.title = allPinned ? "Unpin on this Mac" : "Pin on this Mac" }
             if item.action == #selector(toggleKeepUnread) { item.state = selectedMail?.keepUnread == true || (selectedMail?.id == readDwell.heldID && selectedMail != nil) ? .on : .off }
-            return mailbox == .live && section == .mail && listPhase == .ready && selectedMail != nil && selectedMail?.id == current?.id && mailTask == nil
+            if [#selector(replyMail), #selector(replyAllMail), #selector(forwardMail)].contains(item.action) { return batchReady && selectedMail != nil && selectedMail?.id == current?.id }
+            if item.action == #selector(moveMail) { return batchReady && Set(selectedMails.map(\.accountId)).count == 1 }
+            return batchReady && (item.action == #selector(togglePin) || selectedMails.allSatisfy { mail in accounts.contains { $0.id == mail.accountId && $0.provider != .local } })
 
         case #selector(toggleSparkles): item.state = cursorTrail.mode == .enabled ? .on : .off
         case #selector(toggleBodyCache): item.state = backfillMode == .enabled ? .on : .off; return mailbox == .live && backfillTask == nil
@@ -1688,7 +1740,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         await refreshList(); try await waitForRead(.read)
         let saved: Mail = try await core.request(["command": CoreCommand.message.rawValue, "id": id, "mode": BodyFetch.cached.rawValue], mode: .live)
         guard !saved.unread else { throw MailError(message: "Automatic read did not persist offline") }
-        keepUnread.performClick(nil); await readTask?.value
+        keepUnread.performClick(nil); await mailTask?.value; await readTask?.value
         guard current?.unread == true, keepUnread.state == .on else { throw MailError(message: "Keep unread did not reverse the queued read") }
         try await Task.sleep(for: .milliseconds(2100))
         guard current?.unread == true, !readDwell.hasPending else { throw MailError(message: "Held unread message was marked again") }
@@ -1712,7 +1764,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         _ = queueRead(id, state: .read); _ = queueRead(id, state: .unread); await readTask?.value
         guard bodyRevision == before, current?.unread == true else { throw MailError(message: "Latest unread intent was lost or reloaded the body") }
         _ = queueRead(id, state: .read); await readTask?.value
-        keepUnread.performClick(nil); await readTask?.value
+        keepUnread.performClick(nil); await mailTask?.value; await readTask?.value
         guard current?.id == id, current?.unread == true else { throw MailError(message: "Keep unread did not restore the original fixture") }
         try WindowPresentation.snapshot(layout, name: "auto-read-keep-unread")
     }
@@ -1723,7 +1775,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         defer { readExposureOverride = nil; updateReadDwell() }
         switch probe {
         case .create:
-            keepUnread.performClick(nil); await readTask?.value
+            keepUnread.performClick(nil); await mailTask?.value; await readTask?.value
         case .reopen:
             guard current?.keepUnread == true, keepUnread.state == .on else { throw MailError(message: "Restart lost the unread hold") }
             folder = .archive; await loadList(); await finishSelection()
@@ -1732,7 +1784,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             readExposureOverride = .viewing; updateReadDwell()
             try await Task.sleep(for: .milliseconds(2100))
             guard current?.unread == true, !readDwell.hasPending else { throw MailError(message: "Persisted hold allowed an automatic read") }
-            readButton.performClick(nil); await readTask?.value
+            readButton.performClick(nil); await mailTask?.value; await readTask?.value
         }
         let saved: Mail = try await core.request(["command": CoreCommand.message.rawValue, "id": id, "mode": BodyFetch.cached.rawValue], mode: .live)
         let held = probe == .create
@@ -1756,6 +1808,37 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard reply.kind == .bodyBackfill, reply.bodyCached == 4, reply.bodyTotal == 10 else { throw MailError(message: "Backfill progress could not decode") }
     }
 
+    private func verifyBulkSelection() async throws {
+        let original = messages.map(\.id)
+        table.selectRowIndexes(IndexSet(integersIn: 2...4), byExtendingSelection: false)
+        table.selectRowIndexes(IndexSet(integer: 8), byExtendingSelection: true)
+        guard table.numberOfSelectedRows == 4, current == nil, !replyButton.isEnabled, trashButton.isEnabled, !readDwell.hasPending else { throw MailError(message: "Range/additive selection exposed single-message actions or started reading") }
+        let selected = table.selectedRowIndexes
+        let selectedIDs = Set(selectedMails.map(\.id))
+        setReadingLayout(.right, save: .transient)
+        guard table.selectedRowIndexes == selected else { throw MailError(message: "Layout change lost bulk selection") }
+        await layout.reader.finishText()
+        try WindowPresentation.snapshot(layout, name: "bulk-selection")
+        pinButton.performClick(nil); await mailTask?.value
+        guard Set(selectedMails.map(\.id)) == selectedIDs, selectedMails.allSatisfy({ $0.pinned == true }) else { throw MailError(message: "Bulk pin lost selection") }
+        guard table.tryToPerform(NSSelectorFromString("undo:"), with: nil) else { throw MailError(message: "List responder chain did not find Undo") }
+        await mailTask?.value
+        guard selectedMails.allSatisfy({ $0.pinned != true }) else { throw MailError(message: "Native Undo did not restore bulk pins: " + layout.statusText.stringValue + " / " + String(mailUndo.count)) }
+        table.selectRowIndexes(IndexSet(integersIn: 2...4), byExtendingSelection: false)
+        let deleted = Set(selectedMails.map(\.id)); let next = messages[5].id
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: layout.window?.windowNumber ?? 0, context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51) else { throw MailError(message: "Could not build local Delete event") }
+        table.keyDown(with: event); await mailTask?.value
+        guard selectedMail?.id == next, messages.allSatisfy({ !deleted.contains($0.id) }) else { throw MailError(message: "Bulk Delete lost the next message or did not Trash the range") }
+        undoMail(nil); await mailTask?.value
+        guard messages.map(\.id) == original else { throw MailError(message: "Bulk Undo did not restore the offline page") }
+        table.selectRowIndexes(IndexSet(integersIn: 0...100), byExtendingSelection: false)
+        guard !trashButton.isEnabled, !replyButton.isEnabled else { throw MailError(message: "Oversized selection left batch actions active") }
+        setReadingLayout(.below, save: .transient)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await finishSelection()
+        guard trashButton.isEnabled else { throw MailError(message: "Single selection did not restore actions") }
+    }
+
     func checkActionNav() async throws {
         guard WindowPresentation.isBackground, accounts.count == 1, accounts.first?.email == "fin@example.test",
               accounts.first?.connected == false, messages.count == Self.pageSize else { throw MailError(message: "Use the disconnected action-navigation fixture") }
@@ -1764,6 +1847,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
               !sample.isCurrent(revision: 2, selection: 1), !sample.isCurrent(revision: 1, selection: 2) else { throw MailError(message: "Neighbour selection followed new arrivals or stale navigation") }
         account = accounts[0].id
         await loadList()
+        try await verifyBulkSelection()
         table.selectRowIndexes(IndexSet(integer: 120), byExtendingSelection: false)
         await finishSelection()
         for _ in 0..<3 {
@@ -1842,7 +1926,7 @@ final class MailController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         layout.reader.onRetryLoad?(); await finishSelection()
         guard current?.text != nil else { throw MailError(message: "Reader Retry did not restore the cached body") }
         try await verifyAutoRead()
-        readButton.performClick(nil); await readTask?.value
+        readButton.performClick(nil); await mailTask?.value; await readTask?.value
         guard selectedMail?.unread == false, readButton.title == "Mark unread" else { throw MailError(message: "Read action did not update the native list") }
         flagButton.performClick(nil); await mailTask?.value
         guard selectedMail?.starred == true, flagButton.title == "Unflag" else { throw MailError(message: "Flag action did not update the native list") }

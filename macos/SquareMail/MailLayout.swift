@@ -181,6 +181,7 @@ final class MailLayout: NSView, NSSplitViewDelegate {
 }
 
 final class MessageHeader: NSView {
+    private var selectionCount = 0
     private var message: Mail?
     private var date = ""
     private let dateFormat: DateFormatter = {
@@ -194,16 +195,28 @@ final class MessageHeader: NSView {
     override var isFlipped: Bool { true }
 
     func display(_ mail: Mail?) {
+        selectionCount = 0
+        setAccessibilityLabel(mail?.displaySubject ?? "Reading pane")
         message = mail
         date = mail.map { dateFormat.string(from: Date(timeIntervalSince1970: TimeInterval($0.timestamp))) } ?? ""
         needsDisplay = true
     }
 
+    func displaySelection(_ count: Int) {
+        display(nil); selectionCount = count
+        setAccessibilityLabel("\(count) messages selected")
+    }
     override func draw(_ dirtyRect: NSRect) {
         ClassicTheme.face.setFill(); bounds.fill()
         ClassicTheme.shadow.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
         guard let message else {
+            if selectionCount > 1 {
+                ClassicTheme.text("\(selectionCount) messages selected", in: NSRect(x: 16, y: 15, width: bounds.width - 32, height: 25), size: 17, weight: .bold)
+                ClassicTheme.text("Reply and Forward need one message.", in: NSRect(x: 16, y: 48, width: bounds.width - 32, height: 20), size: 12)
+                ClassicTheme.text("Up to 100 messages per action · this page only", in: NSRect(x: 16, y: 75, width: bounds.width - 32, height: 20), size: 11, color: ClassicTheme.muted)
+                return
+            }
             ClassicTheme.text("Reading pane", in: NSRect(x: 16, y: 15, width: 500, height: 24), size: 15, weight: .bold)
             return
         }

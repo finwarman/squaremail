@@ -9,7 +9,7 @@ mod search;
 mod sync;
 
 pub(crate) const PAGE_LIMIT: usize = 250;
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 #[derive(Clone, Copy)]
 pub(crate) struct MailScope<'a> {
@@ -111,6 +111,7 @@ impl Store {
                 )?;
             }
             tx.execute_batch(include_str!("backfill-schema.sql"))?;
+            tx.execute("CREATE TABLE IF NOT EXISTS mail_undo(id TEXT PRIMARY KEY,data TEXT NOT NULL,created INTEGER NOT NULL)",[])?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }

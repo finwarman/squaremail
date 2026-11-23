@@ -45,15 +45,22 @@ pub(crate) fn move_folders(store: &Store, id: &str) -> Result<Vec<MailFolder>> {
         })
         .collect())
 }
-pub(crate) fn queue(
+pub(crate) fn queue(store: &Store, operation: &str, id: &str, action: MailAction) -> Result<Value> {
+    valid_id(operation)?;
+    let (message, action) = validate_action(store, id, action)?;
+    store.queue_mail(operation, message, action)?;
+    Ok(json!({}))
+}
+fn validate_action(
     store: &Store,
-    operation: &str,
     id: &str,
     mut action: MailAction,
-) -> Result<Value> {
-    valid_id(operation)?;
+) -> Result<(Message, MailAction)> {
     let message = store.action_message(id)?;
     let account = account(store, &message.account_id)?;
+    if matches!(action, MailAction::Restore { .. }) {
+        return Err("Restore requires a recorded undo".into());
+    }
     if let MailAction::Move {
         destination,
         source,
@@ -86,8 +93,18 @@ pub(crate) fn queue(
             action = MailAction::Trash;
         }
     }
-    store.queue_mail(operation, message, action)?;
-    Ok(json!({}))
+    Ok((message, action))
+}
+pub(crate) fn batch(
+    store: &Store,
+    operation: &str,
+    ids: &[String],
+    edit: MailEdit,
+) -> Result<Value> {
+    valid_id(operation)?;
+    store.batch_mail(operation, ids, edit, |id, action| {
+        validate_action(store, id, action)
+    })
 }
 pub(crate) fn read_mail(
     store: &Store,

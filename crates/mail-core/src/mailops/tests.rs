@@ -985,3 +985,368 @@ fn bounded_send_receipts() {
         && r.get("text").is_none()
         && r.get("data").is_none()));
 }
+
+#[test]
+fn bulk_undo_atomic_offline() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bulk.sqlite");
+    let store = Store::open(path.to_str().unwrap()).unwrap();
+    let first = seed(&store);
+    let mut second = first.clone();
+    second.id = "other".into();
+    second.remote_id = "other".into();
+    store.save(&second, Folder::Inbox).unwrap();
+    let ids = vec![first.id.clone(), second.id.clone()];
+    let edit = |action| MailEdit::Action { action };
+    assert!(
+        batch(
+            &store,
+            "bad-batch-test-operation",
+            &[first.id.clone(), "missing".into()],
+            edit(MailAction::Trash)
+        )
+        .is_err()
+    );
+    assert_eq!(store.list(None, Folder::Inbox, "", 0, 10).unwrap().len(), 2);
+    assert!(
+        store.mail_workspace().unwrap()["work"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    batch(
+        &store,
+        "archive-batch-test-operation",
+        &ids,
+        edit(MailAction::Archive),
+    )
+    .unwrap();
+    batch(
+        &store,
+        "trash-batch-test-operation",
+        &ids,
+        edit(MailAction::Trash),
+    )
+    .unwrap();
+    drop(store);
+    let store = Store::open(path.to_str().unwrap()).unwrap();
+    store.undo_mail("trash-batch-test-operation").unwrap();
+    assert_eq!(
+        store.list(None, Folder::Archive, "", 0, 10).unwrap().len(),
+        2
+    );
+    store.undo_mail("archive-batch-test-operation").unwrap();
+    assert_eq!(store.list(None, Folder::Inbox, "", 0, 10).unwrap().len(), 2);
+    assert!(
+        store.mail_workspace().unwrap()["work"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    batch(
+        &store,
+        "read-batch-test-operation",
+        &ids,
+        edit(MailAction::Read { unread: false }),
+    )
+    .unwrap();
+    assert!(!store.message(&first.id).unwrap().unread);
+    store.undo_mail("read-batch-test-operation").unwrap();
+    let restored = store.message(&first.id).unwrap();
+    assert!(restored.unread && !restored.keep_unread);
+    batch(
+        &store,
+        "pin-batch-test-operation",
+        &ids,
+        MailEdit::Pin { pinned: true },
+    )
+    .unwrap();
+    assert!(store.message(&first.id).unwrap().pinned);
+    store.undo_mail("pin-batch-test-operation").unwrap();
+    assert!(!store.message(&first.id).unwrap().pinned);
+    batch(
+        &store,
+        "flag-batch-test-operation",
+        &ids,
+        edit(MailAction::Flag { flagged: true }),
+    )
+    .unwrap();
+    store.undo_mail("flag-batch-test-operation").unwrap();
+    assert!(!store.message(&first.id).unwrap().starred);
+}
+
+#[test]
+fn bulk_undo_remote_wait() {
+    let store = Store::open(":memory:").unwrap();
+    let message = seed(&store);
+    batch(
+        &store,
+        "remote-batch-test-operation",
+        std::slice::from_ref(&message.id),
+        MailEdit::Action {
+            action: MailAction::Trash,
+        },
+    )
+    .unwrap();
+    store
+        .mark_mail_work(
+            MailWorkKind::Action,
+            "remote-batch-test-operation-0",
+            MailWorkState::Sending,
+            None,
+            0,
+        )
+        .unwrap();
+    assert!(store.undo_mail("remote-batch-test-operation").is_err());
+    assert_eq!(store.list(None, Folder::Trash, "", 0, 10).unwrap().len(), 1);
+    store
+        .mark_mail_work(
+            MailWorkKind::Action,
+            "remote-batch-test-operation-0",
+            MailWorkState::Done,
+            None,
+            0,
+        )
+        .unwrap();
+    store.undo_mail("remote-batch-test-operation").unwrap();
+    assert_eq!(store.list(None, Folder::Inbox, "", 0, 10).unwrap().len(), 1);
+    let work = store.mail_workspace().unwrap();
+    assert!(
+        work["work"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["id"] == "undo-remote-batch-test-operation-0")
+    );
+}
+
+#[test]
+fn bulk_undo_conflict_rollback() {
+    let store = Store::open(":memory:").unwrap();
+    let first = seed(&store);
+    let mut other = first.clone();
+    other.id = "other".into();
+    other.remote_id = "other".into();
+    store.save(&other, Folder::Inbox).unwrap();
+    let ids = vec![first.id.clone(), other.id.clone()];
+    batch(
+        &store,
+        "pins-test-operation",
+        &ids,
+        MailEdit::Pin { pinned: true },
+    )
+    .unwrap();
+    store.pin_mail(&other.id, MailToggle::Off).unwrap();
+    assert!(store.undo_mail("pins-test-operation").is_err());
+    assert!(store.message(&first.id).unwrap().pinned);
+    assert!(
+        batch(
+            &store,
+            "duplicates-test-operation",
+            &[first.id.clone(), first.id],
+            MailEdit::Pin { pinned: true }
+        )
+        .is_err()
+    );
+    assert!(
+        batch(
+            &store,
+            "too-many-test-operation",
+            &(0..101).map(|i| format!("id-{i}")).collect::<Vec<_>>(),
+            MailEdit::Pin { pinned: true }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn undo_wire_folders() {
+    use crate::network::fixture::Fixture;
+    for provider in [Provider::Gmail, Provider::Outlook] {
+        let store = Store::open(":memory:").unwrap();
+        let message = seed(&store);
+        let mut account = account_fixture();
+        account.provider = provider;
+        let original = MailSnapshot {
+            unread: true,
+            flagged: false,
+            folders: vec!["inbox".into()],
+            memberships: if provider == Provider::Gmail {
+                vec!["label:INBOX".into(), "label:project".into()]
+            } else {
+                vec!["original-folder".into()]
+            },
+        };
+        let trash = MailSnapshot {
+            unread: true,
+            flagged: false,
+            folders: vec!["trash".into()],
+            memberships: if provider == Provider::Gmail {
+                vec!["label:TRASH".into(), "label:project".into()]
+            } else {
+                vec!["deleted-folder".into()]
+            },
+        };
+        let work = QueuedMail {
+            operation: "undo-wire-test-operation".into(),
+            message,
+            action: MailAction::Restore { snapshot: original },
+            before: trash,
+        };
+        let fixture = if provider == Provider::Gmail {
+            Fixture::new(vec![
+                ("POST /messages/original/untrash ", 200, Some(json!({}))),
+                ("POST /messages/original/modify ", 200, Some(json!({}))),
+            ])
+        } else {
+            Fixture::new(vec![
+                (
+                    "GET /messages/original?$select=id,parentFolderId ",
+                    200,
+                    Some(json!({"id":"original","parentFolderId":"deleted-folder"})),
+                ),
+                (
+                    "POST /messages/original/move ",
+                    201,
+                    Some(json!({"id":"original"})),
+                ),
+            ])
+        };
+        let context = Context::new(None, 10);
+        MailRemote::fixture(&account, &context, fixture.root.clone())
+            .action(&work, &[])
+            .unwrap();
+        let requests = fixture.finish();
+        assert!(requests.iter().all(|r| !r.line.starts_with("DELETE")));
+        if provider == Provider::Gmail {
+            assert_eq!(requests[1].value["addLabelIds"], json!(["INBOX"]));
+            assert_eq!(requests[1].value["removeLabelIds"], json!([]));
+        } else {
+            assert_eq!(requests[1].value["destinationId"], "original-folder");
+        }
+    }
+}
+
+#[test]
+fn bulk_accounts_and_bounds() {
+    let store = Store::open(":memory:").unwrap();
+    let first = seed(&store);
+    let account = Account {
+        id: "second".into(),
+        email: "second@example.test".into(),
+        provider: Provider::Outlook,
+    };
+    store.save_account(&account).unwrap();
+    let mut second = first.clone();
+    second.account_id = account.id.clone();
+    second.id = mime::message_id(&account.id, &first.remote_id);
+    store.save(&second, Folder::Inbox).unwrap();
+    let ids = vec![first.id.clone(), second.id.clone()];
+    batch(
+        &store,
+        "two-account-operation",
+        &ids,
+        MailEdit::Action {
+            action: MailAction::Trash,
+        },
+    )
+    .unwrap();
+    assert_eq!(store.list(None, Folder::Trash, "", 0, 10).unwrap().len(), 2);
+    store.undo_mail("two-account-operation").unwrap();
+    assert_eq!(store.list(None, Folder::Inbox, "", 0, 10).unwrap().len(), 2);
+    assert!(
+        batch(
+            &store,
+            "bad-move-operation",
+            &ids,
+            MailEdit::Action {
+                action: MailAction::Move {
+                    destination: "label:project".into(),
+                    source: None
+                }
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(store.list(None, Folder::Inbox, "", 0, 10).unwrap().len(), 2);
+    for index in 0..25 {
+        batch(
+            &store,
+            &format!("bounded-pin-operation-{index}"),
+            std::slice::from_ref(&first.id),
+            MailEdit::Pin {
+                pinned: index % 2 == 0,
+            },
+        )
+        .unwrap();
+    }
+    assert!(store.undo_mail("bounded-pin-operation-0").is_err());
+    store.undo_mail("bounded-pin-operation-24").unwrap();
+    batch(
+        &store,
+        "removed-account-operation",
+        &ids,
+        MailEdit::Pin { pinned: true },
+    )
+    .unwrap();
+    store
+        .pause_account(&account.id, DisconnectMode::RemoveCache)
+        .unwrap();
+    assert!(store.undo_mail("removed-account-operation").is_err());
+    assert!(store.message(&first.id).unwrap().pinned);
+}
+
+#[test]
+fn bulk_undo_coalesced_sync() {
+    for settle_inverse in [false, true] {
+        let store = Store::open(":memory:").unwrap();
+        let message = seed(&store);
+        let ids = std::slice::from_ref(&message.id);
+        batch(
+            &store,
+            "first-archive-operation",
+            ids,
+            MailEdit::Action {
+                action: MailAction::Archive,
+            },
+        )
+        .unwrap();
+        batch(
+            &store,
+            "second-trash-operation",
+            ids,
+            MailEdit::Action {
+                action: MailAction::Trash,
+            },
+        )
+        .unwrap();
+        store
+            .mark_mail_work(
+                MailWorkKind::Action,
+                "first-archive-operation-0",
+                MailWorkState::Done,
+                None,
+                0,
+            )
+            .unwrap();
+        store.undo_mail("second-trash-operation").unwrap();
+        if settle_inverse {
+            store
+                .mark_mail_work(
+                    MailWorkKind::Action,
+                    "undo-second-trash-operation-0",
+                    MailWorkState::Done,
+                    None,
+                    0,
+                )
+                .unwrap();
+        }
+        store.undo_mail("first-archive-operation").unwrap();
+        assert_eq!(store.list(None, Folder::Inbox, "", 0, 10).unwrap().len(), 1);
+        let pending = store.next_mail_work(MailWorkKind::Action).unwrap().unwrap();
+        let work: QueuedMail = serde_json::from_str(&pending.data).unwrap();
+        assert!(
+            matches!(work.action,MailAction::Restore { snapshot } if snapshot.folders.contains(&"inbox".into()))
+        );
+    }
+}

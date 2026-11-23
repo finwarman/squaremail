@@ -58,6 +58,7 @@ impl Store {
                     [account],
                 )?;
             }
+            tx.execute("DELETE FROM mail_undo WHERE EXISTS(SELECT 1 FROM json_each(mail_undo.data) WHERE json_extract(value,'$.account')=?1)", [account])?;
             tx.execute("DELETE FROM accounts WHERE id=?1", [account])?;
         }
         tx.commit()?;

@@ -7,10 +7,14 @@ struct MailAdvance {
     private let selection: Int
 
     init?(_ ids: [String], id: String?, revision: Int, selection: Int) {
-        guard let id, let index = ids.firstIndex(of: id) else { return nil }
+        self.init(ids, ids: Set(id.map { [$0] } ?? []), revision: revision, selection: selection)
+    }
+    init?(_ ids: [String], ids selected: Set<String>, revision: Int, selection: Int) {
+        guard let index = ids.firstIndex(where: { selected.contains($0) }) else { return nil }
+        let id = ids[index]
         self.id = id; self.revision = revision; self.selection = selection
-        following = Array(ids.dropFirst(index + 1))
-        preceding = Array(ids.prefix(index).reversed())
+        following = Array(ids.dropFirst(index + 1).filter { !selected.contains($0) })
+        preceding = Array(ids.prefix(index).reversed().filter { !selected.contains($0) })
     }
     func isCurrent(revision: Int, selection: Int) -> Bool {
         self.revision == revision && self.selection == selection

@@ -20,6 +20,9 @@ pub(crate) enum MailAction {
     },
     Trash,
     Archive,
+    Restore {
+        snapshot: MailSnapshot,
+    },
     Move {
         destination: String,
         source: Option<String>,
@@ -103,7 +106,7 @@ pub(crate) struct QueuedMail {
     pub(crate) action: MailAction,
     pub(crate) before: MailSnapshot,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct MailSnapshot {
     pub(crate) unread: bool,
     pub(crate) flagged: bool,
@@ -168,4 +171,11 @@ impl MailToggle {
     pub(crate) fn enabled(self) -> bool {
         matches!(self, Self::On)
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum MailEdit {
+    Action { action: MailAction },
+    Pin { pinned: bool },
 }

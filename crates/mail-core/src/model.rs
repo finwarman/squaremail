@@ -125,6 +125,14 @@ pub(crate) enum Command {
     MoveFolders {
         account: String,
     },
+    BatchMail {
+        operation: String,
+        ids: Vec<String>,
+        edit: MailEdit,
+    },
+    UndoMail {
+        operation: String,
+    },
     QueueMail {
         operation: String,
         id: String,

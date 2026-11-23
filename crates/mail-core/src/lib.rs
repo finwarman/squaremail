@@ -59,6 +59,12 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
         Command::MoveFolders { account } => Ok(serde_json::to_value(mailops::move_folders(
             &store, &account,
         )?)?),
+        Command::BatchMail {
+            operation,
+            ids,
+            edit,
+        } => mailops::batch(&store, &operation, &ids, edit),
+        Command::UndoMail { operation } => store.undo_mail(&operation),
         Command::QueueMail {
             operation,
             id,

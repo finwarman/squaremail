@@ -10,19 +10,26 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     private let prompts: EditorPrompting
     private var phase: Phase = .closed
     private var window: NSPanel?
+    private let caption = ClassicTitleBar()
+    private var actions = ClassicActionBar()
+    private let footer = ClassicPanel()
     private var task: Task<Void, Never>?
     private var autosave: Task<Void, Never>?
     private var generation = 0
     private var draft: MailDraft?
     private var editVersion = 0
     private var savedVersion = 0
+    private var saveInFlight = false
+    private enum SaveMode { case automatic, explicit }
+    private struct DraftSnapshot { let value: MailDraft; let version: Int; let generation: Int }
+    private var snapshot: DraftSnapshot? { document.map { DraftSnapshot(value: $0, version: editVersion, generation: generation) } }
     private var accounts: [Account] = []
     private let sender = NSPopUpButton(frame: .zero)
     private let to = NSTextField(); private let cc = NSTextField(); private let bcc = NSTextField(); private let subject = NSTextField()
     private let text = NSTextView(usingTextLayoutManager: false)
     private let status = NSTextField(wrappingLabelWithString: "")
-    private let save = ClassicButton("Save draft")
-    private let send = ClassicButton("Send")
+    private let save = ClassicButton("Save draft", icon: .draft)
+    private let send = ClassicButton("Send…", icon: .sent)
     private let cancel = ClassicButton("Close")
     var onSaved: (() -> Void)?
     var onQueued: ((QueuedSend) -> Void)?
@@ -46,7 +53,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         text.string = ""; text.undoManager?.removeAllActions()
     }
     func requestClose(_ reply: @escaping (CloseResult) -> Void = { _ in }) {
-        if phase == .saving { status.stringValue = "Saving the draft. Please wait before closing."; reply(.cancelled); return }
+        if phase == .saving || saveInFlight { status.stringValue = "Saving the draft. Please wait before closing."; reply(.cancelled); return }
         if phase == .prompting { reply(.cancelled); return }
         guard dirty, draft != nil, let window else { close(); reply(.closed); return }
         autosave?.cancel()
@@ -118,19 +125,46 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     }
     private func transition(_ value: Phase) {
         phase = value
+        updateCaption()
         let enabled = value == .editing && draft != nil
         for field in [to, cc, bcc, subject] { field.isEnabled = enabled }
         text.isEditable = enabled
         sender.isEnabled = enabled && draft?.kind == .new
-        save.isEnabled = enabled; send.isEnabled = enabled; cancel.isEnabled = value != .prompting && value != .saving
+        save.isEnabled = enabled && !saveInFlight; send.isEnabled = enabled && !saveInFlight; cancel.isEnabled = value != .prompting && value != .saving
     }
     private func build(_ accounts: [Account]) {
+        for view in caption.subviews { view.removeFromSuperview() }
+        actions.removeFromSuperview(); actions = ClassicActionBar()
         self.accounts = accounts.filter { $0.provider != .local }
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 650), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        panel.title = "Square Mail - Compose"; panel.minSize = NSSize(width: 780, height: 650)
+        let panel = ComposePanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 722), styleMask: [.borderless, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        panel.title = "Square Mail - Compose"; panel.minSize = NSSize(width: 780, height: 722)
+        panel.appearance = NSAppearance(named: .aqua); panel.backgroundColor = ClassicTheme.face
+        panel.hasShadow = true; panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false; panel.delegate = self
+        panel.onClose = { [weak self] in self?.requestClose() }
         let content = panel.contentView!
         content.wantsLayer = true; content.layer?.backgroundColor = ClassicTheme.face.cgColor
+        let border = ClassicPanel(frame: content.bounds); border.edge = .raised; border.autoresizingMask = [.width, .height]
+        content.addSubview(border)
+        caption.frame = NSRect(x: 3, y: 686, width: 774, height: 33); caption.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(caption)
+        for (index, label) in ["_", "□", "×"].enumerated() {
+            let button = ClassicButton(label, style: .title)
+            button.frame = NSRect(x: 691 + index * 26, y: 5, width: 23, height: 23); button.autoresizingMask = [.minXMargin]
+            button.setAccessibilityLabel(["Minimize draft", "Zoom draft", "Close draft"][index])
+            button.onPress = { [weak self, weak panel] in
+                switch index { case 0: panel?.miniaturize(nil); case 1: panel?.zoom(nil); default: self?.requestClose() }
+            }
+            caption.addSubview(button)
+        }
+        actions.frame = NSRect(x: 5, y: 642, width: 770, height: 40); actions.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(actions)
+        actions.addItem(send, width: 105); actions.addItem(save, width: 120); actions.addItem(cancel, width: 90)
+        send.toolTip = "Review recipients, then queue delivery. Sending requires an online, authorised account."
+        save.toolTip = "Save this draft on this Mac (⌘S). Nothing is sent."
+        cancel.toolTip = "Close this draft (⌘W). Unsaved changes offer Save, Discard or Keep editing."
+        footer.frame = NSRect(x: 5, y: 5, width: 770, height: 49); footer.edge = .sunken; footer.autoresizingMask = [.width]
+        content.addSubview(footer)
         func field(_ caption: String, _ view: NSView, _ y: CGFloat) {
             let label = NSTextField(labelWithString: caption); label.font = ClassicTheme.font(11)
             label.textColor = ClassicTheme.ink
@@ -148,7 +182,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
             input.textColor = ClassicTheme.ink; input.backgroundColor = .white; input.drawsBackground = true
         }
         for input in [to, cc, bcc] { input.placeholderString = "Email addresses, separated by commas" }
-        let scroll = NSScrollView(frame: NSRect(x: 12, y: 106, width: 754, height: 356))
+        let scroll = NSScrollView(frame: NSRect(x: 12, y: 64, width: 754, height: 398))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder; scroll.autoresizingMask = [.width, .height]
         text.setAccessibilityLabel("Mail body")
         text.isRichText = false; text.isEditable = true; text.font = ClassicTheme.font(13); text.textColor = ClassicTheme.ink; text.backgroundColor = .white
@@ -157,13 +191,21 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         text.isVerticallyResizable = true; text.autoresizingMask = [.width]; text.textContainer?.widthTracksTextView = true
         text.textContainerInset = NSSize(width: 12, height: 12); text.allowsUndo = true; text.delegate = self
         scroll.documentView = text; content.addSubview(scroll)
-        status.frame = NSRect(x: 12, y: 45, width: 754, height: 50); status.font = ClassicTheme.font(10); status.autoresizingMask = [.width]
+        status.frame = NSRect(x: 10, y: 6, width: 750, height: 36); status.font = ClassicTheme.font(10); status.autoresizingMask = [.width]
         status.textColor = ClassicTheme.muted
-        content.addSubview(status)
-        for (index, button) in [save, send, cancel].enumerated() { button.frame = NSRect(x: 12 + index * 145, y: 9, width: 135, height: 28); content.addSubview(button) }
+        footer.addSubview(status)
+        cancel.keyEquivalent = "w"; cancel.keyEquivalentModifierMask = [.command]
         save.keyEquivalent = "s"; save.keyEquivalentModifierMask = [.command]
         save.onPress = { [weak self] in self?.persist() }; send.onPress = { [weak self] in self?.confirmSend() }; cancel.onPress = { [weak self] in self?.requestClose() }
         window = panel; panel.center(); WindowPresentation.show(panel)
+    }
+    private func updateCaption() {
+        let name = subject.stringValue.isEmpty ? "New message" : String(subject.stringValue.prefix(160))
+        let state: String
+        switch phase { case .loading: state = "Loading…"; case .saving: state = "Saving…"; default: state = dirty ? "Unsaved changes" : "Local draft" }
+        caption.title = name + " · " + state; caption.needsDisplay = true
+        window?.title = "Square Mail - " + name
+        window?.isDocumentEdited = dirty
     }
     func controlTextDidChange(_ notification: Notification) { scheduleSave() }
     func textDidChange(_ notification: Notification) { scheduleSave() }
@@ -176,32 +218,50 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     private func scheduleSave() {
         autosave?.cancel()
         guard phase == .editing, draft != nil else { return }
-        editVersion += 1
+        editVersion += 1; updateCaption()
+        startAutosave()
+    }
+    private func startAutosave() {
+        autosave?.cancel()
         autosave = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(750)) } catch { return }
-            self?.persist()
+            self?.persist(.automatic)
         }
     }
-    private func persist(_ reply: @escaping (CloseResult) -> Void = { _ in }) {
-        guard phase == .editing, document != nil else { reply(.cancelled); return }
-        autosave?.cancel(); window?.makeFirstResponder(nil); transition(.saving)
+    private func persist(_ mode: SaveMode = .explicit, _ reply: @escaping (CloseResult) -> Void = { _ in }) {
+        guard phase == .editing, !saveInFlight, let snapshot else { reply(.cancelled); return }
+        autosave?.cancel(); saveInFlight = true; save.isEnabled = false; send.isEnabled = false
+        if mode == .explicit { window?.makeFirstResponder(nil); transition(.saving) }
         let revision = generation
         task = Task { [weak self] in
             guard let self else { return }
+            var saveSucceeded = false
+            defer {
+                saveInFlight = false
+                if generation == revision, phase == .editing { save.isEnabled = true; send.isEnabled = true; updateCaption() }
+                if generation == revision, savedVersion > 0, dirty, phase == .editing, saveSucceeded { startAutosave() }
+            }
             do {
-                try await storeCurrent()
+                try await storeCurrent(snapshot); saveSucceeded = true
                 guard generation == revision else { return }
-                transition(.editing); status.stringValue = "Draft saved on this Mac."; onSaved?(); reply(.closed)
-            } catch { guard generation == revision else { return }; transition(.editing); status.stringValue = error.localizedDescription; reply(.cancelled) }
+                if mode == .explicit { transition(.editing) } else { updateCaption() }
+                status.stringValue = dirty ? "Saving newer changes…" : "Draft saved on this Mac."; onSaved?(); reply(.closed)
+            } catch {
+                guard generation == revision else { return }
+                if mode == .explicit { transition(.editing) }
+                status.stringValue = error.localizedDescription; reply(.cancelled)
+            }
         }
     }
-    private func storeCurrent() async throws {
-        guard var value = document else { throw MailError(message: "No draft is open") }
+    private func storeCurrent(_ saved: DraftSnapshot? = nil) async throws {
+        guard let saved = saved ?? snapshot else { throw MailError(message: "No draft is open") }
+        var value = saved.value
         let receipt: DraftReceipt = try await core.request(["command": CoreCommand.saveMailDraft.rawValue, "draft": try value.command()], mode: .live)
-        value.revision = receipt.revision; draft = value; savedVersion = editVersion
+        guard saved.generation == generation else { return }
+        value.revision = receipt.revision; draft = value; savedVersion = saved.version
     }
     private func confirmSend() {
-        guard phase == .editing, let value = document, let window else { return }
+        guard phase == .editing, !saveInFlight, let value = document, let window else { return }
         autosave?.cancel(); window.makeFirstResponder(nil)
         let alert = NSAlert(); alert.messageText = "Send this email?"
         alert.informativeText = "From: \(accounts.first { $0.id == value.account }?.email ?? "")\nTo: \(value.to.joined(separator: ", "))\nCC: \(value.cc.joined(separator: ", "))\nBCC: \(value.bcc.joined(separator: ", "))\n\nSubject: \(value.subject)\n\nThis queues delivery when online and authorised. Plain text only; original attachments are not included."
@@ -235,6 +295,24 @@ extension MailComposer {
         open(.new, account: "fixture", original: nil, mode: .cached, accounts: accounts)
         await task?.value
         guard phase == .editing, !dirty, to.isEnabled else { throw MailError(message: "Compose did not enter a usable state") }
+        window?.makeFirstResponder(text)
+        let focus = window?.firstResponder
+        text.insertText("Native edit", replacementRange: NSRange(location: 0, length: 0))
+        guard text.undoManager?.canUndo == true else { throw MailError(message: "Compose text lost native Undo") }
+        text.undoManager?.undo()
+        guard text.string.isEmpty else { throw MailError(message: "Compose Undo affected mail instead of text") }
+        text.string = "Snapshot one"; scheduleSave(); persist(.automatic)
+        let firstSave = task
+        guard text.isEditable, window?.firstResponder === focus, !send.isEnabled else { throw MailError(message: "Autosave blocked typing or stole focus") }
+        text.string = "Snapshot two"; scheduleSave()
+        await firstSave?.value
+        guard dirty, text.string == "Snapshot two", window?.firstResponder === focus else { throw MailError(message: "Older autosave marked newer edits saved or lost focus") }
+        await autosave?.value; await task?.value
+        guard !dirty, document?.text == "Snapshot two" else { throw MailError(message: "Newer edits were not autosaved") }
+        guard let content = window?.contentView, window?.styleMask.contains(.borderless) == true, caption.superview === content, actions.superview === content else { throw MailError(message: "Compose did not use the shared rectangular chrome") }
+        window?.setContentSize(NSSize(width: 1020, height: 840)); content.layoutSubtreeIfNeeded()
+        guard caption.frame.maxY <= content.bounds.height, actions.frame.maxY <= caption.frame.minY else { throw MailError(message: "Resized compose chrome overlapped") }
+        window?.setContentSize(NSSize(width: 780, height: 722))
         to.stringValue = "ada@example.test"; cc.stringValue = "cc@example.test"; bcc.stringValue = "bcc@example.test"
         subject.stringValue = "Offline native draft"; text.string = "Hello\n\n- one\n  - nested\n\n> Earlier\n> > Older\n--------"
         scheduleSave(); await autosave?.value; await task?.value
@@ -273,4 +351,11 @@ extension MailComposer {
         guard to.stringValue.isEmpty, subject.stringValue.hasPrefix("Fwd:"), text.string.contains("> > Previous reply") else { throw MailError(message: "Forward lost nested quote text") }
         close()
     }
+}
+
+private final class ComposePanel: NSPanel {
+    var onClose: (() -> Void)?
+    override func performClose(_ sender: Any?) { onClose?() }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }

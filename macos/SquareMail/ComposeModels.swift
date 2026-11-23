@@ -39,3 +39,5 @@ struct MailWorkSummary: Decodable {
     let attempts: Int; let remote: String?; let subject: String; let kind: MailWorkKind
 }
 enum MailActionKind: String { case read, flag, trash, archive, move }
+
+enum MailEditKind: String { case action, pin }

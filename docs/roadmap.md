@@ -14,7 +14,7 @@ Before a private daily-driver release:
 - Qualify implemented account disconnect, Keychain deletion and optional local-cache removal with live reconnects.
 - Qualify borderless window resizing, VoiceOver, keyboard-only use, multiple displays and non-Retina scaling.
 - Profile startup, list/search latency and whole-process-tree memory with a large mailbox. Compare against a named client on the same machine and workload.
-- Qualify implemented mail actions, read/flag/pin, plain-text reply/reply-all/forward, local drafts/outbox, separate write/send consent and uncertain-send recovery against live providers. No real send was performed during agent qualification. Add attachments, rich text, aliases, cross-device draft sync and bulk selection later.
+- Qualify implemented mail actions, read/flag/pin, plain-text reply/reply-all/forward, local drafts/outbox, separate write/send consent and uncertain-send recovery against live providers. No real send was performed during agent qualification. Add attachments, rich text, aliases, cross-device draft sync later. Bulk selection and bounded reversible batch actions are available.
 - Permanent deletion remains unimplemented. Keep default Delete mapped to Trash. A future permanent-delete action needs separate design and confirmation.
 - Design provider rules and local sweeps separately. Provider rules have different capabilities; local rules run only while Square Mail is syncing.
 - Configure signing, hardened runtime, notarization, update delivery, crash handling and an Intel build if needed.

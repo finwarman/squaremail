@@ -69,6 +69,56 @@ impl<'a> MailRemote<'a> {
         };
         if gmail {
             let modify = match &work.action {
+                MailAction::Restore { snapshot } => {
+                    let labels = |s: &MailSnapshot| {
+                        let mut labels = s
+                            .memberships
+                            .iter()
+                            .filter(|id| !["label:UNREAD", "label:STARRED"].contains(&id.as_str()))
+                            .filter_map(|id| id.strip_prefix("label:").map(str::to_owned))
+                            .collect::<std::collections::BTreeSet<_>>();
+                        for (folder, label) in [(Folder::Inbox, "INBOX"), (Folder::Trash, "TRASH")]
+                        {
+                            if s.folders.iter().any(|f| f == folder.as_str()) {
+                                labels.insert(label.to_string());
+                            }
+                        }
+                        labels
+                    };
+                    let before = labels(&work.before);
+                    let target = labels(snapshot);
+                    if before.contains("TRASH") && !target.contains("TRASH") {
+                        self.call(
+                            Method::POST,
+                            &format!("/messages/{id}/untrash"),
+                            Some(&json!({})),
+                        )?;
+                    } else if target.contains("TRASH") && !before.contains("TRASH") {
+                        self.call(
+                            Method::POST,
+                            &format!("/messages/{id}/trash"),
+                            Some(&json!({})),
+                        )?;
+                    }
+                    let mut add: Vec<_> = target
+                        .difference(&before)
+                        .filter(|s| s.as_str() != "TRASH")
+                        .cloned()
+                        .collect();
+                    let mut remove: Vec<_> = before
+                        .difference(&target)
+                        .filter(|s| s.as_str() != "TRASH")
+                        .cloned()
+                        .collect();
+                    // Untrash can restore Inbox; state it explicitly for an archived target.
+                    if target.contains("INBOX") && !add.iter().any(|s| s == "INBOX") {
+                        add.push("INBOX".into());
+                    }
+                    if !target.contains("INBOX") && !remove.iter().any(|s| s == "INBOX") {
+                        remove.push("INBOX".into());
+                    }
+                    json!({"addLabelIds":add,"removeLabelIds":remove})
+                }
                 MailAction::Read { unread } => {
                     if *unread {
                         json!({"addLabelIds":["UNREAD"]})
@@ -160,6 +210,11 @@ impl<'a> MailRemote<'a> {
             MailAction::Trash => destination(Folder::Trash)?,
             MailAction::Archive => destination(Folder::Archive)?,
             MailAction::Move { destination, .. } => destination.clone(),
+            MailAction::Restore { snapshot } => snapshot
+                .memberships
+                .first()
+                .cloned()
+                .ok_or("Original folder is unavailable. Undo cannot guess a destination.")?,
             _ => unreachable!(),
         };
         let current = self.call(
