@@ -10,6 +10,7 @@ final class NotesBackupPanel: NSObject, NSTextFieldDelegate, NSTableViewDataSour
     private var mode = SetupMode.create
     private var task: Task<Void, Never>?
     private var invitationTask: Task<Void, Never>?
+    private var invitationLoaded = false
     private var generation = 0
     private var working = false
     private var noteID: String?
@@ -40,8 +41,10 @@ final class NotesBackupPanel: NSObject, NSTextFieldDelegate, NSTableViewDataSour
     func show(note: String?) {
         if noteID != note { noteID = note; versions.removeAll(); canvas.table.reloadData() }
         shell.show(); refresh()
-        guard service?.status.phase == .disabled || service?.status.phase == .setup else { return }
-        invitationTask?.cancel(); let revision = generation
+    }
+    private func loadInvitation() {
+        guard !invitationLoaded, shell.isOpen else { return }
+        invitationLoaded = true; let revision = generation
         invitationTask = Task { [weak self] in
             guard let self, let service else { return }
             do {
@@ -58,6 +61,7 @@ final class NotesBackupPanel: NSObject, NSTextFieldDelegate, NSTableViewDataSour
         let setup = status.phase == .disabled || status.phase == .setup
         let recovery = status.phase == .recovery
         let unlock = status.phase == .locked || (recovery && !status.unlocked)
+        let configured = recovery || unlock || status.phase == .ready || status.phase == .busy
         canvas.create.state = mode == .create ? .on : .off; canvas.restore.state = mode == .restore ? .on : .off
         canvas.create.isHidden = !setup; canvas.restore.isHidden = !setup; canvas.restore.isEnabled = !working && status.phase != .setup
         canvas.create.isEnabled = !working
@@ -78,12 +82,14 @@ final class NotesBackupPanel: NSObject, NSTextFieldDelegate, NSTableViewDataSour
         canvas.primary.isEnabled = !working && (setup ? (mode == .create ? validCreate : validRestore) : unlock ? validPass : canvas.saved.state == .on)
         canvas.saved.isHidden = !recovery || unlock; canvas.saved.isEnabled = !working
         canvas.copy.isHidden = canvas.key.stringValue.isEmpty; canvas.copy.isEnabled = !working
-        canvas.recovery.isHidden = setup; canvas.recovery.isEnabled = !working
+        canvas.recovery.isHidden = !configured; canvas.recovery.isEnabled = !working
         for field in [canvas.invite, canvas.account, canvas.password, canvas.confirm] { field.isEnabled = !working }
         canvas.remember.isEnabled = !working
-        canvas.sync.isHidden = status.phase != .ready && status.phase != .busy; canvas.sync.isEnabled = !working
+        canvas.sync.isHidden = status.phase != .ready && status.phase != .busy && status.phase != .checking && status.phase != .unavailable
+        canvas.sync.title = status.phase == .unavailable ? "Check again" : status.phase == .checking ? "Checking…" : "Sync now"
+        canvas.sync.isEnabled = !working && status.phase != .checking
         canvas.lock.isHidden = !status.unlocked || setup; canvas.lock.isEnabled = !working
-        canvas.disconnect.isHidden = status.phase == .disabled; canvas.disconnect.isEnabled = !working
+        canvas.disconnect.isHidden = !configured; canvas.disconnect.isEnabled = !working
         canvas.history.isEnabled = !working && status.phase == .ready && noteID != nil
         canvas.restoreVersion.isEnabled = !working && versions.indices.contains(canvas.table.selectedRow)
         canvas.history.isHidden = status.phase != .ready || noteID == nil
@@ -92,6 +98,7 @@ final class NotesBackupPanel: NSObject, NSTextFieldDelegate, NSTableViewDataSour
         canvas.detail.stringValue = working ? "Working… You can keep editing notes in their window." : service.message
         canvas.history.title = noteID == nil ? "Select a note for history" : "Load this note’s history"
         canvas.needsLayout = true; canvas.layoutSubtreeIfNeeded()
+        if setup { loadInvitation() }
     }
     @objc private func changed() { refresh() }
     func controlTextDidChange(_ notification: Notification) { refresh() }
@@ -240,6 +247,10 @@ private final class BackupCanvas: NSView {
 extension NotesBackupPanel {
     func verifyControls() async throws {
         guard WindowPresentation.isBackground, let service else { throw MailError(message: "Use the hidden backup fixture") }
+        show(note: nil)
+        guard service.status.phase == .checking, canvas.primary.isHidden, canvas.create.isHidden, canvas.disconnect.isHidden, !canvas.sync.isEnabled, canvas.detail.stringValue.contains("Keychain") else { throw MailError(message: "Pending backup lookup exposed setup or disconnect actions") }
+        service.accept(BackupStatus(phase: .unavailable, unlocked: false, account: nil, completed: 0, more: false, message: "Keychain access was declined.")); refresh()
+        guard canvas.primary.isHidden, canvas.disconnect.isHidden, canvas.sync.isEnabled, canvas.sync.title == "Check again", canvas.detail.stringValue.contains("declined") else { throw MailError(message: "Failed backup lookup exposed setup instead of retry") }
         await service.refresh(); show(note: nil)
         guard service.status.phase == .disabled, !canvas.primary.isEnabled else { throw MailError(message: "Unconfigured backup did not remain local-only") }
         canvas.invite.stringValue = String(repeating: "a", count: 43); canvas.password.stringValue = "synthetic-only-passphrase"; canvas.confirm.stringValue = "different-passphrase"; refresh()

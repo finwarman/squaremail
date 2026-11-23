@@ -1,7 +1,7 @@
 import AppKit
 
 enum BackupOperation: String { case status, invitation, create, connect, unlock, enable, recovery, lock, disconnect, sync, history, restore }
-enum BackupPhase: String, Decodable { case disabled, setup, recovery, locked, ready, busy }
+enum BackupPhase: String, Decodable { case checking, unavailable, disabled, setup, recovery, locked, ready, busy }
 struct BackupStatus: Decodable {
     let phase: BackupPhase
     let unlocked: Bool
@@ -9,6 +9,7 @@ struct BackupStatus: Decodable {
     let completed: Int
     let more: Bool
     let message: String
+    static let checking = BackupStatus(phase: .checking, unlocked: false, account: nil, completed: 0, more: false, message: "Checking encrypted backup. Complete any macOS Keychain prompt to continue.")
     static let disabled = BackupStatus(phase: .disabled, unlocked: false, account: nil, completed: 0, more: false, message: "Backup is off. Notes save on this Mac.")
 }
 struct BackupCreated: Decodable { let status: BackupStatus; let accountKey: String; enum CodingKeys: String, CodingKey { case status; case accountKey = "account_key" } }
@@ -20,8 +21,8 @@ struct BackupHistory: Decodable { let items: [BackupVersion] }
 @MainActor
 final class NotesBackupService {
     private let core: MailCore
-    private(set) var status = BackupStatus.disabled
-    private(set) var message = BackupStatus.disabled.message
+    private(set) var status = BackupStatus.checking
+    private(set) var message = BackupStatus.checking.message
     private var worker: Task<Void, Never>?
     private var sleeper: Task<Void, Never>?
     private var generation = 0
@@ -57,13 +58,25 @@ final class NotesBackupService {
         panel = view; view.show(note: note)
         Task { [weak self] in await self?.refresh() }
     }
-    func requestSync() { wake = true; sleeper?.cancel(); resume() }
+    func requestSync() {
+        if status.phase == .unavailable {
+            status = .checking; publish(status.message)
+            Task { [weak self] in await self?.refresh() }; return
+        }
+        wake = true; sleeper?.cancel(); resume()
+    }
     private func cancelWorker() { generation += 1; worker?.cancel(); sleeper?.cancel(); worker = nil; sleeper = nil }
     private func publish(_ text: String) { message = text; panel?.refresh() }
     func refresh() async {
         let revision = generation
         do { let value: BackupStatus = try await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.status.rawValue], mode: .live, queue: .notesBackup); guard revision == generation else { return }; accept(value) }
-        catch { if revision == generation { publish(error.localizedDescription) } }
+        catch {
+            guard revision == generation else { return }
+            if status.phase == .checking {
+                status = BackupStatus(phase: .unavailable, unlocked: false, account: nil, completed: 0, more: false, message: error.localizedDescription)
+            }
+            publish(error.localizedDescription)
+        }
     }
     private func prepare(_ operation: BackupOperation, fields: [String: Any]) async -> [String: Any] {
         let previous = worker; cancelWorker(); await previous?.value
@@ -71,8 +84,7 @@ final class NotesBackupService {
         return payload
     }
     func invitation() async throws -> BackupInvitation {
-        let payload = await prepare(.invitation, fields: [:])
-        return try await core.request(payload, mode: .live, queue: .notesBackup)
+        return try await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.invitation.rawValue], mode: .live, queue: .notesBackup)
     }
     func change(_ operation: BackupOperation, fields: [String: Any] = [:]) async throws -> BackupStatus {
         let payload = await prepare(operation, fields: fields)
