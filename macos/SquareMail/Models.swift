@@ -13,7 +13,7 @@ enum Folder: String, CaseIterable {
         case .drafts: return "Drafts"
         case .archive: return "Archive"
         case .trash: return "Deleted items"
-        case .all: return "All cached mail"
+        case .all: return "All downloaded mail"
         }
     }
 }
@@ -198,6 +198,11 @@ struct BackfillConfig: Decodable { let mode: BackfillMode }
 enum SyncKind: String, Decodable { case catalog, mail, calendar; case bodyBackfill = "body_backfill"; case recentMail = "recent_mail" }
 
 enum CoreCommand: String {
+    case contacts
+    case notes
+    case openNote = "open_note"
+    case newNote = "new_note"
+    case saveNote = "save_note"
     case searchMail = "search_mail"
     case compose
     case moveFolders = "move_folders"

@@ -10,7 +10,7 @@
 | INV-MAIL-pin | Pins are local and indexed; provider header updates retain them. | SQLite pin/query contract |
 | INV-MAIL-spacing | Compact spacing removes long invisible layout padding while preserving structured indentation, short language joiners, quotes and separators; stored mail stays unchanged. | MessageText and native reader probes |
 | INV-MAIL-readable-links | Shortened links retain full original targets for copy/click, make no hover request and reject active/local schemes. | MessageText and private-pasteboard native probes |
-| INV-CALENDAR-clock | Clock replacement cancels its previous task and does not change the selected date; leaving Calendar stops the clock. The right agenda shows a nonselectable Now divider only for today and progress for ongoing events without losing event selection. | hidden native calendar/action probes |
+| INV-CALENDAR-clock | Clock replacement cancels its previous task and does not change the selected date; leaving a docked Calendar stops its clock. A detached calendar owns the same view and clock, stopped while occluded or closed. The right agenda shows a nonselectable Now divider only for today and progress for ongoing events without losing event selection. | hidden native calendar/action probes |
 | INV-MAIL-account-isolation | Provider IDs collide safely across accounts. | store contract tests |
 | INV-MAIL-restart | Imported mail and full-text results survive reopening. | store contract tests |
 | INV-MAIL-upsert | Header refresh preserves an already cached body. | store contract tests |
@@ -90,3 +90,11 @@ The plain reader uses AppKit TextKit 1, with noncontiguous layout above 64 KiB. 
 
 | INV-MAIL-trash-visibility | Trash is excluded from normal folders and smart Unread/Starred scopes, including literal/fuzzy queries, without removing stars or unrelated memberships. Explicit Trash and All cached mail remain searchable; Undo restores visibility. | real SQLite smart-folder/replay and hidden Starred bulk Delete/Undo probes |
 | INV-UI-action-feedback | Local writes immediately dim affected rows and show Saving; completion/failure clears pending state. Completed sends are optional history with no Retry/Cancel, separate from an empty queue. | hidden native pending-row and accepted-history probes |
+
+| INV-UI-workspace-owner | Mail and detached Calendar share one core, sync coordinator and calendar state. Reopening focuses the existing window; close releases its view/clock without clearing Mail selection. | hidden workspace reuse/date/close probes |
+| INV-NOTES-file-safety | Local Markdown uses bounded reads, private files, atomic saves, recovery copies and revision checks. Stale external edits cannot be overwritten through a known old revision. | filesystem conflict, path, bounds, restart and history contracts |
+| INV-NOTES-editor-state | Autosave keeps native typing/focus and newer edits dirty. Close prompts preserve edits; stale document loads cannot repopulate a closed window. | hidden note save/conflict-copy/Undo/close/load probes |
+| INV-COMPOSE-contacts | Account-scoped suggestions use bounded cached sender/Sent/outbox metadata and return no body. Debounced stale responses cannot select another token or steal focus. | real SQLite contact scope/bounds and native keyboard/stale-result probes |
+
+| INV-CALENDAR-visibility | Domain/account groups share provider colours with events. Solo, account and All/None actions update only local visibility, independent of collapse state. Choices persist on this Mac without provider writes or network waits. | hidden grouped visibility, account isolation, menu and collapse probes |
+| INV-UI-command-release | Momentary commands clear press/hover state and repaint before opening panels or menus. Explicit navigation and rendering toggles retain selected state. | native command-before-callback and navigation/segment contracts |

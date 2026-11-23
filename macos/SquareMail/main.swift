@@ -4,6 +4,8 @@ import ClassicKit
 private let launchTime = ProcessInfo.processInfo.systemUptime
 
 private final class MailWindow: NSWindow {
+    var onClose: (() -> Void)?
+    override func performClose(_ sender: Any?) { onClose?() }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
@@ -143,6 +145,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let controller = MailController(core: core, layout: layout)
         stamp(.controller)
         self.controller = controller
+        window.onClose = { [weak controller, weak window] in
+            if controller?.hasWorkspaceWindows == true { window?.orderOut(nil) } else { NSApp.terminate(nil) }
+        }
         window.center()
         Task {
             await controller.start()
@@ -166,6 +171,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                     guard arguments.indices.contains(index + 1), let probe = ReadHoldProbe(rawValue: arguments[index + 1]) else { throw MailError(message: "Expected a read-hold probe") }
                     try await controller.checkReadHold(probe); NSApp.terminate(nil)
                 } catch { fputs("READ HOLD FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
+            }
+            if arguments.contains("--check-workspaces") {
+                do { try await controller.checkWorkspaces(); NSApp.terminate(nil) }
+                catch { fputs("WORKSPACES FAILED: \(error.localizedDescription)\n", stderr); exit(EXIT_FAILURE) }
             }
             if arguments.contains("--check-action-nav") {
                 do { try await controller.checkActionNav(); NSApp.terminate(nil) }
@@ -281,7 +290,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 switch index {
                 case 0: window?.miniaturize(nil)
                 case 1: window?.zoom(nil)
-                default: NSApp.terminate(nil)
+                default: window?.performClose(nil)
                 }
             }
             button.setAccessibilityLabel(["Minimize", "Zoom", "Close"][index])
@@ -289,7 +298,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !WindowPresentation.isBackground }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let window, !WindowPresentation.isBackground { window.makeKeyAndOrderFront(nil) }; return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func windowWillClose(_ notification: Notification) { NSApp.terminate(nil) }
 }
 

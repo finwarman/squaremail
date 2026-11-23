@@ -34,7 +34,7 @@ public final class ClassicCheckbox: NSButton {
 public final class ClassicButton: NSButton {
     public override var title: String { didSet { setAccessibilityLabel(title); needsDisplay = true } }
     public override var isEnabled: Bool { didSet { if !isEnabled { hovered = false; highlight(false) }; needsDisplay = true } }
-    public enum Style { case normal, toolbar, toggle, iconToggle, segment, title, menu }
+    public enum Style { case normal, toolbar, navigation, toggle, iconToggle, segment, title, menu }
     private var helpText: String?
     public override var toolTip: String? { get { helpText } set { helpText = newValue; setAccessibilityHelp(newValue) } }
     public var onPress: (() -> Void)?
@@ -42,6 +42,8 @@ public final class ClassicButton: NSButton {
     private let style: Style
     private var hovered = false
     private var hoverArea: NSTrackingArea?
+    private var isToolbar: Bool { style == .toolbar || style == .navigation }
+    private var isCommand: Bool { style == .normal || style == .toolbar || style == .menu || style == .title }
 
     public init(_ title: String, icon: ClassicIcon? = nil, style: Style = .normal) {
         self.style = style
@@ -61,9 +63,11 @@ public final class ClassicButton: NSButton {
 
     @objc private func pressed() {
         ClassicHelp.shared.hide()
-        defer { highlight(false); needsDisplay = true }
-        highlight(false)
-        if style == .normal || style == .menu || style == .title { state = .off }
+        defer { highlight(false); if isCommand { state = .off }; needsDisplay = true }
+        hovered = false; highlight(false)
+        if isCommand { state = .off }
+        // Release before callbacks can enter a modal loop or cover this window.
+        needsDisplay = true; displayIfNeeded()
         onPress?()
     }
 
@@ -81,7 +85,7 @@ public final class ClassicButton: NSButton {
     public override func draw(_ dirtyRect: NSRect) {
         ClassicTheme.face.setFill(); bounds.fill()
         let down = isHighlighted || state == .on
-        if (style != .toolbar && style != .menu) || hovered || down {
+        if (!isToolbar && style != .menu) || hovered || down {
             ClassicTheme.bevel(bounds, edge: down ? .sunken : .raised)
         }
         let shift: CGFloat = down ? 1 : 0
@@ -94,7 +98,7 @@ public final class ClassicButton: NSButton {
             NSGraphicsContext.current?.cgContext.setAlpha(isEnabled ? 1 : 0.45)
             if let icon { icon.draw(in: NSRect(x: floor((bounds.width - 16) / 2) + shift, y: floor((bounds.height - 16) / 2) + shift, width: 16, height: 16)) }
             NSGraphicsContext.restoreGraphicsState()
-        } else if style == .toolbar {
+        } else if isToolbar {
             if let icon { icon.draw(in: NSRect(x: (bounds.width - 24) / 2 + shift, y: 5 + shift, width: 24, height: 24)) }
             ClassicTheme.text(title, in: NSRect(x: 2 + shift, y: 34 + shift, width: bounds.width - 4, height: 18), size: 11, color: ink, alignment: .center)
         } else {

@@ -2,6 +2,7 @@ use crate::{Result, model::*};
 use rusqlite::{Connection, params};
 
 mod backfill;
+mod contacts;
 mod mail;
 mod media;
 mod notices;
@@ -754,6 +755,21 @@ mod tests {
             message.timestamp = index;
             let folder = [Folder::Inbox, Folder::Sent, Folder::Archive][index as usize % 3];
             store.save(&message, folder).unwrap();
+        }
+        // Suggestions share this real 100k cache and never return message bodies.
+        for query in ["sender073000", "Example", "zzzzzzzz"] {
+            let mut times = Vec::new();
+            for _ in 0..30 {
+                let start = Instant::now();
+                let contacts = store.contacts("scale-0", query).unwrap();
+                assert!(contacts.len() <= 10);
+                if query == "sender073000" {
+                    assert_eq!(contacts.len(), 1);
+                }
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(f64::total_cmp);
+            println!("CONTACTS {query} p95_ms={:.3}", times[28]);
         }
         let cases = [
             ("account_inbox", Some("scale-0"), Folder::Inbox, "", 250),

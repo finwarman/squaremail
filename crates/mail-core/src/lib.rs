@@ -6,6 +6,7 @@ mod media;
 mod mime;
 mod model;
 mod network;
+mod notes;
 mod notices;
 mod oauth;
 mod providers;
@@ -53,8 +54,36 @@ fn sync_cycle(store: &Store, context: &network::Context<'_>) -> Result<Value> {
 }
 
 fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
+    match &request.command {
+        Command::Notes => return Ok(serde_json::to_value(notes::list(&request.database)?)?),
+        Command::OpenNote { id } => {
+            return Ok(serde_json::to_value(notes::open(&request.database, id)?)?);
+        }
+        Command::NewNote { day } => {
+            return Ok(serde_json::to_value(notes::new(
+                &request.database,
+                day.as_deref(),
+            )?)?);
+        }
+        Command::SaveNote { id, text, revision } => {
+            return Ok(serde_json::to_value(notes::save(
+                &request.database,
+                id,
+                text,
+                revision.as_deref(),
+            )?)?);
+        }
+        _ => {}
+    }
     let store = Store::open(&request.database)?;
     match request.command {
+        Command::Notes
+        | Command::OpenNote { .. }
+        | Command::NewNote { .. }
+        | Command::SaveNote { .. } => unreachable!("Notes use their file service"),
+        Command::Contacts { account, query } => {
+            Ok(serde_json::to_value(store.contacts(&account, &query)?)?)
+        }
         Command::BodyBackfill { mode } => Ok(json!({"mode":store.backfill_mode(mode)?})),
         Command::MoveFolders { account } => Ok(serde_json::to_value(mailops::move_folders(
             &store, &account,

@@ -1,0 +1,16 @@
+{
+  "fixtureMessages": 100000,
+  "accounts": 10,
+  "repetitions": 30,
+  "contactsP95MS": {
+    "specificAddress": 0.653,
+    "commonName": 15.479,
+    "noHit": 0.845
+  },
+  "limits": [
+    "Concurrent functional checks were running.",
+    "Existing connection; excludes debounce, bridge, layout and network.",
+    "No whole-app startup, memory, power or leak qualification."
+  ],
+  "checks": "Disconnected filesystem, SQLite and hidden AppKit fixtures; Classic/Pink generated-data renders."
+}

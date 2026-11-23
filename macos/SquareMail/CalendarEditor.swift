@@ -239,7 +239,7 @@ final class CalendarEditor: NSObject, NSWindowDelegate {
                 else { metadata.string = "A new personal event. Attendees and recurrence creation are not part of this editor." }
                 if retention == .replace { baseline = form }
                 transition(.ready)
-                status.stringValue = value.writable ? "Metadata cached. Saving checks the provider revision. Recurring events edit this occurrence only." : "This event or calendar is read-only. Provider permissions and organiser restrictions apply."
+                status.stringValue = value.writable ? "Details loaded. Saving checks for newer changes. Recurring events edit this occurrence only." : "This event or calendar is read-only. Provider permissions and organiser restrictions apply."
             } catch is CancellationError {} catch {
                 guard generation == revision else { return }
                 transition(.ready)

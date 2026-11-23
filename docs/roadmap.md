@@ -19,12 +19,12 @@ Before a private daily-driver release:
 - Design provider rules and local sweeps separately. Provider rules have different capabilities; local rules run only while Square Mail is syncing.
 - Configure signing, hardened runtime, notarization, update delivery, crash handling and an Intel build if needed.
 
-Before opening the source:
-
-- Keep `finwarman/squaremail` private until Fin explicitly requests public release.
+Source is now public after Fin's later release approval. Ongoing source gates:
 - Review dependencies and licenses. Keep Windows fonts, reference-project assets, real mail, local OAuth configuration and performance inputs out of Git.
 - Document contribution rules, supported platforms, security reporting and a reproducible build.
 
 Theme design is tracked separately. Classic remains default; an optional pink hierarchy theme and later WordCraft renderer reuse are described in [design direction](design.md). No WordCraft source or build cache changes.
 
-Tracked next: signed versioned updates with rollback and draft-safe restart; reviewed unsubscribe using provider/list headers before website fallback; tabbed and pop-out Mail/Calendar with notes, date-linked tasks and optional kanban; classic segmented sync progress with indefinite unknown totals and determinate known totals. None is included in the reader-link milestone.
+Separate Calendar windows, local daily Markdown notes, cached recipient suggestions, signed launcher updates and segmented sync progress are implemented. [Workspace controls and limits](workspaces.md) describe this milestone.
+
+Tracked next: a tab strip, explicit note-folder selection and private file sync; reviewed unsubscribe using provider/list headers before website fallback; date-linked tasks and optional kanban. Notes currently stay local and use Markdown source editing.

@@ -227,6 +227,6 @@ final class MessageHeader: NSView {
         ClassicTheme.text("To:", in: NSRect(x: 16, y: 70, width: 42, height: 18), size: 11, color: ClassicTheme.muted)
         ClassicTheme.text(message.recipient, in: NSRect(x: 61, y: 68, width: bounds.width - (narrow ? 77 : 290), height: 20), size: 12)
         ClassicTheme.text(date, in: NSRect(x: narrow ? 16 : bounds.width - 255, y: narrow ? 96 : 44, width: narrow ? bounds.width - 32 : 236, height: 18), size: 11, color: ClassicTheme.muted, alignment: narrow ? .left : .right)
-        ClassicTheme.text(mode == .text ? "PLAIN TEXT  ·  LOCAL CACHE" : (images == .loaded ? "HTML  ·  IMAGES LOADED" : "HTML  ·  REMOTE CONTENT BLOCKED"), in: NSRect(x: narrow ? 16 : bounds.width - 280, y: narrow ? 118 : 70, width: narrow ? bounds.width - 32 : 261, height: 18), size: 10, color: ClassicTheme.muted, alignment: narrow ? .left : .right)
+        ClassicTheme.text(mode == .text ? "PLAIN TEXT" : (images == .loaded ? "HTML  ·  IMAGES LOADED" : "HTML  ·  REMOTE CONTENT BLOCKED"), in: NSRect(x: narrow ? 16 : bounds.width - 280, y: narrow ? 118 : 70, width: narrow ? bounds.width - 32 : 261, height: 18), size: 10, color: ClassicTheme.muted, alignment: narrow ? .left : .right)
     }
 }

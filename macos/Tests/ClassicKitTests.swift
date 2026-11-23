@@ -2,6 +2,29 @@ import XCTest
 @testable import ClassicKit
 
 final class ClassicKitTests: XCTestCase {
+    func testCommandRelease() async {
+        await MainActor.run {
+            for style in [ClassicButton.Style.toolbar, .normal, .menu, .title] {
+                let button = ClassicButton("Open", style: style)
+                button.highlight(true); button.state = .on
+                var invoked = false
+                button.onPress = {
+                    invoked = true
+                    XCTAssertFalse(button.isHighlighted)
+                    XCTAssertEqual(button.state, .off)
+                }
+                button.performClick(nil)
+                XCTAssertTrue(invoked); XCTAssertFalse(button.isHighlighted); XCTAssertEqual(button.state, .off)
+                button.onPress = nil
+            }
+            let mode = ClassicButton("Calendar", style: .navigation)
+            mode.onPress = { mode.state = .on }
+            mode.performClick(nil)
+            XCTAssertEqual(mode.state, .on); XCTAssertFalse(mode.isHighlighted)
+            mode.onPress = nil
+        }
+    }
+
     func testMonthRegionsStaySeparate() {
         for height: CGFloat in [18, 24, 35, 44, 61, 74, 95, 160] {
             let cell = NSRect(x: 11, y: 47, width: 100, height: height)

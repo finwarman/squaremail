@@ -29,3 +29,11 @@ Solid panel backgrounds and bevels use reusable Core Animation geometry. They do
 The title bar is custom drawn in a square, borderless native NSWindow. Native window drag, zoom and resize remain in AppKit. Native OS sheets and menus keep system behavior. Integral logical coordinates become two physical pixels on a Retina screen. Typography is native Tahoma when available, with Verdana and Arial fallbacks.
 
 Notifications use a bounded SQLite history and reminder plan. One native worker reads the application API and schedules UserNotifications. Views never query provider HTTP, SQLite or Keychain. Event detail reads and writes use a separate bounded queue; raw provider JSON remains outside the view model. See [editing](calendar-editing.md) and [notifications](notifications.md).
+
+## Local workspaces
+
+Mail and detached Calendar share the existing application controller, core and sync coordinator. The existing calendar view moves between containers. Its clock stops when hidden; close releases it. Window menu opens Mail, Calendar or Notes. Notes is lazy and uses native TextKit source editing, native Undo/find and debounced autosave.
+
+Notes commands use a file service before opening SQLite. Files live beside the cache under `Notes`, with daily files at `Daily/YYYY-MM-DD.md`. The H1 is an editable title. Saves check a SHA256 revision, preserve up to50 recovery copies and atomically replace files. Each document is limited to1MiB; metadata listing stops at2,000 notes and reads only the first4KiB per file. One coalesced directory watcher uses at most two descriptors and stops on close. No remote notes sync, vault picker, Markdown preview or full-vault text index is included. Other editors can open the Markdown folder. Simultaneous writes from unrelated processes are not a filesystem transaction.
+
+Compose suggestions query existing sender FTS columns and bounded recent Sent/outbox recipient metadata for the chosen sending account. They debounce for120ms, return at most10 addresses and never fetch provider contacts or mail bodies. One non-key panel serves To, CC and BCC, with explicit names/addresses, keyboard selection and cancellation guards. Coverage follows cached mail, not a complete provider address book.

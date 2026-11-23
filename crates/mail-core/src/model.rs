@@ -118,6 +118,22 @@ pub(crate) enum ReadChoice {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum Command {
+    Contacts {
+        account: String,
+        query: String,
+    },
+    Notes,
+    OpenNote {
+        id: String,
+    },
+    NewNote {
+        day: Option<String>,
+    },
+    SaveNote {
+        id: String,
+        text: String,
+        revision: Option<String>,
+    },
     MailConsent {
         account: String,
         access: MailAccess,

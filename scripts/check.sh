@@ -24,3 +24,5 @@ trap 'rm -rf "$test_dir"' EXIT
 ./scripts/check-mail-actions.sh
 
 python3 scripts/check-read-hold.py
+
+./scripts/check-workspaces.sh

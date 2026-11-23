@@ -27,7 +27,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private var backfillMode = BackfillMode.enabled
     private var backfillTask: Task<Void, Never>?
     private let messageMenu = NSMenu(title: "Message")
-    private let mailButton = ClassicButton("Mail", icon: .mail, style: .toolbar)
+    private let mailButton = ClassicButton("Mail", icon: .mail, style: .navigation)
     private let newButton = ClassicButton("New mail", icon: .draft)
     private let replyButton = ClassicButton("Reply", icon: .mail)
     private let replyAllButton = ClassicButton("Reply all", icon: .mail)
@@ -76,6 +76,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private var layoutItems: [ReadingLayout: NSMenuItem] = [:]
     private var agendaItems: [AgendaLayout: NSMenuItem] = [:]
     private static let agendaKey = "calendarAgendaLayout"
+    private static let hiddenCalendarsKey = "hiddenCalendars"
     private static let agendaBelowKey = "calendarAgendaBelowRatio"
     private static let agendaRightKey = "calendarAgendaRightRatio"
     private var pendingAppearance = ClassicTheme.appearance
@@ -106,6 +107,8 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private var section: Section = .mail
     private var calendarView: CalendarView?
     private var calendarSidebar: CalendarSidebar?
+    private var calendarWindow: CalendarWindow?
+    private var notesWindow: NotesWindow?
     private var calendarState = CalendarState()
     private struct CalendarCache {
         let sources: [CalendarSource]
@@ -118,8 +121,8 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private var calendarIdleTask: Task<Void, Never>?
     private static let calendarIdleDelay: Duration = .seconds(5)
     private var mailSearch = ""
-    private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .toolbar)
-    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions", "--check-read-hold", "--check-action-nav"]
+    private let calendarButton = ClassicButton("Calendar", icon: .calendar, style: .navigation)
+    private static let offlineArgs: Set<String> = ["--perf-report", "--self-test", "--check-paging", "--metrics", "--check-calendar", "--check-accounts", "--check-media", "--check-calendar-actions", "--check-control-states", "--check-mail-actions", "--check-read-hold", "--check-action-nav", "--check-workspaces"]
     private let textButton = ClassicButton("Text", icon: .text, style: .segment)
     private let htmlButton = ClassicButton("HTML", icon: .html, style: .segment)
     private let more = ClassicButton("Older")
@@ -148,6 +151,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             calendarState.agendaLayout = AgendaLayout(rawValue: UserDefaults.standard.string(forKey: Self.agendaKey) ?? "") ?? .below
             calendarState.belowRatio = UserDefaults.standard.object(forKey: Self.agendaBelowKey) as? Double ?? 0.7
             calendarState.rightRatio = UserDefaults.standard.object(forKey: Self.agendaRightKey) as? Double ?? 0.6
+            calendarState.hiddenSources = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenCalendarsKey) ?? [])
         }
         if arguments.contains("--side-by-side") { readingLayout = .right }
         layout.setReadingLayout(readingLayout)
@@ -304,8 +308,9 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         for (center, observer) in readObservations { center.removeObserver(observer) }; readObservations.removeAll()
         syncFeedback?.cancel(); syncFeedback = nil
         noticeTask?.cancel(); noticeTask = nil
-        mailTask?.cancel(); composer?.close(); workspace?.close(); calendarView?.setClock(.stopped)
+        mailTask?.cancel(); composer?.close(); workspace?.close(); calendarWindow?.close(); calendarView?.setClock(.stopped)
         notifications?.stop(); editor?.close(); pendingEdits?.close(); pendingEdits = nil
+        notesWindow?.close(); notesWindow = nil
         calendarIdleTask?.cancel()
         idleCalendar = nil
         media.cancel()
@@ -352,6 +357,9 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
 
     private func buildToolbar() {
         let accountsButton = ClassicButton("Accounts", icon: .account, style: .toolbar)
+        let notesButton = ClassicButton("Notes", icon: .text, style: .toolbar)
+        notesButton.onPress = { [weak self] in self?.showNotes() }
+        notesButton.toolTip = "Open local daily Markdown notes in their own window (⌘5)."
         mailButton.onPress = { [weak self] in self?.showMail() }
         calendarButton.onPress = { [weak self] in self?.showCalendar() }
         newButton.onPress = { [weak self] in self?.newMail() }
@@ -364,7 +372,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         syncButton.onPress = { [weak self] in self?.syncMail() }
         accountsButton.onPress = { [weak self] in self?.connectAccount() }
         bell.onPress = { [weak self] in self?.noticeService().show() }
-        for button in [mailButton, calendarButton, syncButton, accountsButton, bell] {
+        for button in [mailButton, calendarButton, notesButton, syncButton, accountsButton, bell] {
             layout.toolbar.addItem(button, width: 75, height: 55)
         }
         layout.toolbar.addItem(draftsButton, width: 145)
@@ -401,6 +409,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
 
     private var selectedMails: [Mail] { table.selectedRowIndexes.compactMap { messages.indices.contains($0) ? messages[$0] : nil } }
     private var selectedMail: Mail? { table.numberOfSelectedRows == 1 ? selectedMails.first : nil }
+    private var mailMenuFocused: Bool { WindowPresentation.isBackground || NSApp.keyWindow == nil || NSApp.keyWindow === layout.window }
     private var batchReady: Bool {
         section == .mail && mailbox == .live && listPhase == .ready && mailTask == nil && readTask == nil && !readClosing && !selectedMails.isEmpty && selectedMails.count <= Self.batchLimit
     }
@@ -409,6 +418,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private var allPinned: Bool { selectedMails.allSatisfy { $0.pinned == true } }
 
     private func composeMail(_ kind: ComposeKind) {
+        if kind == .new, let notesWindow, notesWindow.shell.window.isKeyWindow { notesWindow.newNote(); return }
         guard mailbox == .live, section == .mail else { return }
         let selected = selectedMail
         guard kind == .new || selected?.id == current?.id else { return }
@@ -597,8 +607,8 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         }
     }
     @objc(undo:) private func undoMail(_ sender: Any?) {
-        if let editor = layout.window?.firstResponder as? NSTextView, editor.isEditable { editor.undoManager?.undo(); return }
-        guard section == .mail, mailbox == .live, listPhase == .ready, mailTask == nil, readTask == nil, let entry = mailUndo.last else { return }
+        if let editor = (NSApp.keyWindow ?? layout.window)?.firstResponder as? NSTextView, editor.isEditable { editor.undoManager?.undo(); return }
+        guard mailMenuFocused, section == .mail, mailbox == .live, listPhase == .ready, mailTask == nil, readTask == nil, let entry = mailUndo.last else { return }
         layout.statusText.stringValue = "Undoing " + entry.title + "…"
         updateMailButtons(.busy)
         mailTask = Task { [weak self] in
@@ -809,7 +819,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private func updateFooter() {
         let context = section == .calendar ? "Calendar" : readerMode == .text ? "Text" : "HTML · " + (layout.header.images == .loaded ? "Images loaded" : "Images blocked")
         layout.statusReader.stringValue = (mailbox == .demo ? "Demo · " : "") + context
-        layout.statusReader.toolTip = section == .calendar ? "Calendar events cached on this Mac. Refresh updates connected accounts." : "Message view: " + context + ". Cached messages remain readable offline."
+        layout.statusReader.toolTip = section == .calendar ? "Events are available offline. Refresh updates connected accounts." : "Message view: " + context + ". Cached messages remain readable offline."
     }
 
     private func loadAccounts() async throws {
@@ -902,7 +912,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             more.isEnabled = page.count == Self.pageSize
             newer.isEnabled = pageOffset > 0
             layout.listCaption.stringValue = "\(listTitle.uppercased())  ·  \(messages.isEmpty ? "0" : "\(offset + 1)-\(offset + messages.count)") SHOWN"
-            layout.statusText.stringValue = matchCaption + "\(messages.count) messages  ·  \(messages.filter(\.unread).count) unread  ·  \(mailbox == .demo ? "Demo data" : "Cached on this Mac")"
+            layout.statusText.stringValue = matchCaption + "\(messages.count) messages  ·  \(messages.filter(\.unread).count) unread  ·  \(mailbox == .demo ? "Demo data" : "Available offline")"
             if !messages.isEmpty {
                 let index = selected.flatMap { id in messages.firstIndex(where: { $0.id == id }) } ?? 0
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
@@ -1086,6 +1096,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     }
 
     @objc private func toggleDemo() {
+        calendarWindow?.close()
         noticeTask?.cancel()
         setSection(.mail)
         calendarCache = nil
@@ -1158,8 +1169,8 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             defer { refreshTask = nil }
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             if pendingCatalog { pendingCatalog = false; await loadFolders(); await registerCalendar() }
-            if section == .calendar { await loadCalendar() }
-            else { await refreshList() }
+            if section == .calendar || calendarWindow != nil { await loadCalendar() }
+            if section == .mail { await refreshList() }
         }
     }
 
@@ -1393,17 +1404,23 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         let messageActions = NSMenu(title: "Message"); addMailActions(messageActions)
         messageActions.addItem(.separator())
         addItem(messageActions, "Mark read automatically after 2 seconds", #selector(toggleAutoRead), "")
+        let windows = NSMenu(title: "Window")
+        addItem(windows, "Mail window", #selector(showMail), "")
+        addItem(windows, "Open Calendar in New Window", #selector(popoutCalendar), "")
+        addItem(windows, "Notes", #selector(showNotes), "5")
+        addItem(file, "New note…", #selector(newNote), "")
+        windows.addItem(withTitle: "Close window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         let help = NSMenu(title: "Help")
         addItem(help, "App updates…", #selector(openAppUpdates), "")
         help.items.last?.toolTip = "Open f1nb0 Apps to check, download and install updates."
         addItem(help, "About this preview", #selector(showAbout), "")
-        for menu in [file, edit, view, messageActions, tools, help] {
+        for menu in [file, edit, view, messageActions, tools, windows, help] {
             main.addItem(withTitle: menu.title, action: nil, keyEquivalent: "").submenu = menu
         }
         for item in app.items where item.action == #selector(showAbout) { item.target = self }
         NSApp.mainMenu = main
         var x: CGFloat = 0
-        for menu in [file, edit, view, messageActions, tools, help] {
+        for menu in [file, edit, view, messageActions, tools, windows, help] {
             let button = ClassicButton(menu.title, style: .menu)
             let width = max(48, CGFloat(menu.title.count * 7 + 18))
             button.frame = NSRect(x: x, y: 0, width: width, height: 24)
@@ -1421,7 +1438,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         item.target = self
     }
 
-    var needsQuitConfirm: Bool { backfillTask != nil || readTask != nil || editor?.requiresClosePrompt == true || composer?.needsClosePrompt == true }
+    var needsQuitConfirm: Bool { backfillTask != nil || readTask != nil || notesWindow?.needsClosePrompt == true || editor?.requiresClosePrompt == true || composer?.needsClosePrompt == true }
     func confirmQuit(_ reply: @escaping (CalendarEditor.CloseOutcome) -> Void) {
         readClosing = true; readDwell.cancel(); updateMailButtons()
         let finishReply: (CalendarEditor.CloseOutcome) -> Void = { [weak self] outcome in
@@ -1438,8 +1455,12 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     }
     private func closeEditors(_ reply: @escaping (CalendarEditor.CloseOutcome) -> Void) {
         let finish: () -> Void = { [weak self] in
-            guard let editor = self?.editor else { reply(.closed); return }
-            editor.requestClose(reply)
+            let finishNotes: (CalendarEditor.CloseOutcome) -> Void = { [weak self] outcome in
+                guard outcome == .closed, let notes = self?.notesWindow else { reply(outcome); return }
+                notes.requestClose(reply)
+            }
+            guard let editor = self?.editor else { finishNotes(.closed); return }
+            editor.requestClose(finishNotes)
         }
         guard let composer else { finish(); return }
         composer.requestClose { result in if result == .closed { finish() } else { reply(.cancelled) } }
@@ -1447,14 +1468,18 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(undoMail(_:)):
-            if let editor = layout.window?.firstResponder as? NSTextView, editor.isEditable {
+            if let editor = (NSApp.keyWindow ?? layout.window)?.firstResponder as? NSTextView, editor.isEditable {
                 item.title = editor.undoManager?.undoMenuItemTitle ?? "Undo"; return editor.undoManager?.canUndo == true
             }
             item.title = mailUndo.last.map { "Undo " + $0.title } ?? "Undo"
-            return section == .mail && mailbox == .live && listPhase == .ready && mailTask == nil && readTask == nil && !mailUndo.isEmpty
-        case #selector(newMail): return mailbox == .live && section == .mail && accounts.contains { $0.provider != .local }
+            return mailMenuFocused && section == .mail && mailbox == .live && listPhase == .ready && mailTask == nil && readTask == nil && !mailUndo.isEmpty
+        case #selector(newMail):
+            let notesActive = notesWindow?.shell.window.isKeyWindow == true
+            item.title = notesActive ? "New note…" : "New mail…"
+            return notesActive || (mailbox == .live && section == .mail && accounts.contains { $0.provider != .local })
         case #selector(showMailWorkspace): return mailbox == .live
         case #selector(replyMail), #selector(replyAllMail), #selector(forwardMail), #selector(trashMail), #selector(archiveMail), #selector(moveMail), #selector(toggleRead), #selector(toggleKeepUnread), #selector(toggleFlag), #selector(togglePin):
+            guard mailMenuFocused else { return false }
             if item.action == #selector(toggleRead) { item.title = allUnread ? "Mark as read" : "Mark as unread" }
             if item.action == #selector(toggleFlag) { item.title = allFlagged ? "Unflag / unstar" : "Flag / star" }
             if item.action == #selector(togglePin) { item.title = allPinned ? "Unpin on this Mac" : "Pin on this Mac" }
@@ -1471,9 +1496,10 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         case #selector(showText): item.state = section == .mail && readerMode == .text ? .on : .off
         case #selector(showHTML): item.state = section == .mail && readerMode == .html ? .on : .off
         case #selector(showCalendar): item.state = section == .calendar ? .on : .off
+        case #selector(popoutCalendar): item.title = calendarWindow == nil ? "Open Calendar in New Window" : "Show Calendar Window"; return true
         case #selector(showMail): item.state = section == .mail ? .on : .off
         case #selector(paneBelow), #selector(paneRight): return section == .mail
-        case #selector(agendaBelow), #selector(agendaRight): return section == .calendar
+        case #selector(agendaBelow), #selector(agendaRight): return section == .calendar || calendarWindow?.shell.window.isKeyWindow == true
         case #selector(importMail): return section == .mail
         case #selector(connectAccount): return connectTask == nil
         case #selector(newCalendarEvent), #selector(showCalendarChanges): return mailbox == .live && accounts.contains { $0.provider != .local }
@@ -1482,12 +1508,16 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         return true
     }
     @objc private func showNotices() { noticeService().show() }
-    @objc private func newCalendarEvent() { setSection(.calendar); openEditor(nil, date: calendarState.date) }
+    @objc private func newCalendarEvent() { setSection(.calendar); openEditor(nil, date: calendarView?.state.date ?? calendarState.date) }
     @objc private func showCalendarChanges() { setSection(.calendar); showPending() }
     @objc private func agendaBelow() { calendarView?.setAgendaLayout(.below) }
     @objc private func agendaRight() { calendarView?.setAgendaLayout(.right) }
 
-    @objc private func focusSearch() { layout.window?.makeFirstResponder(layout.search) }
+    @objc private func focusSearch() {
+        if let notesWindow, notesWindow.shell.window.isKeyWindow { notesWindow.find(); return }
+        if let calendarWindow, calendarWindow.shell.window.isKeyWindow { calendarWindow.focusSearch(); return }
+        layout.window?.makeFirstResponder(layout.search)
+    }
     @objc private func toggleSparkles() {
         cursorTrail.mode = cursorTrail.mode == .enabled ? .disabled : .enabled
         if !WindowPresentation.isBackground { UserDefaults.standard.set(cursorTrail.mode == .enabled, forKey: Self.sparkleKey) }
@@ -1502,20 +1532,50 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     }
     @objc private func showText() { setSection(.mail); setReader(.text) }
     @objc private func showHTML() { setSection(.mail); setReader(.html) }
-    @objc private func showCalendar() { setSection(.calendar) }
-    @objc private func showMail() { setSection(.mail) }
+    @objc private func showCalendar() { setSection(.calendar); updateMailButtons() }
+    @objc private func showMail() {
+        setSection(.mail); updateMailButtons()
+        if let window = layout.window { WindowPresentation.show(window) }
+    }
+    var hasWorkspaceWindows: Bool { calendarWindow?.isOpen == true || notesWindow?.shell.isOpen == true }
+    @objc private func showNotes() { notesWorkspace().show() }
+    @objc private func newNote() { notesWorkspace().newNote() }
+    private func notesWorkspace() -> NotesWindow {
+        if let notesWindow { return notesWindow }
+        let value = NotesWindow(core: core)
+        value.onClosed = { [weak self] in self?.notesWindow = nil }
+        notesWindow = value; return value
+    }
+    @objc private func popoutCalendar() {
+        if let calendarWindow { calendarWindow.show(); return }
+        setSection(.calendar)
+        guard let view = calendarView, let side = calendarSidebar else { return }
+        let popup = CalendarWindow(view: view, sidebar: side)
+        calendarWindow = popup
+        popup.shell.onExposure = { [weak view] exposure in view?.setClock(exposure == .visible ? .running : .stopped) }
+        popup.shell.onClosed = { [weak self, weak view] in
+            guard let self else { return }
+            if let view { calendarState = view.state; view.setClock(.stopped) }
+            calendarTask?.cancel(); calendarRevision += 1
+            calendarView = nil; calendarSidebar = nil; calendarWindow = nil
+            updateMailButtons()
+        }
+        setSection(.mail)
+        popup.show(); scheduleCalendar()
+    }
     @objc private func toggleCalendar() { setSection(section == .mail ? .calendar : .mail) }
     @objc private func paneBelow() { setReadingLayout(.below) }
     @objc private func paneRight() { setReadingLayout(.right) }
 
     private enum MailReload { case refresh, skip }
     private func setSection(_ next: Section, reload: MailReload = .refresh) {
+        if next == .calendar, let calendarWindow { calendarWindow.show(); return }
         guard next != section else { return }
         readDwell.cancel()
         searchTask?.cancel()
         section = next
         updateMailButtons()
-        calendarView?.setClock(.stopped)
+        if calendarWindow == nil { calendarView?.setClock(.stopped) }
         splitButton.isEnabled = true
         if next == .calendar {
             calendarIdleTask?.cancel()
@@ -1540,11 +1600,15 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             view.onEdit = { [weak self] key in self?.openEditor(key, date: Date()) }
             view.onClockTick = { [weak side] in side?.redrawToday() }
             view.onPending = { [weak self] in self?.showPending() }
+            view.onDailyNote = { [weak self] date in self?.notesWorkspace().openDaily(date) }
             view.onLayoutChange = { [weak self] state in self?.saveAgendaLayout(state) }
             side.onDate = { [weak view] date in view?.selectDate(date) }
             side.onFeeds = { [weak view] feeds in view?.setFeeds(feeds) }
-            side.onMail = { [weak self] in self?.setSection(.mail) }
-            side.onHiddenSources = { [weak view] hidden in view?.setHidden(hidden) }
+            side.onMail = { [weak self] in self?.showMail() }
+            side.onHiddenSources = { [weak self, weak view] hidden in
+                view?.setHidden(hidden); self?.calendarState.hiddenSources = hidden
+                if !WindowPresentation.isBackground { UserDefaults.standard.set(hidden.sorted(), forKey: Self.hiddenCalendarsKey) }
+            }
             view.onDateChanged = { [weak self, weak side] date in
                 side?.showDate(date)
                 self?.scheduleCalendar()
@@ -1561,21 +1625,23 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             layout.folderTitle = "Calendar"
             layout.titleBar.title = "Square Mail - Calendar"
             setSearchText(calendarState.query)
-            layout.search.placeholderString = mailbox == .demo ? "Search sample events (⌘F)" : "Search cached events (⌘F)"
-            layout.statusText.stringValue = mailbox == .demo ? "Sample calendars · not connected" : (accounts.contains(where: { $0.connected == true }) ? "Cached calendars · updates while online" : "Offline calendars · reconnect an account to update")
+            layout.search.placeholderString = mailbox == .demo ? "Search sample events (⌘F)" : "Search events (⌘F)"
+            layout.statusText.stringValue = mailbox == .demo ? "Sample calendars · not connected" : (accounts.contains(where: { $0.connected == true }) ? "Calendars · updates while online" : "Offline · showing saved events. Reconnect to update.")
             scheduleCalendar()
         } else {
-            calendarTask?.cancel()
-            calendarRevision += 1
-            if let view = calendarView { calendarState = view.state }
-            if let view = calendarView, let side = calendarSidebar { idleCalendar = (view, side) }
-            calendarView?.removeFromSuperview(); calendarView = nil
-            calendarSidebar?.removeFromSuperview(); calendarSidebar = nil
-            calendarIdleTask?.cancel()
-            calendarIdleTask = Task { [weak self] in
-                do { try await Task.sleep(for: Self.calendarIdleDelay) } catch { return }
-                self?.idleCalendar = nil
-                self?.calendarIdleTask = nil
+            if calendarWindow == nil {
+                calendarTask?.cancel()
+                calendarRevision += 1
+                if let view = calendarView { calendarState = view.state }
+                if let view = calendarView, let side = calendarSidebar { idleCalendar = (view, side) }
+                calendarView?.removeFromSuperview(); calendarView = nil
+                calendarSidebar?.removeFromSuperview(); calendarSidebar = nil
+                calendarIdleTask?.cancel()
+                calendarIdleTask = Task { [weak self] in
+                    do { try await Task.sleep(for: Self.calendarIdleDelay) } catch { return }
+                    self?.idleCalendar = nil
+                    self?.calendarIdleTask = nil
+                }
             }
             layout.split.isHidden = false
             sidebar.isHidden = false
@@ -1583,7 +1649,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             layout.titleBar.title = "Square Mail - \(folderTitle)"
             setSearchText(mailSearch)
             layout.search.placeholderString = searchScope == .allFolders ? "Search all folders (⌘F)" : "Search this folder (⌘F)"
-            layout.statusText.stringValue = "\(messages.count) messages shown · Cached on this Mac"
+            layout.statusText.stringValue = "\(messages.count) messages shown · Available offline"
             setReader(readerMode)
             if reload == .refresh {
                 let revision = listRevision
@@ -1597,7 +1663,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         updateLayoutButtons()
         updateFooter()
         layout.titleBar.needsDisplay = true
-        layout.search.setAccessibilityLabel(next == .calendar ? (mailbox == .demo ? "Search sample events" : "Search cached events") : "Search this folder")
+        layout.search.setAccessibilityLabel(next == .calendar ? (mailbox == .demo ? "Search sample events" : "Search events") : "Search this folder")
         calendarButton.setAccessibilityLabel(calendarButton.title)
         calendarButton.needsDisplay = true
     }
@@ -1653,7 +1719,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
                     if notice.target.isEmpty { showPending(); return }
                     setSection(.calendar)
                     await loadCalendar()
-                    guard !Task.isCancelled, section == .calendar else { return }
+                    guard !Task.isCancelled, section == .calendar || calendarWindow != nil else { return }
                     openEditor(EventKey(account: notice.account, calendar: calendar, id: notice.target), date: Date(timeIntervalSince1970: TimeInterval(notice.occurred)))
                     return
                 }
@@ -1706,7 +1772,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     }
 
     private func loadCalendar() async {
-        guard mailbox == .live, section == .calendar, let view = calendarView else { return }
+        guard mailbox == .live, section == .calendar || calendarWindow != nil, let view = calendarView else { return }
         let revision = calendarRevision
         let range = view.range
         do {
@@ -1870,6 +1936,33 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         await finishSelection()
         guard trashButton.isEnabled else { throw MailError(message: "Single selection did not restore actions") }
+    }
+
+    func checkWorkspaces() async throws {
+        guard WindowPresentation.isBackground, accounts.first?.email == "fin@example.test", accounts.first?.connected == false else { throw MailError(message: "Use the disconnected workspace fixture") }
+        setSection(.calendar); await calendarTask?.value
+        guard let original = calendarView else { throw MailError(message: "Calendar did not open") }
+        let date = Calendar.current.date(byAdding: .day, value: 2, to: original.state.date)!
+        original.selectDate(date); await calendarTask?.value
+        try calendarSidebar?.verifySources()
+        popoutCalendar(); await calendarTask?.value; await finishSelection()
+        guard section == .mail, !layout.split.isHidden, calendarView === original, let popup = calendarWindow, popup.isOpen,
+              original.window === popup.shell.window, original.state.date == date else { throw MailError(message: "Calendar popout duplicated state or replaced the mailbox") }
+        let existing = calendarWindow; popoutCalendar()
+        calendarButton.performClick(nil); mailButton.performClick(nil)
+        guard calendarButton.state == .off, mailButton.state == .on, !calendarButton.isHighlighted else { throw MailError(message: "Detached window navigation retained a pressed command state") }
+        guard existing === calendarWindow else { throw MailError(message: "Opening Calendar twice created another window") }
+        try WindowPresentation.snapshot(popup.shell.window.contentView!, name: "calendar-window")
+        popup.shell.window.performClose(nil)
+        guard calendarWindow == nil, calendarView == nil else { throw MailError(message: "Closing calendar retained its view or window") }
+        setSection(.calendar); await calendarTask?.value
+        guard calendarView?.state.date == date else { throw MailError(message: "Reopening lost the calendar date") }
+        setSection(.mail)
+        let prompts = ScriptedEditorPrompts(); let notes = NotesWindow(core: core, prompts: prompts)
+        notesWindow = notes; notes.onClosed = { [weak self] in self?.notesWindow = nil }
+        try await notes.verifyControls(prompts)
+        guard notesWindow == nil else { throw MailError(message: "Closed notes retained the application window") }
+        print("Workspace windows and local Markdown notes verified without another sync owner or provider calls")
     }
 
     func checkActionNav() async throws {

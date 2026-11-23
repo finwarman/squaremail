@@ -8,6 +8,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     private enum Phase { case closed, loading, editing, saving, prompting }
     private let core: MailCore
     private let prompts: EditorPrompting
+    private let addresses: AddressSuggestions
     private var phase: Phase = .closed
     private var window: NSPanel?
     private let caption = ClassicTitleBar()
@@ -34,7 +35,10 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     var onSaved: (() -> Void)?
     var onQueued: ((QueuedSend) -> Void)?
     var onStatus: ((String) -> Void)?
-    init(core: MailCore, prompts: EditorPrompting? = nil) { self.core = core; self.prompts = prompts ?? EditorPrompter(); super.init() }
+    init(core: MailCore, prompts: EditorPrompting? = nil) {
+        self.core = core; self.prompts = prompts ?? EditorPrompter(); addresses = AddressSuggestions(core: core)
+        super.init(); addresses.onCommit = { [weak self] in self?.scheduleSave() }
+    }
     var needsClosePrompt: Bool { window != nil && (dirty || phase == .saving) }
     private var document: MailDraft? {
         guard var draft else { return nil }
@@ -46,6 +50,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     }
     private var dirty: Bool { editVersion != savedVersion }
     func close() {
+        addresses.dismiss()
         phase = .closed; generation += 1
         task?.cancel(); task = nil; autosave?.cancel(); autosave = nil
         if let sheet = window?.attachedSheet { window?.endSheet(sheet, returnCode: .abort) }
@@ -73,6 +78,8 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
             }
         }
     }
+    func windowDidMove(_ notification: Notification) { addresses.dismiss() }
+    func windowDidResize(_ notification: Notification) { addresses.dismiss() }
     func windowShouldClose(_ sender: NSWindow) -> Bool { requestClose(); return false }
     func open(_ kind: ComposeKind, account: String, original: String?, mode: BodyFetch, accounts: [Account], seed: MailLinkDraft? = nil) {
         requestClose { [weak self] result in
@@ -125,6 +132,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
     }
     private func transition(_ value: Phase) {
         phase = value
+        if value != .editing { addresses.dismiss() }
         updateCaption()
         let enabled = value == .editing && draft != nil
         for field in [to, cc, bcc, subject] { field.isEnabled = enabled }
@@ -181,7 +189,7 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
             input.delegate = self; input.font = ClassicTheme.font(12); input.stringValue = ""
             input.textColor = ClassicTheme.ink; input.backgroundColor = .white; input.drawsBackground = true
         }
-        for input in [to, cc, bcc] { input.placeholderString = "Email addresses, separated by commas" }
+        for input in [to, cc, bcc] { input.placeholderString = "Name or address · suggestions after 2 characters · separate with commas" }
         let scroll = NSScrollView(frame: NSRect(x: 12, y: 64, width: 754, height: 398))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder; scroll.autoresizingMask = [.width, .height]
         text.setAccessibilityLabel("Mail body")
@@ -207,9 +215,18 @@ final class MailComposer: NSObject, NSWindowDelegate, NSTextViewDelegate, NSText
         window?.title = "Square Mail - " + name
         window?.isDocumentEdited = dirty
     }
-    func controlTextDidChange(_ notification: Notification) { scheduleSave() }
+    func controlTextDidChange(_ notification: Notification) {
+        scheduleSave()
+        if let field = notification.object as? NSTextField, [to, cc, bcc].contains(field) {
+            addresses.update(field, account: document?.account)
+        }
+    }
+    func controlTextDidEndEditing(_ notification: Notification) { addresses.dismiss() }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        [to, cc, bcc].contains { $0 === control } && addresses.command(commandSelector)
+    }
     func textDidChange(_ notification: Notification) { scheduleSave() }
-    @objc private func changed() { scheduleSave() }
+    @objc private func changed() { addresses.dismiss(); scheduleSave() }
     func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
         let count = textView.string.utf16.count - affectedCharRange.length + (replacementString?.utf16.count ?? 0)
         if count > 1024 * 1024 { status.stringValue = "Body limit is 1 MiB. Remove text before adding more."; return false }
@@ -313,6 +330,9 @@ extension MailComposer {
         window?.setContentSize(NSSize(width: 1020, height: 840)); content.layoutSubtreeIfNeeded()
         guard caption.frame.maxY <= content.bounds.height, actions.frame.maxY <= caption.frame.minY else { throw MailError(message: "Resized compose chrome overlapped") }
         window?.setContentSize(NSSize(width: 780, height: 722))
+        window?.makeFirstResponder(to)
+        try await addresses.verify(to, account: "fixture")
+        window?.makeFirstResponder(text)
         to.stringValue = "ada@example.test"; cc.stringValue = "cc@example.test"; bcc.stringValue = "bcc@example.test"
         subject.stringValue = "Offline native draft"; text.string = "Hello\n\n- one\n  - nested\n\n> Earlier\n> > Older\n--------"
         scheduleSave(); await autosave?.value; await task?.value
