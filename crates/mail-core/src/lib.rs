@@ -54,6 +54,9 @@ fn sync_cycle(store: &Store, context: &network::Context<'_>) -> Result<Value> {
 }
 
 fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
+    if let Command::NotesBackup { action } = request.command {
+        return notes::backup::run(&request.database, action, context);
+    }
     match &request.command {
         Command::Notes => return Ok(serde_json::to_value(notes::list(&request.database)?)?),
         Command::OpenNote { id } => {
@@ -77,7 +80,8 @@ fn dispatch(request: Request, context: &network::Context<'_>) -> Result<Value> {
     }
     let store = Store::open(&request.database)?;
     match request.command {
-        Command::Notes
+        Command::NotesBackup { .. }
+        | Command::Notes
         | Command::OpenNote { .. }
         | Command::NewNote { .. }
         | Command::SaveNote { .. } => unreachable!("Notes use their file service"),

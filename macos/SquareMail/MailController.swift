@@ -109,6 +109,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     private var calendarSidebar: CalendarSidebar?
     private var calendarWindow: CalendarWindow?
     private var notesWindow: NotesWindow?
+    private lazy var notesBackup = NotesBackupService(core: core)
     private var calendarState = CalendarState()
     private struct CalendarCache {
         let sources: [CalendarSource]
@@ -271,6 +272,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             guard let self, self.mailbox == .live else { return }
             let regained = !self.networkAvailable && connectivity == .online
             self.networkAvailable = connectivity == .online
+            self.notesBackup.setOnline(self.networkAvailable)
             self.updateFooter()
             if regained, self.networkReady, self.section == .mail, self.current?.text == nil {
                 self.tableViewSelectionDidChange(Notification(name: NSTableView.selectionDidChangeNotification))
@@ -297,12 +299,15 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     func startSync() {
         guard Self.offlineArgs.isDisjoint(with: ProcessInfo.processInfo.arguments), !ProcessInfo.processInfo.arguments.contains("--no-sync") else { return }
         if mailbox == .live { noticeService().start(accounts) }
+        notesBackup.start()
+        notesBackup.onRestored = { [weak self] note in self?.notesWorkspace().openNote(note.id) }
         networkReady = true
         coordinator.setActivity(mailbox == .live && accounts.contains(where: { $0.connected == true }) ? .running : .paused)
         if section == .mail, current?.text == nil { tableViewSelectionDidChange(Notification(name: NSTableView.selectionDidChangeNotification)) }
         if mailbox == .live { Task { await registerCalendar() } }
     }
     func stop() {
+        notesBackup.stop()
         readStopped = true
         readDwell.cancel(); readTask?.cancel(); readIntents.removeAll()
         for (center, observer) in readObservations { center.removeObserver(observer) }; readObservations.removeAll()
@@ -504,8 +509,8 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
             MainActor.assumeIsolated {
                 guard let self else { return }
                 if name == NSWindow.willBeginSheetNotification || name == NSWindow.willCloseNotification { self.readDwell.cancel(); return }
-                if name == NSWorkspace.willSleepNotification { self.readSleeping = true }
-                if name == NSWorkspace.didWakeNotification { self.readSleeping = false }
+                if name == NSWorkspace.willSleepNotification { self.readSleeping = true; self.notesBackup.setAwake(false) }
+                if name == NSWorkspace.didWakeNotification { self.readSleeping = false; self.notesBackup.setAwake(true) }
                 self.updateReadDwell()
             }
         }
@@ -1542,7 +1547,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
     @objc private func newNote() { notesWorkspace().newNote() }
     private func notesWorkspace() -> NotesWindow {
         if let notesWindow { return notesWindow }
-        let value = NotesWindow(core: core)
+        let value = NotesWindow(core: core, backup: notesBackup)
         value.onClosed = { [weak self] in self?.notesWindow = nil }
         notesWindow = value; return value
     }
@@ -1961,6 +1966,9 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         let prompts = ScriptedEditorPrompts(); let notes = NotesWindow(core: core, prompts: prompts)
         notesWindow = notes; notes.onClosed = { [weak self] in self?.notesWindow = nil }
         try await notes.verifyControls(prompts)
+        let backup = NotesBackupService(core: core)
+        let panel = NotesBackupPanel(service: backup)
+        try await panel.verifyControls()
         guard notesWindow == nil else { throw MailError(message: "Closed notes retained the application window") }
         print("Workspace windows and local Markdown notes verified without another sync owner or provider calls")
     }

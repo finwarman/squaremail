@@ -11,23 +11,22 @@ public enum TextNormalizer {
 
     public static func compact(_ original: String) -> String {
         var result = ""; result.reserveCapacity(original.utf8.count)
-        var blank = false
         var fence: String?
         original.enumerateSubstrings(in: original.startIndex..<original.endIndex, options: [.byLines]) { value, _, _, _ in
             let line = value ?? ""
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             let marker = trimmed.hasPrefix("```") ? "```" : (trimmed.hasPrefix("~~~") ? "~~~" : nil)
             if fence != nil || marker != nil {
-                if !result.isEmpty { result += blank ? "\n\n" : "\n" }
-                result += line; blank = false
+                if !result.isEmpty { result += "\n" }
+                result += line
                 if let marker { fence = fence == marker ? nil : (fence ?? marker) }
                 return
             }
             let kind: LineKind = structured(trimmed) ? .structured : .prose
             let cleaned = cleanLine(line, kind: kind)
-            guard !cleaned.trimmingCharacters(in: .whitespaces).isEmpty else { if !result.isEmpty { blank = true }; return }
-            if !result.isEmpty { result += blank ? "\n\n" : "\n" }
-            result += cleaned; blank = false
+            guard !cleaned.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            if !result.isEmpty { result += "\n" }
+            result += cleaned
         }
         return result
     }

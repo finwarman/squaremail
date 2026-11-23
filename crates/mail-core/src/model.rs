@@ -118,6 +118,10 @@ pub(crate) enum ReadChoice {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum Command {
+    NotesBackup {
+        #[serde(flatten)]
+        action: crate::notes::backup::Command,
+    },
     Contacts {
         account: String,
         query: String,

@@ -409,9 +409,10 @@ final class ReaderView: NSView, WKNavigationDelegate, NSTextViewDelegate {
         text.string = ""; text.setSelectedRange(NSRange(location: 0, length: 0))
         let spacing = message == nil ? TextSpacing.original : spacing
         let links = message == nil ? LinkStyle.original : linkStyle
+        let html = message?.html
         textTask = Task { [weak self] in
             do {
-                let document = try await PlainRenderer.shared.render(value, spacing: spacing, links: links)
+                let document = try await PlainRenderer.shared.render(value, spacing: spacing, links: links, html: html)
                 guard let self, !Task.isCancelled, textRevision == revision else { return }
                 let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = spacing == .compact ? 2 : 5
                 let body = NSMutableAttributedString(string: document.text, attributes: [.font: ClassicTheme.font(14), .foregroundColor: ClassicTheme.ink, .paragraphStyle: paragraph])
@@ -538,6 +539,14 @@ extension ReaderView {
         try WindowPresentation.snapshot(self, name: "reader-links")
         display(mail, mode: .html); try await finishHTML()
         try await snapshotHTML()
+        let compactSource = "Shop logo] [Shop logo<https://example.test/shop>\nYour orders<https://example.test/orders> Offers<https://example.test/offers>\n\n\n[Shipment header]\n\nYour package was dispatched!\n[Completed]\nDispatched\n[Pending]\nDelivered\n\n- First item\n  - Nested detail\n\n> Earlier reply\n------"
+        let compactMail = Mail(id: "compact-fixture", pinned: false, keepUnread: false, accountId: "demo", remoteId: "compact", sender: "Sample shop", senderAddress: "shop@example.test", recipient: "reader@example.test", subject: "Shipment example", preview: "Sample", timestamp: 0, unread: false, starred: false, hasAttachments: false, text: compactSource, html: "<img alt='Shipment header'><img alt='Shop logo'>")
+        display(compactMail, mode: .text)
+        if spacingButton.state != .on { spacingButton.performClick(nil) }
+        await finishText()
+        guard text.string.hasPrefix("Shop logo ↗\nYour orders ↗ Offers ↗\nShipment header"), text.string.contains("[Pending]"), text.string.contains("  - Nested detail\n> Earlier reply\n------"), compactMail.text == compactSource else { throw MailError(message: "Compact reader lost meaningful text or kept duplicate image labels") }
+        try WindowPresentation.snapshot(self, name: "reader-compact-links")
+        spacingButton.performClick(nil); await finishText()
         display(mail, mode: .text)
         showText(String(repeating: source + "\n", count: 1000)); showText("Latest selection")
         await finishText()
@@ -560,7 +569,7 @@ extension ReaderView {
 
     func verifySpacing() async throws {
         let sample = "\n \nIntro\n\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------\n\n"
-        let expected = "Intro\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------"
+        let expected = "Intro\n- one\n  - nested\n> Reply\n> > Earlier\n------"
         guard CompactText.render(sample) == expected else { throw MailError(message: "Compact spacing damaged hierarchy or separators") }
         guard let original = message?.text, mode == .text else { throw MailError(message: "Spacing control needs a plain-text fixture") }
         spacingButton.performClick(nil); await finishText()

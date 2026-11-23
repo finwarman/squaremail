@@ -5,14 +5,14 @@ import XCTest
 final class ReaderTextTests: XCTestCase {
     func testPreheaderPadding() {
         let padding = String(repeating: "\u{2007}\u{034F}\u{00AD}\u{200C}", count: 128)
-        XCTAssertEqual(TextNormalizer.compact("Preview" + padding + "\n\n\nBody"), "Preview\n\nBody")
+        XCTAssertEqual(TextNormalizer.compact("Preview" + padding + "\n\n\nBody"), "Preview\nBody")
         XCTAssertEqual(TextNormalizer.compact("Hello" + padding + "world"), "Hello world")
         XCTAssertEqual(TextNormalizer.compact(String(repeating: " ", count: 80) + "Body"), "Body")
     }
 
     func testHierarchyAndLanguage() {
         let source = "\nIntro\n\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------\n\n"
-        XCTAssertEqual(TextNormalizer.compact(source), "Intro\n\n- one\n  - nested\n\n> Reply\n> > Earlier\n------")
+        XCTAssertEqual(TextNormalizer.compact(source), "Intro\n- one\n  - nested\n> Reply\n> > Earlier\n------")
         let language = "می\u{200C}روم 👩\u{200D}💻 a\u{034F}b"
         XCTAssertEqual(TextNormalizer.compact(language), language)
         XCTAssertEqual(TextNormalizer.compact("a\u{034F}"), "a\u{034F}")
@@ -33,7 +33,7 @@ final class ReaderTextTests: XCTestCase {
     func testProtectionWrapper() async throws {
         let source = "View online<https://gbr01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fsurvey&data=synthetic>"
         let result = try await render(source)
-        XCTAssertEqual(result.text, "View online ↗ · https://example.com/survey [Safe Links]")
+        XCTAssertEqual(result.text, "View online ↗")
         XCTAssertEqual(result.links.first?.url.host, "gbr01.safelinks.protection.outlook.com")
         XCTAssertTrue(result.links.first?.tooltip.contains("Destination: https://example.com/survey") == true)
         XCTAssertEqual(result.copyText(NSRange(location: 0, length: result.text.utf16.count)), source)
@@ -123,6 +123,32 @@ final class ReaderTextTests: XCTestCase {
         XCTAssertEqual(draft?.subject, "Hello World")
         XCTAssertEqual(draft?.body, "First\nSecond")
         XCTAssertNil(MailLinkDraft(url: URL(string: "mailto:one@example.com?to=two%40example.com%0ABcc:bad")!))
+    }
+
+    func testCompactMailLabels() async throws {
+        let safe = "https://gbr01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fshop.example.test%2Ftrack&data=fixture"
+        let source = "Shop logo] [Shop logo<\(safe)>\nYour orders<\(safe)> Offers<\(safe)>\n\n\n[Shipment header]\n\n[Completed]\nDispatched\n\n[Pending]\nDelivered"
+        let result = try await PlainRenderer.shared.render(source, spacing: .compact, links: .readable, html: "<img alt='Shipment header'><img alt='Shop logo'>")
+        XCTAssertEqual(result.text, "Shop logo ↗\nYour orders ↗ Offers ↗\nShipment header\n[Completed]\nDispatched\n[Pending]\nDelivered")
+        XCTAssertEqual(result.links.count, 3)
+        XCTAssertTrue(result.links.allSatisfy { $0.tooltip.contains("Safe Links protection:") && $0.url.host == "gbr01.safelinks.protection.outlook.com" })
+        XCTAssertTrue(result.copyText(NSRange(location: 0, length: result.text.utf16.count)).contains(safe))
+        XCTAssertEqual(ImageLabels.clean("[Keep this]\n[Pending]", html: #"<!-- <img alt='Keep this'> --><img title="alt='Pending'" alt='Other'>"#), "[Keep this]\n[Pending]")
+        let code = "```\n[Shipment header]\n\n```"
+        XCTAssertEqual(ImageLabels.clean(code, html: "<img alt='Shipment header'>"), code)
+        let markdown = "[https://claimed.example.test](https://destination.example.test)"
+        let namedURL = try await render(markdown)
+        XCTAssertEqual(namedURL.links.count, 1)
+        XCTAssertEqual(namedURL.text, "https://destination.example.test ↗")
+        XCTAssertEqual(namedURL.copyText(NSRange(location: 0, length: namedURL.text.utf16.count)), markdown)
+        let duplicate = try await render("[Shop logo] [Shop logo]<https://shop.example.test>")
+        XCTAssertEqual(duplicate.text, "Shop logo ↗")
+        let repeatLink = "[Product]<https://shop.example.test/item>\nProduct<https://shop.example.test/item>"
+        let compact = try await PlainRenderer.shared.render(repeatLink, spacing: .compact, links: .readable)
+        XCTAssertEqual(compact.text, "Product ↗")
+        XCTAssertEqual(compact.copyText(NSRange(location: 0, length: compact.text.utf16.count)), repeatLink)
+        let bareLabel = try await render("Before [Product]https://shop.example.test/item")
+        XCTAssertEqual(bareLabel.text, "Before Product ↗")
     }
 
     private func render(_ text: String) async throws -> PlainDocument {

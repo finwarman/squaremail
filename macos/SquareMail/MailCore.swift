@@ -38,6 +38,7 @@ final class MailCore {
     private let media = MailCore.makeQueue("media", limit: 1)
     private let calendar = MailCore.makeQueue("calendar", limit: 1)
     private let notifications = MailCore.makeQueue("notifications", limit: 1)
+    private let notesBackup = MailCore.makeQueue("notes-backup", limit: 1)
     private let renderer: MediaRenderer
     private let directory: URL
 
@@ -90,6 +91,7 @@ final class MailCore {
                 case .media: media.addOperation(work)
                 case .calendar: calendar.addOperation(work)
                 case .notifications: notifications.addOperation(work)
+                case .notesBackup: notesBackup.addOperation(work)
                 }
             }
         }, onCancel: { ticket.cancel() })

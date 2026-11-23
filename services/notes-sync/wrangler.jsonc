@@ -1,0 +1,10 @@
+{
+  "name": "fin-private-notes",
+  "account_id": "edb673bcd846796ff2dc8a70126e421b",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-05-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "f1nb0.dev/notes-sync/*", "zone_name": "f1nb0.dev" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "squaremail-notes-v1", "database_id": "bc07e6c4-0026-4f9d-bf6b-fafe10ef5ccd", "migrations_dir": "migrations" }]
+}

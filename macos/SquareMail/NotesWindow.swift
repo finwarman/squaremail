@@ -7,6 +7,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     private enum Phase { case closed, loading, editing, prompting }
     let shell = WorkspaceWindow(title: "Square Mail - Notes", size: NSSize(width: 1100, height: 760), minimum: NSSize(width: 820, height: 560))
     private let service: NotesService
+    private let backup: NotesBackupService
     private let prompts: EditorPrompting
     private let view = NotesCanvas()
     private var phase = Phase.closed
@@ -28,7 +29,8 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     var needsClosePrompt: Bool { shell.isOpen && (dirty || saving) }
     private var dirty: Bool { version != savedVersion }
 
-    init(core: MailCore, prompts: EditorPrompting? = nil) {
+    init(core: MailCore, backup: NotesBackupService? = nil, prompts: EditorPrompting? = nil) {
+        self.backup = backup ?? NotesBackupService(core: core)
         service = NotesService(core: core); self.prompts = prompts ?? EditorPrompter()
         super.init()
         view.frame = shell.body.bounds; view.autoresizingMask = [.width, .height]; shell.body.addSubview(view)
@@ -43,6 +45,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         }
         view.heading.onPress = { [weak self] in self?.insert("# ") }
         view.task.onPress = { [weak self] in self?.insert("- [ ] ") }
+        view.backup.onPress = { [weak self] in guard let self else { return }; self.backup.show(note: document?.id) }
         view.link.onPress = { [weak self] in self?.insert("[link](https://)") }
         shell.onCloseRequest = { [weak self] in self?.requestClose() }
         shell.onClosed = { [weak self] in self?.closed() }
@@ -68,6 +71,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
             } catch { guard revision == generation, shell.isOpen else { return }; phase = .editing; view.status.stringValue = error.localizedDescription; updateControls() }
         }
     }
+    func openNote(_ id: String) { show(); switchDocument(id: id) }
     func openDaily(_ date: Date) { show(); switchDocument(day: dayFormat.string(from: date)) }
     func newNote() { show(); switchDocument() }
     func find() {
@@ -148,7 +152,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         note.text = view.text.string
         let value = try await service.save(note)
         guard generation == revision else { return }
-        document = value; savedVersion = saved
+        document = value; savedVersion = saved; backup.requestSync()
     }
     private func saveCopy() {
         guard phase == .editing, !saving else { return }
@@ -261,6 +265,7 @@ private final class NotesCanvas: NSView {
     let table = NSTableView(); let search = NSTextField(); let text = NSTextView(usingTextLayoutManager: false)
     let today = ClassicButton("Today"); let new = ClassicButton("New note"); let save = ClassicButton("Save")
     let copy = ClassicButton("Save copy"); let reload = ClassicButton("Reload"); let folder = ClassicButton("Open folder")
+    let backup = ClassicButton("Encrypted backup…")
     let heading = ClassicButton("Heading"); let task = ClassicButton("Checkbox"); let link = ClassicButton("Link")
     let status = NSTextField(labelWithString: "Loading local Markdown notes…")
     private let list = NSScrollView(); private let editor = NSScrollView(); private let actions = ClassicActionBar()
@@ -280,7 +285,7 @@ private final class NotesCanvas: NSView {
         search.placeholderString = "Find title or date"; search.font = ClassicTheme.font(11); search.setAccessibilityLabel("Find note title or date")
         status.font = ClassicTheme.font(10); status.textColor = ClassicTheme.ink; status.lineBreakMode = .byTruncatingTail
         save.keyEquivalent = "s"; save.keyEquivalentModifierMask = [.command]
-        for button in [today, new, save, copy, reload, folder, heading, task, link] { actions.addItem(button, width: button === folder ? 100 : 85, priority: [today, new, save].contains(button) ? .primary : .secondary) }
+        for button in [today, new, save, copy, reload, folder, backup, heading, task, link] { actions.addItem(button, width: button === backup ? 150 : button === folder ? 100 : 85, priority: [today, new, save].contains(button) ? .primary : .secondary) }
         today.toolTip = "Open or create today's Markdown note."; new.toolTip = "Create a free note."; save.toolTip = "Save on this Mac (⌘S)."
         copy.toolTip = "Save editor text as another file, keeping the original."; reload.toolTip = "Reload the file from disk, with a discard prompt for unsaved edits."
         folder.toolTip = "Open the Markdown folder in Finder. It can also be opened by Obsidian or another text editor."

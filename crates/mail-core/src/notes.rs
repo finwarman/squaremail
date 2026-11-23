@@ -1,3 +1,4 @@
+pub(crate) mod backup;
 use crate::Result;
 use chrono::NaiveDate;
 use rand::RngCore;
@@ -108,9 +109,9 @@ fn random_id() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub(crate) fn list(database: &str) -> Result<NoteList> {
+fn note_ids(database: &str) -> Result<Vec<String>> {
     let root = root(database)?;
-    let mut notes = Vec::new();
+    let mut ids = Vec::new();
     for (directory, prefix) in [(root.clone(), ""), (root.join("Daily"), "Daily/")] {
         if !directory.exists() {
             continue;
@@ -124,28 +125,38 @@ pub(crate) fn list(database: &str) -> Result<NoteList> {
             if name.starts_with('.') || !name.ends_with(".md") {
                 continue;
             }
-            let id = format!("{prefix}{name}");
-            let path = note_path(&root, &id)?;
-            let info = fs::metadata(&path)?;
-            if notes.len() >= NOTE_LIMIT {
+            if ids.len() >= NOTE_LIMIT {
                 return Err(
                     "Notes folder exceeds the 2,000-note list limit. Files were not changed."
                         .into(),
                 );
             }
-            let mut bytes = Vec::new();
-            fs::File::open(&path)?
-                .take(TITLE_BYTES)
-                .read_to_end(&mut bytes)?;
-            notes.push(NoteSummary {
-                title: title(&String::from_utf8_lossy(&bytes), &id),
-                id,
-                modified: info
-                    .modified()?
-                    .duration_since(std::time::UNIX_EPOCH)?
-                    .as_secs(),
-            });
+            let id = format!("{prefix}{name}");
+            note_path(&root, &id)?;
+            ids.push(id);
         }
+    }
+    ids.sort();
+    Ok(ids)
+}
+pub(crate) fn list(database: &str) -> Result<NoteList> {
+    let root = root(database)?;
+    let mut notes = Vec::new();
+    for id in note_ids(database)? {
+        let path = note_path(&root, &id)?;
+        let info = fs::metadata(&path)?;
+        let mut bytes = Vec::new();
+        fs::File::open(&path)?
+            .take(TITLE_BYTES)
+            .read_to_end(&mut bytes)?;
+        notes.push(NoteSummary {
+            title: title(&String::from_utf8_lossy(&bytes), &id),
+            id,
+            modified: info
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+        });
     }
     notes.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.id.cmp(&b.id)));
     Ok(NoteList {

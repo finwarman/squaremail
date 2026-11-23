@@ -25,7 +25,7 @@ enum MailSearchScope: Int { case folder, allFolders }
 enum MailSearchMatch: String, Decodable { case literal, approximate, none }
 struct MailSearchPage: Decodable { let messages: [Mail]; let kind: MailSearchMatch }
 enum MailboxMode { case demo, live }
-enum WorkQueue { case local, network, sync, login, media, calendar, notifications }
+enum WorkQueue { case local, network, sync, login, media, calendar, notifications, notesBackup }
 
 struct Account: Decodable {
     let id: String
@@ -198,6 +198,7 @@ struct BackfillConfig: Decodable { let mode: BackfillMode }
 enum SyncKind: String, Decodable { case catalog, mail, calendar; case bodyBackfill = "body_backfill"; case recentMail = "recent_mail" }
 
 enum CoreCommand: String {
+    case notesBackup = "notes_backup"
     case contacts
     case notes
     case openNote = "open_note"

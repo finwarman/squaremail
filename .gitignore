@@ -14,3 +14,8 @@ builds/
 *.p12
 *.pfx
 *.keychain*
+
+# Private Notes service runtime
+services/notes-sync/.wrangler/
+services/notes-sync/node_modules/
+.wrangler/

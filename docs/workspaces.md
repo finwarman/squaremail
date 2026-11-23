@@ -6,7 +6,7 @@ Use **Window > Open Calendar in New Window** to keep Calendar beside Mail. Openi
 
 Notes autosave after a typing pause. A changed external file blocks replacement and keeps editor text. **Save copy** keeps both versions; **Reload** asks before discarding unsaved text. **Open folder** exposes ordinary UTF-8 `.md` files under Application Support/Square Mail/Notes. Up to50 earlier saved contents remain in its hidden `.history` folder. Back up this folder with your other files.
 
-Notes currently have title/date filtering, a2,000-file list limit and a1MiB document limit. There is no Markdown preview, full-vault text index, folder picker or remote sync. A tab strip and a private sync backend remain separate work.
+Notes currently have title/date filtering, a2,000-file list limit and a1MiB document limit. Optional [encrypted backup](notes-backup.md) preserves offline editing and conflict copies. Markdown preview, a full-vault text index, folder choice and a tab strip remain separate work.
 
 ## Recipient suggestions
 
