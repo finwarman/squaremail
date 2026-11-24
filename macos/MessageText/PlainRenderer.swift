@@ -35,8 +35,9 @@ public actor PlainRenderer {
         detector?.enumerateMatches(in: source, options: [.reportProgress], range: NSRange(location: 0, length: value.length)) { match, _, stop in
             if Task.isCancelled || found.count >= Self.linkLimit * 2 { stop.pointee = true; return }
             guard let match, let target = match.url, Self.permits(target), !protected.contains(where: { NSIntersectionRange($0, match.range).length > 0 }), !explicit.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { return }
-            guard match.range.length <= Self.urlLimit else { return }
+            guard match.range.length <= Self.urlLimit, match.range.location >= boundary else { return }
             let (range, url) = wrapped(value, match: match.range, url: target)
+            guard range.location >= boundary else { return }
             let (labelRange, text) = label(value, range: range, boundary: boundary)
             guard !explicit.contains(where: { NSIntersectionRange($0, labelRange).length > 0 }) else { return }
             found.append((labelRange, url, text)); boundary = NSMaxRange(labelRange)
@@ -57,6 +58,8 @@ public actor PlainRenderer {
         var output = ""; output.reserveCapacity(source.utf8.count)
         var spans: [TextLink] = []; var cursor = 0; var outputLength = 0
         for (range, url, label) in found {
+            // Malformed wrappers must not create overlapping or out-of-bounds replacements.
+            guard range.location >= cursor, range.location <= value.length, range.length <= value.length - range.location else { continue }
             let prefix = value.substring(with: NSRange(location: cursor, length: range.location - cursor))
             output += prefix; outputLength += prefix.utf16.count
             if label.isEmpty || range.location == cursor, let previous = output.last, !previous.isWhitespace, !"([<{/".contains(previous) { output += " "; outputLength += 1 }
@@ -78,11 +81,13 @@ public actor PlainRenderer {
         let end = text.range(of: ">", range: NSRange(location: NSMaxRange(match), length: min(Self.urlLimit, text.length - NSMaxRange(match))))
         guard end.location != NSNotFound else { return (match, url) }
         let inner = text.substring(with: NSRange(location: match.location, length: end.location - match.location))
+        guard !inner.contains("<") else { return (match, url) }
         let parts = inner.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count <= 16, parts.allSatisfy({ !$0.isEmpty && !$0.contains(where: \.isWhitespace) }), let expanded = URL(string: parts.joined()), Self.permits(expanded), expanded.host == url.host else { return (match, url) }
         return (NSRange(location: match.location - 1, length: end.location - match.location + 2), expanded)
     }
     private func label(_ text: NSString, range: NSRange, boundary: Int) -> (NSRange, String) {
+        guard boundary <= range.location else { return (range, "") }
         let contextLength = min(600, range.location - min(range.location, boundary))
         let newline = text.range(of: "\n", options: .backwards, range: NSRange(location: range.location - contextLength, length: contextLength))
         if newline.location == NSNotFound && range.location - boundary > contextLength { return (range, "") }

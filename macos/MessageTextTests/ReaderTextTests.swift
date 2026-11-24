@@ -55,6 +55,16 @@ final class ReaderTextTests: XCTestCase {
         XCTAssertEqual(pair.copyText(NSRange(location: 0, length: pair.text.utf16.count)), adjacent)
     }
 
+    func testNestedLinkDelimiters() async throws {
+        let source = "😀 Read<https://example.test/a<\nhttps://other.test/b>\nThen https://last.test/end"
+        let result = try await render(source)
+        XCTAssertEqual(result.links.map(\.url.host), ["example.test", "other.test", "last.test"])
+        XCTAssertEqual(result.copyText(NSRange(location: 0, length: result.text.utf16.count)), source)
+        for pair in zip(result.links, result.links.dropFirst()) {
+            XCTAssertLessThanOrEqual(NSMaxRange(pair.0.range), pair.1.range.location)
+        }
+    }
+
     func testLimitsAndCode() async throws {
         let source = "```\nhttps://example.com/code\n```\n" + (0..<200).map { "https://example.com/\($0)" }.joined(separator: "\n")
         let result = try await render(source)
