@@ -26,3 +26,4 @@ trap 'rm -rf "$test_dir"' EXIT
 python3 scripts/check-read-hold.py
 
 ./scripts/check-workspaces.sh
+python3 scripts/check-notes-app.py

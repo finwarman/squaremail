@@ -106,6 +106,7 @@ public final class ClassicPanel: NSView {
 
 public final class ClassicTitleBar: NSView {
     public var title = "Square Mail"
+    public var icon: ClassicIcon = .mail { didSet { needsDisplay = true } }
     public override var isFlipped: Bool { true }
     public override var mouseDownCanMoveWindow: Bool { true }
 
@@ -120,7 +121,7 @@ public final class ClassicTitleBar: NSView {
                                   atLocations: [0, SharedClassicTokens.captionGradientStart / 100, SharedClassicTokens.captionGradientMiddle / 100, 1], colorSpace: .sRGB)
         gradient?.draw(in: bounds, angle: 0)
         drawGlitter()
-        ClassicIcon.mail.draw(in: NSRect(x: 6, y: 6, width: 20, height: 20))
+        icon.draw(in: NSRect(x: 6, y: 6, width: 20, height: 20))
         ClassicTheme.text(title, in: NSRect(x: 34, y: 7, width: bounds.width - 132, height: 22),
                           size: 14, color: .white, weight: .bold)
     }

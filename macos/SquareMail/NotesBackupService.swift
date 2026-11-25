@@ -1,6 +1,7 @@
 import AppKit
 
-enum BackupOperation: String { case status, invitation, create, connect, unlock, enable, recovery, lock, disconnect, sync, history, restore }
+enum BackupOperation: String { case claim, release, status, invitation, create, connect, unlock, enable, recovery, lock, disconnect, sync, history, restore }
+private struct BackupClaim: Decodable { let acquired: Bool }
 enum BackupPhase: String, Decodable { case checking, unavailable, disabled, setup, recovery, locked, ready, busy }
 struct BackupStatus: Decodable {
     let phase: BackupPhase
@@ -37,7 +38,11 @@ final class NotesBackupService {
         guard !started else { return }; started = true
         Task { [weak self] in await self?.refresh() }
     }
-    func stop() { started = false; cancelWorker(); panel?.close(); panel = nil }
+    func stop() {
+        started = false; cancelWorker(); panel?.close(); panel = nil
+        let core = core
+        Task { let _: EmptyReply? = try? await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.release.rawValue], mode: .live, queue: .notesBackup) }
+    }
     func setOnline(_ value: Bool) {
         online = value
         if !value { cancelWorker(); publish("Offline. Encrypted backup resumes when connected."); return }
@@ -120,10 +125,22 @@ final class NotesBackupService {
                 wake = false
                 var delay = 30
                 do {
-                    publish("Syncing encrypted notes…")
-                    let value: BackupStatus = try await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.sync.rawValue], mode: .live, queue: .notesBackup)
+                    let claim: BackupClaim = try await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.claim.rawValue], mode: .live, queue: .notesBackup)
                     guard !Task.isCancelled, revision == generation else { return }
-                    status = value; publish(value.message); delay = value.more ? 1 : 30
+                    if claim.acquired {
+                        let current: BackupStatus = try await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.status.rawValue], mode: .live, queue: .notesBackup)
+                        guard !Task.isCancelled, revision == generation else { return }
+                        status = current
+                        if current.phase != .ready && current.phase != .busy {
+                            publish(current.message)
+                            let _: EmptyReply? = try? await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.release.rawValue], mode: .live, queue: .notesBackup)
+                            if revision == generation { worker = nil }; return
+                        }
+                        publish("Syncing encrypted notes…")
+                        let value: BackupStatus = try await core.request(["command": CoreCommand.notesBackup.rawValue, "operation": BackupOperation.sync.rawValue], mode: .live, queue: .notesBackup)
+                        guard !Task.isCancelled, revision == generation else { return }
+                        status = value; publish(value.message); delay = value.more ? 1 : 30
+                    } else { publish("Encrypted Notes sync is running in the other Square app. Local edits remain available offline.") }
                 } catch {
                     guard !Task.isCancelled, revision == generation else { return }
                     publish(error.localizedDescription + " · retries in a minute"); delay = 60

@@ -12,8 +12,10 @@ struct IconSource: Decodable {
 }
 
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-let source = try JSONDecoder().decode(IconSource.self, from: Data(contentsOf: root.appendingPathComponent("assets/icon.json")))
-let output = root.appendingPathComponent(".build/AppIcon.iconset")
+enum Product: String { case mail, notes }
+let product = CommandLine.arguments.dropFirst().first.flatMap(Product.init(rawValue:)) ?? .mail
+let source = try JSONDecoder().decode(IconSource.self, from: Data(contentsOf: root.appendingPathComponent(product == .mail ? "assets/icon.json" : "assets/notes-icon.json")))
+let output = root.appendingPathComponent(product == .mail ? ".build/AppIcon.iconset" : ".build/NotesIcon.iconset")
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
 func color(_ value: String) -> NSColor {
@@ -55,7 +57,7 @@ for size in [16, 32, 128, 256, 512] {
     try render(size).write(to: output.appendingPathComponent("icon_\(size)x\(size).png"))
     try render(size * 2).write(to: output.appendingPathComponent("icon_\(size)x\(size)@2x.png"))
 }
-try render(512).write(to: root.appendingPathComponent("assets/squaremail.png"))
+try render(512).write(to: root.appendingPathComponent(product == .mail ? "assets/squaremail.png" : "assets/squarenotes.png"))
 var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \(source.size) \(source.size)\" shape-rendering=\"crispEdges\">\n"
 for shape in source.shapes {
     if let r = shape.rect {
@@ -65,5 +67,5 @@ for shape in source.shapes {
     }
 }
 svg += "</svg>\n"
-try Data(svg.utf8).write(to: root.appendingPathComponent("assets/squaremail.svg"))
+try Data(svg.utf8).write(to: root.appendingPathComponent(product == .mail ? "assets/squaremail.svg" : "assets/squarenotes.svg"))
 print(output.path)

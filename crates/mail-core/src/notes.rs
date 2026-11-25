@@ -1,5 +1,6 @@
 pub(crate) mod backup;
 mod index;
+mod lease;
 use crate::Result;
 use chrono::NaiveDate;
 use rand::RngCore;
@@ -242,6 +243,8 @@ pub(crate) fn save(
     }
     let _lock = WRITER.lock().map_err(|_| "Notes writer is unavailable")?;
     let root = root(database)?;
+    let _writer = lease::take(&root.join(".writer.lock"))?
+        .ok_or("Another Square app is saving a note. Your edits are kept; try Save again.")?;
     let path = note_path(&root, id)?;
     let old = if path.exists() {
         Some(read_text(&path)?)

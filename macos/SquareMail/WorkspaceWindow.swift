@@ -13,7 +13,7 @@ final class WorkspaceWindow: NSObject, NSWindowDelegate {
     var onClosed: (() -> Void)?
     var onExposure: ((WorkspaceExposure) -> Void)?
 
-    init(title: String, size: NSSize, minimum: NSSize) {
+    init(title: String, size: NSSize, minimum: NSSize, icon: ClassicIcon = .mail) {
         let panel = WorkspacePanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window = panel
         super.init()
@@ -38,10 +38,10 @@ final class WorkspaceWindow: NSObject, NSWindowDelegate {
             }
             caption.addSubview(button)
         }
-        setTitle(title); panel.center()
+        caption.icon = icon; setTitle(title); panel.center()
     }
     func setTitle(_ title: String) { window.title = title; caption.title = title; caption.needsDisplay = true }
-    func show() { isOpen = true; WindowPresentation.show(window); updateExposure() }
+    func show() { isOpen = true; if window.isMiniaturized, !WindowPresentation.isBackground { window.deminiaturize(nil) }; WindowPresentation.show(window); updateExposure() }
     func close() { guard isOpen else { return }; window.close(); finishClose() }
     func hideForDock() { guard isOpen else { return }; isOpen = false; onExposure?(.hidden); window.close() }
     func requestClose() { if let onCloseRequest { onCloseRequest() } else { close() } }

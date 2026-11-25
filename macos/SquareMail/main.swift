@@ -309,7 +309,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     app.setActivationPolicy(WindowPresentation.isBackground ? .accessory : .regular)
-    let delegate = AppDelegate()
+    let delegate: NSApplicationDelegate = NotesAppLauncher.isNotes ? NotesAppDelegate() : AppDelegate()
     app.delegate = delegate
     withExtendedLifetime(delegate) { app.run() }
 }

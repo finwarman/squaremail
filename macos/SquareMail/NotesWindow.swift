@@ -1,6 +1,8 @@
 import AppKit
 import ClassicKit
 
+enum NotesIdentity: String { case mail = "Square Mail", standalone = "Square Notes" }
+
 @MainActor
 final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate, NSTextFieldDelegate {
     private enum NoteFocus { case editor, preserve }
@@ -8,7 +10,8 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     private var host = Host.window
     private var exposure = WorkspaceExposure.visible
     private enum Phase { case closed, loading, editing, prompting }
-    let shell = WorkspaceWindow(title: "Square Mail - Notes", size: NSSize(width: 1100, height: 760), minimum: NSSize(width: 820, height: 560))
+    let shell: WorkspaceWindow
+    private let identity: NotesIdentity
     private let service: NotesService
     private let backup: NotesBackupService
     private let prompts: EditorPrompting
@@ -30,6 +33,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     private var listTask: Task<Void, Never>?
     private var autosave: Task<Void, Never>?
     private var queryTask: Task<Void, Never>?
+    private var fileTask: Task<Void, Never>?
     private var queryRevision = 0
     private var indexPending = 0
     private enum SearchDelay { case immediate, typing }
@@ -38,6 +42,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     var onSelect: (() -> Void)?
     var onDock: (() -> Void)?
     var onTitleChanged: ((String) -> Void)?
+    var onOpenApp: (() -> Void)? { didSet { view.app.isHidden = onOpenApp == nil } }
     var isOpen: Bool { phase != .closed && (host == .docked || shell.isOpen) }
     var isDetached: Bool { host == .window && shell.isOpen }
     var canMove: Bool { phase != .prompting }
@@ -46,7 +51,9 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     var needsClosePrompt: Bool { isOpen && (dirty || saving) }
     private var dirty: Bool { version != savedVersion }
 
-    init(core: MailCore, backup: NotesBackupService? = nil, prompts: EditorPrompting? = nil) {
+    init(core: MailCore, backup: NotesBackupService? = nil, prompts: EditorPrompting? = nil, identity: NotesIdentity = .mail) {
+        self.identity = identity
+        shell = WorkspaceWindow(title: identity.rawValue + " - Notes", size: NSSize(width: 1100, height: 760), minimum: NSSize(width: 820, height: 560), icon: .text)
         self.backup = backup ?? NotesBackupService(core: core)
         service = NotesService(core: core); self.prompts = prompts ?? EditorPrompter()
         super.init()
@@ -65,6 +72,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         view.task.onPress = { [weak self] in self?.insert("- [ ] ") }
         view.backup.onPress = { [weak self] in guard let self else { return }; self.backup.show(note: document?.id) }
         view.dock.onPress = { [weak self] in self?.onDock?() }
+        view.app.isHidden = true; view.app.onPress = { [weak self] in self?.onOpenApp?() }
         view.link.onPress = { [weak self] in self?.insert("[link](https://)") }
         shell.onCloseRequest = { [weak self] in self?.requestClose() }
         shell.onClosed = { [weak self] in self?.closed() }
@@ -118,8 +126,32 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         }
     }
     func openNote(_ id: String) { show(); switchDocument(id: id) }
+    func openFile(_ url: URL) {
+        show(); fileTask?.cancel(); let pending = task
+        fileTask = Task { [weak self] in
+            await pending?.value
+            guard let self, !Task.isCancelled, isOpen else { return }
+            do {
+                let catalog = try await service.list()
+                guard !Task.isCancelled, isOpen else { return }
+                let root = URL(fileURLWithPath: catalog.directory)
+                guard url.isFileURL, let note = catalog.notes.first(where: { root.appendingPathComponent($0.id).standardizedFileURL == url.standardizedFileURL }) else { throw MailError(message: "Open a file from the Square Notes folder.") }
+                openNote(note.id)
+            } catch { if !Task.isCancelled, isOpen { view.status.stringValue = error.localizedDescription } }
+        }
+    }
+    func handoff(_ reply: @escaping (URL?) -> Void) {
+        if phase == .loading {
+            let pending = task
+            Task { [weak self] in await pending?.value; guard let self, isOpen else { return }; handoff(reply) }
+            return
+        }
+        let file = document.flatMap { note in directory?.appendingPathComponent(note.id) }
+        requestClose { if $0 == .closed { reply(file) } }
+    }
     func openDaily(_ date: Date) { show(); switchDocument(day: dayFormat.string(from: date)) }
     func newNote() { show(); switchDocument() }
+    func saveCurrent() { save() }
     func searchAll() { activeWindow.makeFirstResponder(view.search) }
     func refreshNotes() { externalChange() }
     func find() {
@@ -150,7 +182,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         document = note; version = 0; savedVersion = 0; phase = .editing
         view.text.string = note.text; view.text.undoManager?.removeAllActions()
         view.status.stringValue = "Markdown · saved locally · " + note.id
-        setTitle("Square Mail - " + title(note.text)); restoreSelection(); updateControls()
+        setTitle(identity.rawValue + " - " + title(note.text)); restoreSelection(); updateControls()
         if focus == .editor { activeWindow.makeFirstResponder(view.text) }
     }
     private func title(_ text: String) -> String {
@@ -170,7 +202,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     func undoManager(for view: NSTextView) -> UndoManager? { editorUndo }
     func textDidChange(_ notification: Notification) {
         guard phase == .editing else { return }
-        version += 1; setTitle("Square Mail - " + title(view.text.string) + " · Unsaved")
+        version += 1; setTitle(identity.rawValue + " - " + title(view.text.string) + " · Unsaved")
         scheduleSave()
     }
     private func scheduleSave() {
@@ -189,7 +221,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
             do {
                 try await storeSnapshot()
                 view.status.stringValue = dirty ? "Newer edits are waiting to save." : "Saved on this Mac."
-                if !dirty { setTitle("Square Mail - " + title(view.text.string)) }
+                if !dirty { setTitle(identity.rawValue + " - " + title(view.text.string)) }
                 try await refreshList()
                 if dirty { scheduleSave() }
             } catch { view.status.stringValue = error.localizedDescription }
@@ -237,6 +269,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         }
         task?.cancel(); generation += 1
         guard dirty else { finishClosing(); reply(.closed); return }
+        if host == .window, shell.window.isMiniaturized { shell.show() }
         let alert = NSAlert(); alert.messageText = "Save this note?"; alert.informativeText = "Save on this Mac, discard unsaved editor changes, or keep editing."
         alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Discard changes"); alert.addButton(withTitle: "Keep editing")
         phase = .prompting; autosave?.cancel(); updateControls()
@@ -259,7 +292,7 @@ final class NotesWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     }
     private func closed() {
         phase = .closed; generation += 1; queryRevision += 1
-        for job in [task, saveTask, listTask, autosave, queryTask] { job?.cancel() }
+        for job in [task, saveTask, listTask, autosave, queryTask, fileTask] { job?.cancel() }
         service.stop(); editorUndo.removeAllActions(); view.text.string = ""; document = nil; notes.removeAll(); filtered.removeAll(); onClosed?()
     }
     private func externalChange() {
@@ -342,6 +375,7 @@ private final class NotesCanvas: NSView {
     let copy = ClassicButton("Save copy"); let reload = ClassicButton("Reload"); let folder = ClassicButton("Open folder")
     let backup = ClassicButton("Encrypted backup…")
     let dock = ClassicButton("Dock to tabs")
+    let app = ClassicButton("Open Notes app ↗")
     let heading = ClassicButton("Heading"); let task = ClassicButton("Checkbox"); let link = ClassicButton("Link")
     let results = NSTextField(labelWithString: "")
     let status = NSTextField(labelWithString: "Loading local Markdown notes…")
@@ -363,7 +397,8 @@ private final class NotesCanvas: NSView {
         results.font = ClassicTheme.font(10); results.textColor = ClassicTheme.muted; results.lineBreakMode = .byTruncatingTail
         status.font = ClassicTheme.font(10); status.textColor = ClassicTheme.ink; status.lineBreakMode = .byTruncatingTail
         save.keyEquivalent = "s"; save.keyEquivalentModifierMask = [.command]
-        for button in [today, new, save, copy, reload, folder, backup, dock, heading, task, link] { actions.addItem(button, width: button === backup ? 150 : button === dock ? 110 : button === folder ? 100 : 85, priority: [today, new, save].contains(button) ? .primary : .secondary) }
+        for button in [today, new, save, copy, reload, folder, backup, app, dock, heading, task, link] { actions.addItem(button, width: button === backup || button === app ? 150 : button === dock ? 110 : button === folder ? 100 : 85, priority: [today, new, save].contains(button) ? .primary : .secondary) }
+        app.toolTip = "Open Square Notes with its own Dock icon and independent minimise and quit. Save or discard current edits before moving."
         today.toolTip = "Open or create today's Markdown note."; new.toolTip = "Create a free note."; save.toolTip = "Save on this Mac (⌘S)."
         copy.toolTip = "Save editor text as another file, keeping the original."; reload.toolTip = "Reload the file from disk, with a discard prompt for unsaved edits."
         folder.toolTip = "Open the Markdown folder in Finder. It can also be opened by Obsidian or another text editor."
@@ -383,6 +418,33 @@ private final class NotesCanvas: NSView {
 }
 
 extension NotesWindow {
+    func verifyStandalone(_ prompts: ScriptedEditorPrompts) async throws {
+        guard WindowPresentation.isBackground, NotesAppLauncher.isNotes, identity == .standalone else { throw MailError(message: "Use the hidden Square Notes bundle") }
+        try await verifyControls(prompts)
+        try await verifyFullSearch()
+        show(); await task?.value
+        guard let note = document, let directory, currentTitle.hasPrefix("Square Notes - "), view.app.isHidden, view.dock.isHidden, shell.window.styleMask.contains(.miniaturizable) else { throw MailError(message: "Notes did not retain its independent app identity and window actions") }
+        guard !FileManager.default.fileExists(atPath: directory.deletingLastPathComponent().appendingPathComponent("mail.sqlite").path) else { throw MailError(message: "Standalone Notes opened a Mail database") }
+        view.text.string += "\nStandalone handoff\n"; textDidChange(Notification(name: NSText.didChangeNotification)); autosave?.cancel()
+        var moved: URL?
+        handoff { moved = $0 }
+        prompts.respond(.alertThirdButtonReturn)
+        guard moved == nil, isOpen, dirty else { throw MailError(message: "Handoff discarded a cancelled edit") }
+        handoff { moved = $0 }
+        prompts.respond(.alertFirstButtonReturn)
+        await saveTask?.value
+        for _ in 0..<20 where moved == nil { try await Task.sleep(for: .milliseconds(5)) }
+        guard let moved, !isOpen, moved == directory.appendingPathComponent(note.id) else { throw MailError(message: "Saved handoff lost its file or left a duplicate editor open") }
+        openFile(moved); await fileTask?.value; await task?.value
+        guard document?.id == note.id, view.text.string.contains("Standalone handoff"), currentTitle.hasPrefix("Square Notes - ") else { throw MailError(message: "Reopening lost saved Notes content") }
+        openFile(directory.deletingLastPathComponent().appendingPathComponent("outside.md")); await fileTask?.value
+        guard document?.id == note.id, view.status.stringValue.contains("Square Notes folder") else { throw MailError(message: "Notes accepted a file outside its vault") }
+        try WindowPresentation.snapshot(shell.window.contentView!, name: "standalone-notes")
+        close(); show(); await task?.value
+        guard isOpen, document != nil else { throw MailError(message: "Notes did not reopen after its window closed") }
+        close()
+    }
+
     func verifyControls(_ prompts: ScriptedEditorPrompts) async throws {
         guard WindowPresentation.isBackground else { throw MailError(message: "Use a hidden notes fixture") }
         show(); await task?.value

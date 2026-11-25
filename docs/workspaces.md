@@ -4,6 +4,14 @@ The Mail, Calendar and Notes tabs keep their own selection and search. **Open in
 
 Opening an already detached workspace focuses its window. Window menu entries offer the same actions. Closing Mail leaves detached workspaces open; Quit asks about unsaved edits. Reopen Mail from Window or the Dock. Independent message tabs/windows and date-linked task boards remain planned.
 
+## Notes as an app
+
+**Window → Open Notes app…** or **Open Notes app ↗** in Notes opens Square Notes with its own Dock icon and Command-Tab entry. Its title-bar minimise button and Command-M minimise only Notes. Clicking its Dock icon reopens the window. Use the Dock's **Options → Keep in Dock** to pin it. Closing its last window leaves the app running; Command-Q quits it with the same unsaved-note prompt. Mail stays independent.
+
+The companion reuses the native editor, shared Classic/Pink appearance and the same local Markdown files. It starts no Mail or Calendar views or provider schedulers. Opening it from Mail saves or prompts about the current note before closing that editor and opening the saved file. Undo history remains within each process; use the existing tab/window mode when retaining that live Undo history matters. Both modes remain available.
+
+Only one Square app owns encrypted Notes sync at a time. The other shows that sync is managed elsewhere, while local edits/search remain available. Ownership transfers within the normal 30-second check after the owner quits. macOS may ask once for the separate Notes app to access the existing Notes Keychain item. Mail tokens remain outside the companion. Updates ship Notes inside Square Mail; the launcher asks both apps to close safely and reopens whichever were running.
+
 ## Notes
 
 **Notes** or **Command-5** opens Markdown notes. **Today** opens the daily file. Calendar's **Daily note** opens the selected date. **New note** creates a free note. Edit the first `# heading` to rename its displayed title while keeping the daily filename. Heading, checkbox and link buttons insert Markdown source. Native Undo, Redo, Find and Command-S work in the editor. Command-Shift-F searches all notes; Command-F finds within the current note.

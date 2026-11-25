@@ -17,7 +17,9 @@ mv -f "$app_dir/Contents/MacOS/SquareMail.new" "$app_dir/Contents/MacOS/SquareMa
 cp macos/Info.plist "$app_dir/Contents/Info.plist"
 cp macos/Resources/AppIcon.icns "$app_dir/Contents/Resources/AppIcon.icns"
 python3 scripts/package-oauth.py local-oauth.json "$app_dir/Contents/Resources/OAuthClients.json"
+python3 scripts/package-notes.py "$app_dir"
 if [[ "${SQUAREMAIL_ADHOC:-0}" == "1" ]]; then
+  codesign --force --sign - --identifier com.finwarman.squaremail.notes "$app_dir/Contents/Helpers/Square Notes.app"
   codesign --force --sign - --identifier com.finwarman.squaremail "$app_dir"
 else
   python3 scripts/credential-helper.py "$app_dir/Contents/Helpers/SquareMailCredentials"

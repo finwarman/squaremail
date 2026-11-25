@@ -1426,6 +1426,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         addItem(windows, "Open Calendar in New Window", #selector(popoutCalendar), "")
         addItem(windows, "Notes", #selector(showNotes), "5")
         addItem(windows, "Open Notes in New Window", #selector(popoutNotes), "")
+        addItem(windows, "Open Notes app…", #selector(openNotesApp), "")
         addItem(windows, "Dock Calendar to tab", #selector(dockCalendar), "")
         addItem(windows, "Dock Notes to tab", #selector(dockNotes), "")
         addItem(edit, "Search all notes", #selector(findAllNotes), "F")
@@ -1520,6 +1521,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         case #selector(popoutCalendar): item.title = calendarWindow == nil ? "Open Calendar in New Window" : "Show Calendar Window"; return true
         case #selector(showNotes): item.state = section == .notes ? .on : .off
         case #selector(popoutNotes): return notesWindow?.canMove ?? true
+        case #selector(openNotesApp): return notesWindow?.canMove ?? true
         case #selector(dockNotes): return notesWindow?.isDetached == true && notesWindow?.canMove == true
         case #selector(dockCalendar): return calendarWindow != nil
         case #selector(showMail): item.state = section == .mail ? .on : .off
@@ -1573,6 +1575,14 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         if notesWindow?.isDetached == true { notesWindow?.show(); return }
         setSection(.notes); guard let notesWindow, notesWindow.canMove else { return }; notesWindow.detach(); setSection(.mail)
     }
+    @objc private func openNotesApp() {
+        guard !WindowPresentation.isBackground else { return }
+        guard NotesAppLauncher.available else { showError(MailError(message: "This installation is missing Square Notes. Update Square Mail to restore it.")); return }
+        let launch: (URL?) -> Void = { [weak self] file in
+            NotesAppLauncher.open(file: file) { result in if case .failure(let error) = result { self?.showError(error) } }
+        }
+        if let notesWindow, notesWindow.isOpen { notesWindow.handoff(launch) } else { launch(nil) }
+    }
     @objc private func dockNotes() {
         guard let notesWindow, notesWindow.isDetached, notesWindow.canMove else { return }
         notesWindow.dock(in: layout.notesHost); setSection(.notes)
@@ -1585,6 +1595,7 @@ final class MailController: NSResponder, NSTableViewDataSource, NSTableViewDeleg
         let value = NotesWindow(core: core, backup: notesBackup)
         value.onSelect = { [weak self] in self?.showNotes() }
         value.onDock = { [weak self] in self?.dockNotes() }
+        value.onOpenApp = { [weak self] in self?.openNotesApp() }
         value.onTitleChanged = { [weak self] title in guard let self, section == .notes else { return }; layout.titleBar.title = title; layout.titleBar.needsDisplay = true }
         value.onClosed = { [weak self] in guard let self else { return }; notesWindow = nil; if section == .notes && !readClosing { setSection(.mail) }; updateMailButtons() }
         notesWindow = value; return value

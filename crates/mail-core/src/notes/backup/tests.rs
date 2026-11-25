@@ -68,6 +68,36 @@ fn busy_cannot_reload_locked_key() {
     assert_eq!(result["unlocked"], false);
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn takeover_forgets_unlock() {
+    let _worker = WORKER.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("mail.sqlite");
+    let database = file.to_str().unwrap();
+    let id = key_id(database);
+    keys::save(
+        &id,
+        &keys::Credentials {
+            auth: "synthetic-account".into(),
+            key: Some(vec![7; 32]),
+        },
+    )
+    .unwrap();
+    assert!(session(database).unwrap().is_some());
+    keys::save(
+        &id,
+        &keys::Credentials {
+            auth: "synthetic-account".into(),
+            key: None,
+        },
+    )
+    .unwrap();
+    assert!(session(database).unwrap().is_some());
+    assert!(claim_owner(database).unwrap());
+    assert!(session(database).unwrap().is_none());
+    super::super::lease::release(database).unwrap();
+}
 #[test]
 #[ignore]
 fn backup_two_device_http() {

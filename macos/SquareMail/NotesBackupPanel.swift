@@ -82,14 +82,14 @@ final class NotesBackupPanel: NSObject, NSTextFieldDelegate, NSTableViewDataSour
         canvas.primary.isEnabled = !working && (setup ? (mode == .create ? validCreate : validRestore) : unlock ? validPass : canvas.saved.state == .on)
         canvas.saved.isHidden = !recovery || unlock; canvas.saved.isEnabled = !working
         canvas.copy.isHidden = canvas.key.stringValue.isEmpty; canvas.copy.isEnabled = !working
-        canvas.recovery.isHidden = !configured; canvas.recovery.isEnabled = !working
+        canvas.recovery.isHidden = !configured; canvas.recovery.isEnabled = !working && status.phase != .busy
         for field in [canvas.invite, canvas.account, canvas.password, canvas.confirm] { field.isEnabled = !working }
         canvas.remember.isEnabled = !working
         canvas.sync.isHidden = status.phase != .ready && status.phase != .busy && status.phase != .checking && status.phase != .unavailable
         canvas.sync.title = status.phase == .unavailable ? "Check again" : status.phase == .checking ? "Checking…" : "Sync now"
         canvas.sync.isEnabled = !working && status.phase != .checking
         canvas.lock.isHidden = !status.unlocked || setup; canvas.lock.isEnabled = !working
-        canvas.disconnect.isHidden = !configured; canvas.disconnect.isEnabled = !working
+        canvas.disconnect.isHidden = !configured; canvas.disconnect.isEnabled = !working && status.phase != .busy
         canvas.history.isEnabled = !working && status.phase == .ready && noteID != nil
         canvas.restoreVersion.isEnabled = !working && versions.indices.contains(canvas.table.selectedRow)
         canvas.history.isHidden = status.phase != .ready || noteID == nil

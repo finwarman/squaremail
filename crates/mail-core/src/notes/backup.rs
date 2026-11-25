@@ -50,6 +50,8 @@ struct Config {
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub(crate) enum Command {
+    Claim,
+    Release,
     Status,
     Invitation,
     Enable,
@@ -255,6 +257,19 @@ fn pair(account_key: &str) -> Result<(String, String)> {
     }
     Ok((id.into(), auth.into()))
 }
+fn claim_owner(database: &str) -> Result<bool> {
+    let previous = super::lease::owned(database)?;
+    let acquired = super::lease::claim(database)?;
+    if acquired && !previous {
+        // The other app may have locked the vault since this process last read it.
+        sessions()
+            .lock()
+            .map_err(|_| "Notes key is busy")?
+            .remove(database);
+    }
+    Ok(acquired)
+}
+
 pub(crate) fn run(
     database: &str,
     command: Command,
@@ -281,7 +296,28 @@ pub(crate) fn run(
         }
     };
 
+    if matches!(&command, Command::Claim) {
+        return Ok(json!({"acquired": claim_owner(database)?}));
+    }
+    if matches!(&command, Command::Release) {
+        super::lease::release(database)?;
+        sessions()
+            .lock()
+            .map_err(|_| "Notes key is busy")?
+            .remove(database);
+        return Ok(json!({}));
+    }
+    let Some(_access) = super::lease::access(database)? else {
+        if matches!(&command, Command::Status | Command::Sync) {
+            return Ok(to_value(Status {
+                phase: Phase::Busy, unlocked: false, account: None, completed: 0, more: false,
+                message: "Encrypted Notes sync is managed by another Square app. It will transfer here when that app quits.".into(),
+            })?);
+        }
+        return Err("Notes backup is open in another Square app. Use its backup controls or quit that app first.".into());
+    };
     match command {
+        Command::Claim | Command::Release => unreachable!(),
         Command::Status => to_value(status(database)?).map_err(Into::into),
         Command::Invitation => {
             use std::os::unix::fs::PermissionsExt;
